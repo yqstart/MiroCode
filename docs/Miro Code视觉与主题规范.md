@@ -1,8 +1,8 @@
 # Miro Code 视觉与主题规范
 
 > 视觉基准图：  
-> - 浅色：**Dawn** ← `docs/theme1.png`  
-> - 深色：**Adnify Dark** ← `docs/theme2.png`  
+> - 浅色：**Miro Dawn** ← `docs/theme1.png`
+> - 深色：**Miro Dark** ← `docs/theme2.png`
 >  
 > 目标：轻量化、高颜值、沉浸式编辑；控件极简，分区清晰。
 
@@ -24,10 +24,10 @@
 
 | Theme ID | 显示名 | 角色 | 基准 |
 |---|---|---|---|
-| `adnify-dark` | Adnify Dark | **默认深色** | theme2 |
-| `dawn` | Dawn | **默认浅色** | theme1 |
-| `midnight` | Midnight | 预留深色变体 | 设置页缩略图占位 |
-| `cyberpunk` | Cyberpunk | 预留高对比深色 | 设置页缩略图占位 |
+| `adnify-dark` | Miro Dark | **默认深色** | theme2 |
+| `dawn` | Miro Dawn | **默认浅色** | theme1 |
+| `midnight` | Miro Midnight | 预留深色变体 | 设置页缩略图占位 |
+| `cyberpunk` | Miro Cyberpunk | 预留高对比深色 | 设置页缩略图占位 |
 
 一期必须完整交付：`adnify-dark` + `dawn`。其余可先做预览卡，后补 token。
 
@@ -37,7 +37,7 @@
 
 组件与样式**只使用语义变量**，禁止散落魔法色值。
 
-### 3.1 Adnify Dark（深色）
+### 3.1 Miro Dark（深色）
 
 | Token | 建议值 | 用途 |
 |---|---|---|
@@ -57,7 +57,7 @@
 | `--danger` | `#F87171` | 错误 / 删除 |
 | `--focus-ring` | `rgba(139,92,246,.45)` | 焦点 |
 
-### 3.2 Dawn（浅色）
+### 3.2 Miro Dawn（浅色）
 
 | Token | 建议值 | 用途 |
 |---|---|---|

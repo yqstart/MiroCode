@@ -22,10 +22,10 @@ type NavId =
 const activeNav = ref<NavId>("editor");
 
 const themes: ThemeMeta[] = [
-  { id: "adnify-dark", name: "Adnify Dark", available: true, preview: "dark" },
-  { id: "midnight", name: "Midnight", available: true, preview: "midnight" },
-  { id: "cyberpunk", name: "Cyberpunk", available: true, preview: "cyber" },
-  { id: "dawn", name: "Dawn", available: true, preview: "light" },
+  { id: "adnify-dark", name: "Miro Dark", available: true, preview: "dark" },
+  { id: "midnight", name: "Miro Midnight", available: true, preview: "midnight" },
+  { id: "cyberpunk", name: "Miro Cyberpunk", available: true, preview: "cyber" },
+  { id: "dawn", name: "Miro Dawn", available: true, preview: "light" },
 ];
 
 const navItems: { id: NavId; label: string }[] = [

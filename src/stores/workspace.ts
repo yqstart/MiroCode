@@ -1,6 +1,7 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import { ask, open } from "@tauri-apps/plugin-dialog";
+import { watch as watchFs, type UnwatchFn, type WatchEvent } from "@tauri-apps/plugin-fs";
 import {
   basename,
   copyEntry,
@@ -14,7 +15,18 @@ import {
   type DirEntryInfo,
 } from "@/shared/fs";
 import { loadRecentFolders, pushRecentFolder } from "@/shared/path";
+import { searchFiles, type FileSearchHit } from "@/shared/searchApi";
 import { useGitStore } from "@/stores/git";
+
+const WATCH_IGNORE_NAMES = new Set([
+  ".git",
+  "node_modules",
+  "target",
+  "dist",
+  ".mirocode",
+  ".mirocode-index",
+  ".DS_Store",
+]);
 
 export interface TreeNode extends DirEntryInfo {
   depth: number;
@@ -34,8 +46,21 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const recentFolders = ref<string[]>(loadRecentFolders());
   const clipboard = ref<{ mode: "copy" | "cut"; path: string } | null>(null);
   const extraIgnores = ref<string[]>([]);
+  /** 触发资源树滚动到目标节点 */
+  const revealToken = ref(0);
+  const revealTarget = ref<string | null>(null);
+  /** 过滤框的全项目定位结果（补全仅已加载节点的不足） */
+  const locateHits = ref<FileSearchHit[]>([]);
+  const locateLoading = ref(false);
+  const refreshing = ref(false);
+  const watchActive = ref(false);
 
   let noticeTimer: number | undefined;
+  let locateTimer: number | undefined;
+  let unwatchFn: UnwatchFn | null = null;
+  let refreshTimer: number | undefined;
+  const selfWriteUntil = new Map<string, number>();
+  let pendingWatchPaths = new Set<string>();
 
   function showNotice(message: string, ms = 2400) {
     notice.value = message;
@@ -97,6 +122,99 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     childrenMap.value = { ...childrenMap.value, [path]: entries };
   }
 
+  function markSelfWrite(path: string, ms = 1600) {
+    selfWriteUntil.set(path, Date.now() + ms);
+  }
+
+  function isSelfWrite(path: string) {
+    const until = selfWriteUntil.get(path);
+    if (!until) return false;
+    if (Date.now() > until) {
+      selfWriteUntil.delete(path);
+      return false;
+    }
+    return true;
+  }
+
+  function shouldIgnoreWatchPath(path: string) {
+    return path.split(/[/\\]/).some((part) => WATCH_IGNORE_NAMES.has(part));
+  }
+
+  function stopWatch() {
+    unwatchFn?.();
+    unwatchFn = null;
+    watchActive.value = false;
+    window.clearTimeout(refreshTimer);
+    pendingWatchPaths = new Set();
+  }
+
+  async function startWatch(root: string) {
+    stopWatch();
+    try {
+      unwatchFn = await watchFs(
+        root,
+        (event) => {
+          onWatchEvent(event);
+        },
+        { recursive: true, delayMs: 350 },
+      );
+      watchActive.value = true;
+    } catch {
+      watchActive.value = false;
+      showNotice("无法自动监听文件变更，请使用刷新按钮", 3200);
+    }
+  }
+
+  function onWatchEvent(event: WatchEvent) {
+    if (!rootPath.value) return;
+    const paths = (event.paths || []).filter(
+      (p) => !shouldIgnoreWatchPath(p) && !isSelfWrite(p),
+    );
+    if (!paths.length) return;
+    for (const p of paths) pendingWatchPaths.add(p);
+    window.clearTimeout(refreshTimer);
+    refreshTimer = window.setTimeout(() => {
+      void flushWatchChanges();
+    }, 200);
+  }
+
+  async function flushWatchChanges() {
+    if (!rootPath.value || !pendingWatchPaths.size) return;
+    const changed = [...pendingWatchPaths];
+    pendingWatchPaths = new Set();
+    await refreshFromDisk(changed, { quiet: true });
+  }
+
+  async function refreshFromDisk(
+    changedAbsPaths: string[] = [],
+    options: { quiet?: boolean } = {},
+  ) {
+    if (!rootPath.value || refreshing.value) return;
+    refreshing.value = true;
+    try {
+      await refreshTree();
+      const root = rootPath.value;
+      const { useEditorStore } = await import("@/stores/editor");
+      const editor = useEditorStore();
+      const openAbs = new Set(editor.tabs.map((t) => t.path));
+      const touched = changedAbsPaths.filter(
+        (p) => p.startsWith(root) && openAbs.has(p),
+      );
+      // 若未给出具体路径（手动刷新），同步全部打开标签
+      if (!changedAbsPaths.length) {
+        await editor.syncExternalChanges(editor.tabs.map((t) => t.path));
+      } else if (touched.length) {
+        await editor.syncExternalChanges(touched);
+      }
+      void useGitStore().refresh();
+      if (!options.quiet) {
+        showNotice("资源管理器已刷新");
+      }
+    } finally {
+      refreshing.value = false;
+    }
+  }
+
   async function openFolder(path?: string | null) {
     try {
       let selected = path;
@@ -109,6 +227,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       }
       if (!selected || Array.isArray(selected)) return;
 
+      stopWatch();
       rootPath.value = selected;
       rootName.value = basename(selected);
       childrenMap.value = {};
@@ -118,6 +237,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       recentFolders.value = pushRecentFolder(selected);
       showNotice(`已打开 ${rootName.value}`);
       void useGitStore().refresh();
+      void startWatch(selected);
     } catch (error) {
       showNotice(error instanceof Error ? error.message : String(error), 3200);
     }
@@ -138,8 +258,25 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   async function refreshTree() {
     if (!rootPath.value) return;
+    const root = rootPath.value;
     const paths = Object.keys(childrenMap.value);
-    await Promise.all(paths.map((p) => loadChildren(p)));
+    const nextMap: Record<string, DirEntryInfo[]> = {};
+    await Promise.all(
+      paths.map(async (p) => {
+        try {
+          if (p !== root && !(await pathExists(root, p))) return;
+          nextMap[p] = await listDir(root, p, extraIgnores.value);
+        } catch {
+          // 目录已消失则丢弃缓存
+        }
+      }),
+    );
+    childrenMap.value = nextMap;
+    const nextExpanded = new Set(
+      [...expanded.value].filter((p) => p === root || Boolean(nextMap[p])),
+    );
+    nextExpanded.add(root);
+    expanded.value = nextExpanded;
   }
 
   async function createIn(parent: string, isDir: boolean) {
@@ -149,6 +286,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (!name?.trim()) return;
     const target = joinPath(parent, name.trim());
     try {
+      markSelfWrite(target);
+      markSelfWrite(parent);
       await createEntry(rootPath.value, target, isDir);
       await loadChildren(parent);
       expanded.value = new Set([...expanded.value, parent]);
@@ -166,6 +305,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (!nextName?.trim() || nextName.trim() === basename(path)) return;
     const target = joinPath(dirname(path), nextName.trim());
     try {
+      markSelfWrite(path);
+      markSelfWrite(target);
+      markSelfWrite(dirname(path));
       await renameEntry(rootPath.value, path, target);
       await refreshAffected(path, target);
       selectedPath.value = target;
@@ -184,6 +326,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     });
     if (!ok) return false;
     try {
+      markSelfWrite(path);
+      markSelfWrite(dirname(path));
       await deleteEntry(rootPath.value, path);
       const parent = dirname(path);
       await loadChildren(parent);
@@ -218,6 +362,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         if (n > 50) throw new Error("目标名称冲突过多");
       }
 
+      markSelfWrite(source);
+      markSelfWrite(target);
+      markSelfWrite(parent);
       if (mode === "copy") {
         await copyEntry(rootPath.value, source, target);
       } else {
@@ -244,31 +391,90 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     selectedPath.value = path;
   }
 
-  function revealPath(path: string) {
+  function pathPartsUnderRoot(path: string): string[] {
+    if (!rootPath.value) return [];
+    const root = rootPath.value.replace(/[/\\]+$/, "");
+    if (!path.startsWith(root)) return [];
+    const relative = path.slice(root.length).replace(/^[/\\]+/, "");
+    return relative ? relative.split(/[/\\]/) : [];
+  }
+
+  async function revealPath(path: string) {
     if (!rootPath.value) return;
-    const sep = rootPath.value.includes("\\") ? "\\" : "/";
-    const relative = path.startsWith(rootPath.value)
-      ? path.slice(rootPath.value.length).replace(/^[/\\]/, "")
-      : "";
-    const parts = relative ? relative.split(/[/\\]/) : [];
-    let current = rootPath.value;
+    const root = rootPath.value;
+    const parts = pathPartsUnderRoot(path);
+    if (!parts.length && path !== root) {
+      showNotice("文件不在当前工作区内", 2800);
+      return;
+    }
+
+    // 定位时清空过滤，避免目标被隐藏
+    filter.value = "";
+    locateHits.value = [];
+
+    let cursor = root;
+    if (!childrenMap.value[cursor]) {
+      await loadChildren(cursor);
+    }
     const next = new Set(expanded.value);
+    next.add(root);
     for (let i = 0; i < parts.length - 1; i += 1) {
-      current = `${current}${sep}${parts[i]}`;
-      next.add(current);
+      cursor = joinPath(cursor, parts[i]);
+      next.add(cursor);
+      if (!childrenMap.value[cursor]) {
+        await loadChildren(cursor);
+      }
     }
     expanded.value = next;
     selectedPath.value = path;
+    revealTarget.value = path;
+    revealToken.value += 1;
+  }
 
-    // 确保祖先目录已加载
-    void (async () => {
-      let cursor = rootPath.value!;
-      if (!childrenMap.value[cursor]) await loadChildren(cursor);
-      for (let i = 0; i < parts.length - 1; i += 1) {
-        cursor = `${cursor}${sep}${parts[i]}`;
-        if (!childrenMap.value[cursor]) await loadChildren(cursor);
-      }
-    })();
+  async function runLocateSearch(query?: string) {
+    if (!rootPath.value) return;
+    const q = (query ?? filter.value).trim();
+    if (q.length < 1) {
+      locateHits.value = [];
+      return;
+    }
+    locateLoading.value = true;
+    try {
+      locateHits.value = await searchFiles(rootPath.value, q, {
+        maxResults: 40,
+        extraIgnores: extraIgnores.value,
+      });
+    } catch {
+      locateHits.value = [];
+    } finally {
+      locateLoading.value = false;
+    }
+  }
+
+  function scheduleLocateSearch(query?: string) {
+    window.clearTimeout(locateTimer);
+    locateTimer = window.setTimeout(() => {
+      void runLocateSearch(query);
+    }, 220);
+  }
+
+  function setFilter(value: string) {
+    filter.value = value;
+    if (!value.trim()) {
+      locateHits.value = [];
+      return;
+    }
+    scheduleLocateSearch(value);
+  }
+
+  function clearFilter() {
+    filter.value = "";
+    locateHits.value = [];
+  }
+
+  function collapseAll() {
+    if (!rootPath.value) return;
+    expanded.value = new Set([rootPath.value]);
   }
 
   return {
@@ -283,10 +489,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     clipboard,
     extraIgnores,
     flatTree,
+    revealToken,
+    revealTarget,
+    locateHits,
+    locateLoading,
+    refreshing,
+    watchActive,
     showNotice,
     openFolder,
     toggleExpand,
     refreshTree,
+    refreshFromDisk,
+    markSelfWrite,
+    startWatch,
+    stopWatch,
     createIn,
     renamePath,
     removePath,
@@ -295,5 +511,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     selectPath,
     revealPath,
     loadChildren,
+    runLocateSearch,
+    scheduleLocateSearch,
+    setFilter,
+    clearFilter,
+    collapseAll,
   };
 });

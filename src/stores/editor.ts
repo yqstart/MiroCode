@@ -1,6 +1,12 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
-import { basename, languageFromPath, readTextFile, writeTextFile } from "@/shared/fs";
+import {
+  basename,
+  languageFromPath,
+  pathExists,
+  readTextFile,
+  writeTextFile,
+} from "@/shared/fs";
 import type { EditorJumpTarget, EditorOpenAt } from "@/shared/types";
 import { useGitStore } from "@/stores/git";
 import { useSessionsStore } from "@/stores/sessions";
@@ -114,6 +120,63 @@ export const useEditorStore = defineStore("editor", () => {
     tab.content = content;
   }
 
+  /** 外部磁盘变更：干净标签自动重载；脏标签询问是否覆盖 */
+  async function syncExternalChanges(changedPaths: string[]) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath || !changedPaths.length) return;
+
+    for (const path of changedPaths) {
+      const tab = tabs.value.find((t) => t.path === path);
+      if (!tab) continue;
+
+      try {
+        const exists = await pathExists(workspace.rootPath, path);
+        if (!exists) {
+          if (tab.content === tab.original) {
+            await closeTab(path);
+            workspace.showNotice(`「${tab.name}」已被外部删除`);
+          } else {
+            workspace.showNotice(
+              `「${tab.name}」已被外部删除，本地仍有未保存更改`,
+              3600,
+            );
+          }
+          continue;
+        }
+
+        const disk = await readTextFile(workspace.rootPath, path);
+        if (disk === tab.content) {
+          tab.original = disk;
+          continue;
+        }
+
+        if (tab.content === tab.original) {
+          tab.content = disk;
+          tab.original = disk;
+          workspace.showNotice(`「${tab.name}」已从磁盘重新加载`);
+          continue;
+        }
+
+        const overwrite = window.confirm(
+          `「${tab.name}」已被外部修改，且本地有未保存更改。\n\n确定：用磁盘版本覆盖\n取消：保留编辑器内容`,
+        );
+        if (overwrite) {
+          tab.content = disk;
+          tab.original = disk;
+          workspace.showNotice(`「${tab.name}」已用磁盘版本覆盖`);
+        } else {
+          tab.original = disk;
+          workspace.showNotice(`「${tab.name}」外部已变更，已保留本地编辑`, 3200);
+        }
+      } catch (error) {
+        workspace.showNotice(
+          error instanceof Error ? error.message : String(error),
+          3200,
+        );
+      }
+    }
+  }
+
   function setCursor(path: string, line: number, column: number) {
     const tab = tabs.value.find((t) => t.path === path);
     if (!tab) return;
@@ -137,6 +200,7 @@ export const useEditorStore = defineStore("editor", () => {
     }
     const tab = activeTab.value;
     try {
+      workspace.markSelfWrite(tab.path);
       await writeTextFile(workspace.rootPath, tab.path, tab.content);
       tab.original = tab.content;
       workspace.showNotice(`已保存 ${tab.name}`);
@@ -155,6 +219,7 @@ export const useEditorStore = defineStore("editor", () => {
     if (!workspace.rootPath) return;
     for (const tab of tabs.value) {
       if (tab.content === tab.original) continue;
+      workspace.markSelfWrite(tab.path);
       await writeTextFile(workspace.rootPath, tab.path, tab.content);
       tab.original = tab.content;
     }
@@ -216,6 +281,7 @@ export const useEditorStore = defineStore("editor", () => {
     openFile,
     openFileAt,
     setContent,
+    syncExternalChanges,
     setCursor,
     activate,
     saveActive,

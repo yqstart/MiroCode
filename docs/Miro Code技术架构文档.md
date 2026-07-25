@@ -235,7 +235,7 @@ Vue SFC：一期实现 `template/script/style` 分区高亮与基础组件路径
 
 详细 token 见《Miro Code视觉与主题规范》。此处仅约束工程实现：
 
-1. **主题 ID**：`adnify-dark`（默认深色）、`dawn`（默认浅色）；预留 `midnight`、`cyberpunk`。  
+1. **主题 ID**：`adnify-dark`（显示名 Miro Dark，默认深色）、`dawn`（Miro Dawn）；预留 `midnight`（Miro Midnight）、`cyberpunk`（Miro Cyberpunk）。  
 2. **单一真相源**：`styles/tokens/*.css` 定义语义变量；组件只消费变量，不写死色值。  
 3. **编辑器同步**：UI 主题切换时同步 CodeMirror `EditorView.theme` / HighlightStyle。  
 4. **圆角与密度**：大圆角卡片（设置页约 12–16px）、控件约 8–10px，贴近 theme 截图。  

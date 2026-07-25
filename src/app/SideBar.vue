@@ -41,8 +41,8 @@ function onResizeStart(event: MouseEvent) {
     :style="{ width: `${layout.sidebarWidth}px` }"
     aria-label="侧边栏"
   >
-    <ExplorerPanel v-if="layout.activePanel === 'explorer'" />
-    <GitPanel v-else />
+    <ExplorerPanel v-show="layout.activePanel === 'explorer'" />
+    <GitPanel v-show="layout.activePanel === 'git'" />
     <div class="resizer" title="拖拽调整宽度" @mousedown="onResizeStart" />
   </aside>
 </template>

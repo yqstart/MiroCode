@@ -1,22 +1,28 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import {
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  Crosshair,
   File,
   Folder,
   FolderOpen,
   MoreHorizontal,
+  RefreshCw,
+  X,
 } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { basename, dirname } from "@/shared/fs";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
+import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const workspace = useWorkspaceStore();
 const editor = useEditorStore();
 const git = useGitStore();
+const settings = useSettingsStore();
 const {
   rootPath,
   rootName,
@@ -25,16 +31,57 @@ const {
   flatTree,
   recentFolders,
   clipboard,
+  revealToken,
+  revealTarget,
+  locateHits,
+  locateLoading,
+  refreshing,
 } = storeToRefs(workspace);
+const { activePath } = storeToRefs(editor);
 
 const menu = ref<{ x: number; y: number; path: string; isDir: boolean } | null>(
   null,
 );
+const filterRef = ref<HTMLInputElement | null>(null);
+const treeBodyRef = ref<HTMLElement | null>(null);
 
 const dirtySet = computed(() => editor.dirtyPaths);
+const canLocate = computed(() => Boolean(rootPath.value && activePath.value));
 
-onMounted(() => {
+function scrollRowIntoView(path: string) {
+  const root = treeBodyRef.value;
+  if (!root) return;
+  const rows = root.querySelectorAll<HTMLElement>("[data-tree-path]");
+  for (const row of rows) {
+    if (row.dataset.treePath === path) {
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+      row.classList.add("flash");
+      window.setTimeout(() => row.classList.remove("flash"), 900);
+      break;
+    }
+  }
+}
+
+onMounted(async () => {
   if (rootPath.value) void git.refresh();
+  if (revealTarget.value) {
+    await nextTick();
+    scrollRowIntoView(revealTarget.value);
+  }
+});
+
+watch([revealToken, revealTarget], async ([, path]) => {
+  if (!path) return;
+  await nextTick();
+  scrollRowIntoView(path);
+});
+
+watch(activePath, (path) => {
+  if (!path || !rootPath.value) return;
+  // 编辑区切换标签时自动在树中高亮定位
+  if (settings.layout.activePanel !== "explorer") return;
+  if (settings.layout.sidebarCollapsed) return;
+  void workspace.revealPath(path);
 });
 
 function closeMenu() {
@@ -62,6 +109,39 @@ function onContext(event: MouseEvent, path: string, isDir: boolean) {
   event.preventDefault();
   workspace.selectPath(path);
   menu.value = { x: event.clientX, y: event.clientY, path, isDir };
+}
+
+async function locateActiveFile() {
+  if (!activePath.value) {
+    workspace.showNotice("当前没有打开的文件");
+    return;
+  }
+  settings.setActivePanel("explorer");
+  settings.setSidebarCollapsed(false);
+  await workspace.revealPath(activePath.value);
+  workspace.showNotice(`已定位 ${basename(activePath.value)}`);
+}
+
+function focusFilter() {
+  filterRef.value?.focus();
+  filterRef.value?.select();
+}
+
+async function onLocateHit(path: string) {
+  await workspace.revealPath(path);
+  await editor.openFile(path);
+}
+
+async function onFilterEnter() {
+  const hit = locateHits.value[0];
+  if (hit) {
+    await onLocateHit(hit.path);
+    return;
+  }
+  const firstFile = flatTree.value.find((n) => !n.isDir);
+  if (firstFile) {
+    await onRowClick(firstFile.path, false);
+  }
 }
 
 async function runMenu(action: string) {
@@ -112,30 +192,88 @@ async function runMenu(action: string) {
     return;
   }
   if (action === "reveal") {
-    workspace.revealPath(path);
+    await workspace.revealPath(path);
+  }
+  if (action === "locate-here") {
+    await workspace.revealPath(path);
+    if (!isDir) await editor.openFile(path);
   }
 }
+
+defineExpose({ locateActiveFile, focusFilter });
 </script>
 
 <template>
   <div class="panel" @click="closeMenu">
     <header class="header">
       <span class="title">资源管理器</span>
-      <button v-if="rootPath" type="button" class="icon-btn" title="更多" @click.stop="onOpen">
-        <MoreHorizontal :size="16" />
-      </button>
+      <div v-if="rootPath" class="header-actions">
+        <button
+          type="button"
+          class="icon-btn"
+          title="刷新资源管理器与打开的文件"
+          :disabled="refreshing"
+          @click.stop="workspace.refreshFromDisk()"
+        >
+          <RefreshCw :size="15" :class="{ spin: refreshing }" />
+        </button>
+        <button
+          type="button"
+          class="icon-btn"
+          title="定位到当前打开的文件（⌥F1）"
+          :disabled="!canLocate"
+          @click.stop="locateActiveFile"
+        >
+          <Crosshair :size="15" />
+        </button>
+        <button
+          type="button"
+          class="icon-btn"
+          title="折叠全部文件夹"
+          @click.stop="workspace.collapseAll()"
+        >
+          <ChevronsDownUp :size="15" />
+        </button>
+        <button
+          type="button"
+          class="icon-btn"
+          title="打开其他文件夹"
+          @click.stop="onOpen"
+        >
+          <MoreHorizontal :size="16" />
+        </button>
+      </div>
     </header>
 
     <div v-if="rootPath" class="toolbar">
-      <input
-        v-model="filter"
-        class="ui-input filter"
-        type="search"
-        placeholder="过滤文件…"
-      />
+      <div class="filter-wrap">
+        <input
+          ref="filterRef"
+          class="ui-input filter"
+          type="search"
+          placeholder="过滤 / 定位文件…"
+          :value="filter"
+          @input="workspace.setFilter(($event.target as HTMLInputElement).value)"
+          @keydown.enter.prevent="onFilterEnter"
+          @keydown.escape.prevent="workspace.clearFilter()"
+        />
+        <button
+          v-if="filter"
+          type="button"
+          class="clear"
+          title="清除"
+          @click="workspace.clearFilter()"
+        >
+          <X :size="12" />
+        </button>
+      </div>
+      <p v-if="locateLoading" class="filter-hint">全项目检索中…</p>
+      <p v-else-if="filter.trim() && locateHits.length" class="filter-hint">
+        {{ locateHits.length }} 个定位结果 · Enter 打开首项
+      </p>
     </div>
 
-    <div class="body">
+    <div ref="treeBodyRef" class="body">
       <template v-if="!rootPath">
         <div class="empty">
           <FolderOpen :size="28" :stroke-width="1.5" class="icon" />
@@ -160,7 +298,29 @@ async function runMenu(action: string) {
 
       <template v-else>
         <div
+          v-if="filter.trim() && locateHits.length"
+          class="locate-block"
+        >
+          <div class="locate-title">快速定位</div>
+          <button
+            v-for="hit in locateHits"
+            :key="hit.path"
+            type="button"
+            class="locate-hit"
+            :class="{ active: selectedPath === hit.path }"
+            :data-tree-path="hit.path"
+            :title="hit.path"
+            @click="onLocateHit(hit.path)"
+          >
+            <File :size="13" class="file-icon" />
+            <span class="locate-name">{{ hit.name }}</span>
+            <span class="locate-rel">{{ hit.relative }}</span>
+          </button>
+        </div>
+
+        <div
           class="root-label"
+          :data-tree-path="rootPath"
           @contextmenu="onContext($event, rootPath, true)"
         >
           {{ rootName }}
@@ -175,6 +335,7 @@ async function runMenu(action: string) {
               active: selectedPath === node.path,
               dirty: dirtySet.has(node.path),
             }"
+            :data-tree-path="node.path"
             :style="{ paddingLeft: `${10 + node.depth * 14}px` }"
             @click="onRowClick(node.path, node.isDir)"
             @contextmenu="onContext($event, node.path, node.isDir)"
@@ -196,6 +357,12 @@ async function runMenu(action: string) {
             />
             <span v-if="dirtySet.has(node.path)" class="dirty-dot" />
           </button>
+          <div
+            v-if="filter.trim() && !flatTree.length && !locateHits.length && !locateLoading"
+            class="empty-filter"
+          >
+            无匹配文件
+          </div>
         </div>
       </template>
     </div>
@@ -219,7 +386,7 @@ async function runMenu(action: string) {
       </button>
       <hr />
       <button type="button" @click="runMenu('copy-path')">复制路径</button>
-      <button type="button" @click="runMenu('reveal')">在资源管理器中显示</button>
+      <button type="button" @click="runMenu('locate-here')">在树中定位并打开</button>
     </div>
   </div>
 </template>
@@ -237,7 +404,7 @@ async function runMenu(action: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px 0 12px;
+  padding: 0 6px 0 12px;
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -249,6 +416,12 @@ async function runMenu(action: string) {
   text-transform: uppercase;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .icon-btn {
   width: 26px;
   height: 26px;
@@ -258,9 +431,24 @@ async function runMenu(action: string) {
   color: var(--text-muted);
 }
 
-.icon-btn:hover {
+.icon-btn:hover:not(:disabled) {
   background: var(--accent-soft);
   color: var(--text-primary);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .toolbar {
@@ -268,9 +456,38 @@ async function runMenu(action: string) {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.filter-wrap {
+  position: relative;
+}
+
 .filter {
   width: 100%;
   height: 30px;
+  padding-right: 28px;
+}
+
+.clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.clear:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.filter-hint {
+  margin: 6px 2px 0;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .body {
@@ -344,6 +561,53 @@ async function runMenu(action: string) {
   color: var(--accent);
 }
 
+.locate-block {
+  padding: 8px 8px 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.locate-title {
+  padding: 0 6px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+}
+
+.locate-hit {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 16px minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text-primary);
+}
+
+.locate-hit:hover,
+.locate-hit.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.locate-name {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.locate-rel {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
 .root-label {
   padding: 8px 12px 4px;
   font-size: 11px;
@@ -375,6 +639,21 @@ async function runMenu(action: string) {
 .row.active {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.row:deep(.flash),
+.row.flash {
+  animation: flash-row 0.9s ease;
+}
+
+@keyframes flash-row {
+  0% {
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  100% {
+    box-shadow: none;
+  }
 }
 
 .twist {
@@ -418,6 +697,13 @@ async function runMenu(action: string) {
   border-radius: 50%;
   background: var(--accent);
   flex-shrink: 0;
+}
+
+.empty-filter {
+  padding: 16px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .menu {

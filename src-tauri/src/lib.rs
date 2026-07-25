@@ -22,6 +22,13 @@ pub fn run() {
                 MenuItem::with_id(handle, "find_file", "查找文件…", true, Some("CmdOrCtrl+P"))?;
             let search =
                 MenuItem::with_id(handle, "search", "在文件中查找…", true, Some("CmdOrCtrl+Shift+F"))?;
+            let reveal_in_explorer = MenuItem::with_id(
+                handle,
+                "reveal_in_explorer",
+                "在资源管理器中显示",
+                true,
+                Some("Alt+F1"),
+            )?;
             let terminal =
                 MenuItem::with_id(handle, "terminal", "打开终端", true, Some("CmdOrCtrl+`"))?;
             let settings = MenuItem::with_id(handle, "settings", "设置…", true, Some("CmdOrCtrl+,"))?;
@@ -38,6 +45,7 @@ pub fn run() {
                     &separator,
                     &find_file,
                     &search,
+                    &reveal_in_explorer,
                     &terminal,
                     &separator,
                     &settings,

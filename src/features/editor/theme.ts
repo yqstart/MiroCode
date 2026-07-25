@@ -173,8 +173,8 @@ export function editorThemeExtensions(theme: ThemeId): Extension[] {
 }
 
 export const THEME_LABELS: Record<ThemeId, string> = {
-  "adnify-dark": "Adnify Dark",
-  dawn: "Dawn",
-  midnight: "Midnight",
-  cyberpunk: "Cyberpunk",
+  "adnify-dark": "Miro Dark",
+  dawn: "Miro Dawn",
+  midnight: "Miro Midnight",
+  cyberpunk: "Miro Cyberpunk",
 };

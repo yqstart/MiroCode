@@ -9,9 +9,11 @@ import StatusBar from "@/app/StatusBar.vue";
 import FindInFilesDialog from "@/features/search/FindInFilesDialog.vue";
 import QuickOpen from "@/features/search/QuickOpen.vue";
 import SettingsModal from "@/features/settings/SettingsModal.vue";
+import { basename } from "@/shared/fs";
 import { useEditorStore } from "@/stores/editor";
 import { useSearchStore } from "@/stores/search";
 import { useSessionsStore } from "@/stores/sessions";
+import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
 
@@ -20,9 +22,21 @@ const workspace = useWorkspaceStore();
 const editor = useEditorStore();
 const search = useSearchStore();
 const sessions = useSessionsStore();
+const settings = useSettingsStore();
 const { settingsOpen } = storeToRefs(ui);
 
 let unlistenMenu: (() => void) | undefined;
+
+async function locateActiveInExplorer() {
+  if (!editor.activePath) {
+    workspace.showNotice("当前没有打开的文件");
+    return;
+  }
+  settings.setActivePanel("explorer");
+  settings.setSidebarCollapsed(false);
+  await workspace.revealPath(editor.activePath);
+  workspace.showNotice(`已定位 ${basename(editor.activePath)}`);
+}
 
 function handleMenuAction(action: string) {
   if (action === "open_folder") void workspace.openFolder();
@@ -31,6 +45,7 @@ function handleMenuAction(action: string) {
   if (action === "find_file") search.openQuickOpen();
   if (action === "search") search.openFindInFiles();
   if (action === "terminal") sessions.openSessions(workspace.rootPath);
+  if (action === "reveal_in_explorer") void locateActiveInExplorer();
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -65,6 +80,12 @@ function onKeydown(event: KeyboardEvent) {
     sessions.openSessions(workspace.rootPath);
     return;
   }
+  // Alt+F1：在资源管理器中定位当前文件（对齐 WebStorm）
+  if (event.altKey && !mod && event.key === "F1") {
+    event.preventDefault();
+    void locateActiveInExplorer();
+    return;
+  }
   if (event.key === "Escape") {
     if (search.findInFilesVisible) {
       search.closeFindInFiles();
@@ -80,8 +101,14 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
+function onWindowFocus() {
+  if (!workspace.rootPath) return;
+  void workspace.refreshFromDisk([], { quiet: true });
+}
+
 onMounted(async () => {
   window.addEventListener("keydown", onKeydown);
+  window.addEventListener("focus", onWindowFocus);
   try {
     unlistenMenu = await listen<string>("menu://action", (event) => {
       handleMenuAction(event.payload);
@@ -93,6 +120,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("focus", onWindowFocus);
+  workspace.stopWatch();
   unlistenMenu?.();
 });
 </script>

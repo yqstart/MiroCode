@@ -8,6 +8,18 @@
     "opener:default",
     "dialog:default",
     "fs:default",
+    "fs:allow-watch",
+    "fs:allow-unwatch",
+    "fs:scope-home-recursive",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "/Volumes/**" },
+        { "path": "/tmp/**" },
+        { "path": "/private/tmp/**" }
+      ]
+    },
     "pty:default"
   ]
 }
