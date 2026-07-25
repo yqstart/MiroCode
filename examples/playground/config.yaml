@@ -1,0 +1,7 @@
+app:
+  name: Miro Code
+  theme: adnify-dark
+features:
+  - search
+  - git
+  - editor
