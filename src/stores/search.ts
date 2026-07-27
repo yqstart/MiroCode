@@ -10,24 +10,6 @@ import {
 } from "@/shared/searchApi";
 import { useWorkspaceStore } from "@/stores/workspace";
 
-const HISTORY_KEY = "mirocode.search.history.v1";
-const MAX_HISTORY = 20;
-
-function loadHistory(): string[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as string[];
-    return Array.isArray(parsed) ? parsed.slice(0, MAX_HISTORY) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveHistory(items: string[]) {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, MAX_HISTORY)));
-}
-
 export const useSearchStore = defineStore("search", () => {
   const fileQuery = ref("");
   const contentQuery = ref("");
@@ -38,7 +20,6 @@ export const useSearchStore = defineStore("search", () => {
   const contentResults = ref<ContentHit[]>([]);
   const replacePreview = ref<ReplaceResult | null>(null);
   const loading = ref(false);
-  const history = ref<string[]>(loadHistory());
   const quickOpenVisible = ref(false);
   const findInFilesVisible = ref(false);
 
@@ -49,14 +30,6 @@ export const useSearchStore = defineStore("search", () => {
       .split(/[,;\s]+/)
       .map((s) => s.trim().replace(/^\./, ""))
       .filter(Boolean);
-  }
-
-  function pushHistory(query: string) {
-    const q = query.trim();
-    if (!q) return;
-    const next = [q, ...history.value.filter((h) => h !== q)].slice(0, MAX_HISTORY);
-    history.value = next;
-    saveHistory(next);
   }
 
   async function runFileSearch(query?: string) {
@@ -75,7 +48,6 @@ export const useSearchStore = defineStore("search", () => {
         extraIgnores: workspace.extraIgnores,
         extensions: parseExtensions(),
       });
-      pushHistory(q);
     } catch (error) {
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
@@ -103,7 +75,6 @@ export const useSearchStore = defineStore("search", () => {
         extensions: parseExtensions(),
         contextLines: 0,
       });
-      pushHistory(q);
     } catch (error) {
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
@@ -211,7 +182,6 @@ export const useSearchStore = defineStore("search", () => {
     contentResults,
     replacePreview,
     loading,
-    history,
     quickOpenVisible,
     findInFilesVisible,
     runFileSearch,
@@ -223,6 +193,5 @@ export const useSearchStore = defineStore("search", () => {
     openFindInFiles,
     closeFindInFiles,
     clearResults,
-    pushHistory,
   };
 });

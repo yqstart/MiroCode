@@ -33,6 +33,14 @@ textarea {
   color: inherit;
 }
 
+/* 压制部分浏览器凭据自动填充按钮 */
+input::-webkit-contacts-auto-fill-button,
+input::-webkit-credentials-auto-fill-button {
+  visibility: hidden;
+  display: none !important;
+  pointer-events: none;
+}
+
 button {
   cursor: pointer;
   border: none;

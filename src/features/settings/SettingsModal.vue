@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { Check, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { THEME_LABELS } from "@/features/editor/theme";
+import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import type { ThemeId, ThemeMeta } from "@/shared/types";
@@ -117,8 +118,10 @@ function onOverlayClick(event: MouseEvent) {
                 <label class="field">
                   <span class="field-label">字号</span>
                   <input
+                    v-bind="PLAIN_INPUT_ATTRS"
                     class="ui-input"
                     type="number"
+                    name="miro-font-size"
                     min="10"
                     max="24"
                     :value="editor.fontSize"

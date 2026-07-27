@@ -2,13 +2,13 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { File, Search } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
+import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { useEditorStore } from "@/stores/editor";
 import { useSearchStore } from "@/stores/search";
 
 const search = useSearchStore();
 const editor = useEditorStore();
-const { fileQuery, fileResults, history, quickOpenVisible, loading } =
-  storeToRefs(search);
+const { fileQuery, fileResults, quickOpenVisible, loading } = storeToRefs(search);
 
 const inputRef = ref<HTMLInputElement | null>(null);
 const activeIndex = ref(0);
@@ -71,11 +71,6 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
-function useHistory(item: string) {
-  fileQuery.value = item;
-  void search.runFileSearch(item);
-}
-
 onMounted(() => {
   if (quickOpenVisible.value) {
     inputRef.value?.focus();
@@ -86,32 +81,20 @@ onMounted(() => {
 <template>
   <div v-if="quickOpenVisible" class="overlay" @mousedown.self="close">
     <div class="panel" role="dialog" aria-label="快速打开">
-      <div class="input-row">
+      <form class="input-row" autocomplete="off" @submit.prevent>
         <Search :size="16" class="icon" />
         <input
           ref="inputRef"
           v-model="fileQuery"
+          v-bind="PLAIN_INPUT_ATTRS"
           class="query"
-          type="search"
+          type="text"
+          name="miro-quick-open"
           placeholder="输入文件名…"
           @keydown="onKeydown"
         />
         <span v-if="loading" class="hint">搜索中…</span>
-      </div>
-
-      <div v-if="!fileQuery.trim() && history.length" class="section">
-        <p class="section-title">最近搜索</p>
-        <button
-          v-for="item in history.slice(0, 6)"
-          :key="item"
-          type="button"
-          class="row"
-          @click="useHistory(item)"
-        >
-          <Search :size="14" />
-          <span>{{ item }}</span>
-        </button>
-      </div>
+      </form>
 
       <div v-if="displayResults.length" class="results">
         <button
@@ -167,6 +150,7 @@ onMounted(() => {
   position: sticky;
   top: 0;
   background: var(--bg-elevated);
+  margin: 0;
 }
 
 .icon {
@@ -185,16 +169,6 @@ onMounted(() => {
 
 .hint {
   font-size: 12px;
-  color: var(--text-muted);
-}
-
-.section {
-  padding: 8px;
-}
-
-.section-title {
-  margin: 0 8px 6px;
-  font-size: 11px;
   color: var(--text-muted);
 }
 

@@ -8,6 +8,7 @@ import {
   X,
 } from "lucide-vue-next";
 import type { SshConnectConfig } from "@/shared/sshApi";
+import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import {
   createEmptyProfile,
   loadSshProfiles,
@@ -266,10 +267,11 @@ const unlocking = computed(() =>
             <span>显示名称</span>
             <input
               v-model="form.name"
+              v-bind="PLAIN_INPUT_ATTRS"
               class="ui-input"
               type="text"
+              name="miro-ssh-name"
               placeholder="主机显示名称"
-              autocomplete="off"
             />
           </label>
           <div class="row-2">
@@ -277,18 +279,21 @@ const unlocking = computed(() =>
               <span>主机</span>
               <input
                 v-model="form.host"
+                v-bind="PLAIN_INPUT_ATTRS"
                 class="ui-input"
                 type="text"
+                name="miro-ssh-host"
                 placeholder="example.com"
-                autocomplete="off"
               />
             </label>
             <label class="field narrow">
               <span>端口</span>
               <input
                 v-model.number="form.port"
+                v-bind="PLAIN_INPUT_ATTRS"
                 class="ui-input"
                 type="number"
+                name="miro-ssh-port"
                 min="1"
                 max="65535"
               />
@@ -298,10 +303,11 @@ const unlocking = computed(() =>
             <span>用户名</span>
             <input
               v-model="form.username"
+              v-bind="PLAIN_INPUT_ATTRS"
               class="ui-input"
               type="text"
+              name="miro-ssh-username"
               placeholder="root"
-              autocomplete="off"
             />
           </label>
           <label class="field">
@@ -315,10 +321,10 @@ const unlocking = computed(() =>
             <span>密码（连接时使用，不保存）</span>
             <input
               v-model="password"
+              v-bind="PLAIN_INPUT_ATTRS"
               class="ui-input"
               type="password"
-              autocomplete="new-password"
-              spellcheck="false"
+              name="miro-ssh-password"
             />
           </label>
           <template v-else>
@@ -326,21 +332,21 @@ const unlocking = computed(() =>
               <span>私钥路径</span>
               <input
                 v-model="form.privateKeyPath"
+                v-bind="PLAIN_INPUT_ATTRS"
                 class="ui-input"
                 type="text"
+                name="miro-ssh-key-path"
                 placeholder="~/.ssh/id_ed25519"
-                autocomplete="off"
-                spellcheck="false"
               />
             </label>
             <label class="field">
               <span>私钥口令（可选，不保存）</span>
               <input
                 v-model="passphrase"
+                v-bind="PLAIN_INPUT_ATTRS"
                 class="ui-input"
                 type="password"
-                autocomplete="new-password"
-                spellcheck="false"
+                name="miro-ssh-passphrase"
               />
             </label>
           </template>
@@ -386,10 +392,10 @@ const unlocking = computed(() =>
             <span>密码</span>
             <input
               v-model="unlockPassword"
+              v-bind="PLAIN_INPUT_ATTRS"
               class="ui-input"
               type="password"
-              autocomplete="new-password"
-              spellcheck="false"
+              name="miro-ssh-unlock-password"
               @keydown.enter="confirmUnlock"
             />
           </label>
@@ -397,10 +403,10 @@ const unlocking = computed(() =>
             <span>私钥口令（如无请留空）</span>
             <input
               v-model="unlockPassphrase"
+              v-bind="PLAIN_INPUT_ATTRS"
               class="ui-input"
               type="password"
-              autocomplete="new-password"
-              spellcheck="false"
+              name="miro-ssh-unlock-passphrase"
               @keydown.enter="confirmUnlock"
             />
           </label>

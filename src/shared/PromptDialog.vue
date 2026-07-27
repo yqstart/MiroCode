@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import {
   registerPromptHandler,
   type PromptDialogOptions,
@@ -85,8 +86,10 @@ onBeforeUnmount(() => {
       <input
         ref="inputRef"
         v-model="value"
+        v-bind="PLAIN_INPUT_ATTRS"
         class="ui-input"
         type="text"
+        name="miro-prompt"
         :placeholder="placeholder"
         @keydown.enter.prevent="onConfirm"
       />

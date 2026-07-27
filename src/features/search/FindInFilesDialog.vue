@@ -2,6 +2,7 @@
 import { nextTick, ref, watch } from "vue";
 import { Replace, Search, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
+import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { useEditorStore } from "@/stores/editor";
 import { useSearchStore } from "@/stores/search";
 
@@ -16,7 +17,6 @@ const {
   replacePreview,
   loading,
   findInFilesVisible,
-  history,
 } = storeToRefs(search);
 
 const queryRef = ref<HTMLInputElement | null>(null);
@@ -102,11 +102,6 @@ function onKeydown(event: KeyboardEvent) {
     }
   }
 }
-
-function useHistory(item: string) {
-  contentQuery.value = item;
-  void onSearch();
-}
 </script>
 
 <template>
@@ -134,8 +129,10 @@ function useHistory(item: string) {
           <input
             ref="queryRef"
             v-model="contentQuery"
+            v-bind="PLAIN_INPUT_ATTRS"
             class="ui-input"
-            type="search"
+            type="text"
+            name="miro-find-query"
             placeholder="输入要查找的文本…"
             @keydown.enter.exact.prevent="onSearch"
           />
@@ -147,8 +144,10 @@ function useHistory(item: string) {
             <Replace :size="14" class="inline-icon" />
             <input
               v-model="replaceText"
+              v-bind="PLAIN_INPUT_ATTRS"
               class="ui-input"
               type="text"
+              name="miro-find-replace"
               placeholder="替换文本…"
             />
           </div>
@@ -163,8 +162,10 @@ function useHistory(item: string) {
             <span class="label">文件掩码</span>
             <input
               v-model="extensions"
+              v-bind="PLAIN_INPUT_ATTRS"
               class="ui-input mask"
               type="text"
+              name="miro-find-mask"
               placeholder="ts, vue, md（可选）"
             />
           </label>
@@ -203,19 +204,6 @@ function useHistory(item: string) {
               {{ loading ? "搜索中…" : "查找" }}
             </button>
           </div>
-        </div>
-
-        <div v-if="history.length && !contentQuery.trim()" class="history">
-          <span class="history-label">最近搜索</span>
-          <button
-            v-for="item in history.slice(0, 8)"
-            :key="item"
-            type="button"
-            class="history-chip"
-            @click="useHistory(item)"
-          >
-            {{ item }}
-          </button>
         </div>
       </div>
 
@@ -414,33 +402,6 @@ function useHistory(item: string) {
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
-}
-
-.history {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-
-.history-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-right: 4px;
-}
-
-.history-chip {
-  font-size: 11px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: var(--bg-app);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-}
-
-.history-chip:hover {
-  color: var(--accent);
-  border-color: var(--accent);
 }
 
 .preview-banner {

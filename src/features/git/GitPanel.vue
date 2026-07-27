@@ -11,6 +11,7 @@ import {
 } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { basename, joinPath } from "@/shared/fs";
+import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -340,8 +341,10 @@ async function toggleLog() {
         <section class="section commit-box">
           <textarea
             v-model="commitMessage"
+            v-bind="PLAIN_INPUT_ATTRS"
             class="commit-input"
             rows="3"
+            name="miro-commit-message"
             placeholder="提交说明…"
           />
           <button type="button" class="cta" @click="git.commit()">
