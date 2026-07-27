@@ -12,6 +12,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_pty::init())
+        .manage(commands::ssh::SshState::default())
         .setup(|app| {
             let handle = app.handle();
 
@@ -90,6 +91,8 @@ pub fn run() {
             commands::git::git_rename_branch,
             commands::git::git_log,
             commands::git::git_diff,
+            commands::git::git_file_sides,
+            commands::git::git_conflict_sides,
             commands::git::git_pull,
             commands::git::git_push,
             commands::git::git_stash,
@@ -100,6 +103,15 @@ pub fn run() {
             commands::git::git_merge_branch,
             commands::git::git_conflict_files,
             commands::git::git_resolve_conflict,
+            commands::ssh::ssh_shell_open,
+            commands::ssh::ssh_shell_write,
+            commands::ssh::ssh_shell_resize,
+            commands::ssh::ssh_shell_close,
+            commands::ssh::sftp_open,
+            commands::ssh::sftp_list,
+            commands::ssh::sftp_pwd,
+            commands::ssh::sftp_upload,
+            commands::ssh::sftp_close,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Miro Code");

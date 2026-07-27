@@ -216,7 +216,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
   }
 
-  async function openFolder(path?: string | null) {
+  async function openFolder(
+    path?: string | null,
+    options?: { quiet?: boolean },
+  ): Promise<boolean> {
     try {
       let selected = path;
       if (!selected) {
@@ -226,7 +229,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
           title: "打开文件夹",
         });
       }
-      if (!selected || Array.isArray(selected)) return;
+      if (!selected || Array.isArray(selected)) return false;
 
       stopWatch();
       rootPath.value = selected;
@@ -236,11 +239,32 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       selectedPath.value = selected;
       await loadChildren(selected);
       recentFolders.value = pushRecentFolder(selected);
-      showNotice(`已打开 ${rootName.value}`);
+      if (!options?.quiet) {
+        showNotice(`已打开 ${rootName.value}`);
+      }
       void useGitStore().refresh();
       void startWatch(selected);
+      return true;
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : String(error), 3200);
+      if (!options?.quiet) {
+        showNotice(error instanceof Error ? error.message : String(error), 3200);
+      }
+      return false;
+    }
+  }
+
+  /** 启动时恢复最近一次成功打开的工作区 */
+  async function restoreLastFolder() {
+    if (rootPath.value) return;
+    for (const path of recentFolders.value) {
+      try {
+        const exists = await pathExists(path, path);
+        if (!exists) continue;
+      } catch {
+        continue;
+      }
+      const ok = await openFolder(path, { quiet: true });
+      if (ok) return;
     }
   }
 
@@ -516,6 +540,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     watchActive,
     showNotice,
     openFolder,
+    restoreLastFolder,
     toggleExpand,
     refreshTree,
     refreshFromDisk,

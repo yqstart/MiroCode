@@ -15,7 +15,7 @@
 | 产品名 | Miro Code |
 | 技术栈 | Tauri 2 + Vue 3 + TypeScript |
 | 平台 | Windows / macOS / Linux |
-| 不在本期 | 顶部工具栏自定义、远程开发、插件市场、完整 LSP 服务端自研 |
+| 不在本期 | 顶部工具栏自定义、插件市场、完整 LSP 服务端自研 |
 
 ---
 

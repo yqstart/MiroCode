@@ -44,6 +44,8 @@
 | `--bg-app` | `#0F0F12` | 应用底 |
 | `--bg-panel` | `#16161A` | 侧栏 / 面板 |
 | `--bg-elevated` | `#1C1C22` | 卡片 / 输入底 |
+| `--bg-editor` | `#0F0F12` | 编辑区 |
+| `--bg-terminal` | `#0C0C10` | 终端底 |
 | `--bg-overlay` | `rgba(0,0,0,.45)` | 设置弹层遮罩 |
 | `--border-subtle` | `#2A2A32` | 分割线、卡片边 |
 | `--text-primary` | `#F4F4F5` | 标题、主文案 |
@@ -61,21 +63,23 @@
 
 | Token | 建议值 | 用途 |
 |---|---|---|
-| `--bg-app` | `#F4F5F7` | 应用底 |
+| `--bg-app` | `#F7F8FA` | 应用底（干净雾白，避免发灰） |
 | `--bg-panel` | `#FFFFFF` | 侧栏 / 面板 |
 | `--bg-elevated` | `#FFFFFF` | 卡片 |
-| `--bg-overlay` | `rgba(15,23,42,.35)` | 遮罩 |
-| `--border-subtle` | `#E4E4E7` | 边框 |
-| `--text-primary` | `#18181B` | 主文案 |
-| `--text-secondary` | `#52525B` | 次文案 |
-| `--text-muted` | `#A1A1AA` | 占位 |
-| `--accent` | `#3B82F6` | 主强调（蓝） |
-| `--accent-soft` | `rgba(59,130,246,.12)` | 选中底 |
+| `--bg-editor` | `#FFFFFF` | 编辑区纯白 |
+| `--bg-terminal` | `#E8ECF1` | 终端底（略深，提升输出对比） |
+| `--bg-overlay` | `rgba(15,23,42,.32)` | 遮罩 |
+| `--border-subtle` | `#E6E8EC` | 边框 |
+| `--text-primary` | `#1C1C21` | 主文案 |
+| `--text-secondary` | `#55555F` | 次文案 |
+| `--text-muted` | `#8C8C97` | 占位 |
+| `--accent` | `#2563EB` | 主强调（蓝） |
+| `--accent-soft` | `rgba(37,99,235,.10)` | 选中底 |
 | `--accent-fg` | `#FFFFFF` | 强调色上的字 |
-| `--success` | `#10B981` | 成功 |
-| `--warning` | `#F59E0B` | 警告 |
-| `--danger` | `#EF4444` | 错误 |
-| `--focus-ring` | `rgba(59,130,246,.35)` | 焦点 |
+| `--success` | `#059669` | 成功 |
+| `--warning` | `#D97706` | 警告 |
+| `--danger` | `#DC2626` | 错误 |
+| `--focus-ring` | `rgba(37,99,235,.35)` | 焦点 |
 
 > 色值允许在实现时 ± 微调以贴合截图；变更后需同步更新本文档。
 
@@ -152,11 +156,13 @@
 
 | 语法角色 | 深色倾向 | 浅色倾向 |
 |---|---|---|
-| keyword | 紫 / 蓝紫 | 蓝 |
-| string | 暖绿或柔橙 | 绿 |
-| comment | 低对比灰 | 中灰 |
-| function | 浅青 / 淡紫 | 靛 |
-| number / constant | 琥珀 | 琥珀偏深 |
+| keyword | 淡紫 | 深蓝 `#1D4ED8` |
+| string | 暖绿 | 深绿 `#047857` |
+| comment | 中低对比灰 | 中灰 `#6B7280` |
+| function | 靛紫 | 靛紫 `#6D28D9` |
+| number / constant | 琥珀 | 深琥珀 `#C2410C` |
+| property | 浅紫 | 青 `#0E7490` |
+| type / class | 浅蓝 | 深蓝 `#1E40AF` |
 | punctuation | muted | muted |
 
 要求：切换 UI 主题时，编辑区高亮**同步切换**，禁止 UI 已 Dawn、代码仍 Dark。

@@ -382,8 +382,8 @@ function onOverlayClick(event: MouseEvent) {
 }
 
 .preview[data-kind="light"] {
-  background: #f8fafc;
-  border-color: #e4e4e7;
+  background: #ffffff;
+  border-color: #e6e8ec;
 }
 
 .theme-card[data-selected="true"] .preview[data-kind="light"] {
@@ -400,7 +400,7 @@ function onOverlayClick(event: MouseEvent) {
 }
 
 .preview[data-kind="light"] .preview-bar {
-  background: #3b82f6;
+  background: #2563eb;
 }
 
 .preview-lines {

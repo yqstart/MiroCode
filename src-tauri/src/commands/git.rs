@@ -56,6 +56,28 @@ pub struct GitDiffResult {
     pub patch: String,
 }
 
+/// 分栏对比两侧文本（WebStorm 风格）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileSides {
+    pub path: String,
+    pub left: String,
+    pub right: String,
+    pub left_label: String,
+    pub right_label: String,
+}
+
+/// 冲突文件三路文本。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitConflictSides {
+    pub path: String,
+    pub base: String,
+    pub ours: String,
+    pub theirs: String,
+    pub working: String,
+}
+
 fn status_label(status: git2::Status) -> String {
     if status.is_conflicted() {
         return "conflict".into();
@@ -466,6 +488,122 @@ pub fn git_diff(
     Ok(GitDiffResult {
         path: path.unwrap_or_else(|| "工作区".into()),
         patch,
+    })
+}
+
+fn blob_text(repo: &Repository, id: git2::Oid) -> Result<String, String> {
+    let blob = repo.find_blob(id).map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(blob.content()).to_string())
+}
+
+fn head_file_text(repo: &Repository, path: &str) -> Result<String, String> {
+    let Ok(head) = repo.head() else {
+        return Ok(String::new());
+    };
+    let Ok(tree) = head.peel_to_tree() else {
+        return Ok(String::new());
+    };
+    match tree.get_path(Path::new(path)) {
+        Ok(entry) => {
+            let obj = entry.to_object(repo).map_err(|e| e.to_string())?;
+            let blob = obj.peel_to_blob().map_err(|e| e.to_string())?;
+            Ok(String::from_utf8_lossy(blob.content()).to_string())
+        }
+        Err(_) => Ok(String::new()),
+    }
+}
+
+fn index_file_text(repo: &Repository, path: &str) -> Result<String, String> {
+    let index = repo.index().map_err(|e| e.to_string())?;
+    match index.get_path(Path::new(path), 0) {
+        Some(entry) => blob_text(repo, entry.id),
+        None => Ok(String::new()),
+    }
+}
+
+fn workdir_file_text(repo: &Repository, path: &str) -> Result<String, String> {
+    let wd = repo.workdir().ok_or("无工作区")?;
+    let full = wd.join(path);
+    if !full.exists() {
+        return Ok(String::new());
+    }
+    if full.is_dir() {
+        return Err("目标是目录，无法对比".into());
+    }
+    std::fs::read_to_string(&full).map_err(|e| format!("读取工作区文件失败: {e}"))
+}
+
+/// 分栏 diff：staged=true → HEAD|Index；否则 Index|工作区。
+#[tauri::command]
+pub fn git_file_sides(
+    root: String,
+    path: String,
+    staged: Option<bool>,
+) -> Result<GitFileSides, String> {
+    if path.trim().is_empty() {
+        return Err("请选择具体文件进行分栏对比".into());
+    }
+    let repo = open_repo(&root)?;
+    let staged = staged.unwrap_or(false);
+    if staged {
+        Ok(GitFileSides {
+            path: path.clone(),
+            left: head_file_text(&repo, &path)?,
+            right: index_file_text(&repo, &path)?,
+            left_label: "HEAD".into(),
+            right_label: "已暂存".into(),
+        })
+    } else {
+        let left = {
+            let indexed = index_file_text(&repo, &path)?;
+            if indexed.is_empty() {
+                head_file_text(&repo, &path)?
+            } else {
+                indexed
+            }
+        };
+        Ok(GitFileSides {
+            path: path.clone(),
+            left,
+            right: workdir_file_text(&repo, &path)?,
+            left_label: "索引".into(),
+            right_label: "工作区".into(),
+        })
+    }
+}
+
+/// 冲突分栏：ours / theirs / base / working。
+#[tauri::command]
+pub fn git_conflict_sides(root: String, path: String) -> Result<GitConflictSides, String> {
+    if path.trim().is_empty() {
+        return Err("路径不能为空".into());
+    }
+    let repo = open_repo(&root)?;
+    let index = repo.index().map_err(|e| e.to_string())?;
+    let conflict = index
+        .conflict_get(Path::new(&path))
+        .map_err(|e| format!("不是冲突文件或无法读取: {e}"))?;
+
+    let base = match conflict.ancestor {
+        Some(e) => blob_text(&repo, e.id)?,
+        None => String::new(),
+    };
+    let ours = match conflict.our {
+        Some(e) => blob_text(&repo, e.id)?,
+        None => String::new(),
+    };
+    let theirs = match conflict.their {
+        Some(e) => blob_text(&repo, e.id)?,
+        None => String::new(),
+    };
+    let working = workdir_file_text(&repo, &path)?;
+
+    Ok(GitConflictSides {
+        path,
+        base,
+        ours,
+        theirs,
+        working,
     })
 }
 

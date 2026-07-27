@@ -11,6 +11,7 @@ import QuickOpen from "@/features/search/QuickOpen.vue";
 import SettingsModal from "@/features/settings/SettingsModal.vue";
 import PromptDialog from "@/shared/PromptDialog.vue";
 import { basename } from "@/shared/fs";
+import { readBootFolder } from "@/shared/openWorkspace";
 import { useEditorStore } from "@/stores/editor";
 import { useSearchStore } from "@/stores/search";
 import { useSessionsStore } from "@/stores/sessions";
@@ -116,6 +117,13 @@ onMounted(async () => {
     });
   } catch {
     // 纯 Vite 预览时无 Tauri runtime
+  }
+
+  const bootFolder = readBootFolder();
+  if (bootFolder) {
+    void workspace.openFolder(bootFolder, { quiet: true });
+  } else {
+    void workspace.restoreLastFolder();
   }
 });
 

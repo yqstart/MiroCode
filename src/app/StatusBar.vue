@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
-import { THEME_LABELS } from "@/features/editor/theme";
+import { THEME_LABELS, THEME_ORDER } from "@/features/editor/theme";
+import type { ThemeId } from "@/shared/types";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
@@ -15,6 +16,8 @@ const { editor: editorPrefs, theme } = storeToRefs(settings);
 const { activeTab } = storeToRefs(editor);
 const { snapshot } = storeToRefs(git);
 
+const themeMenuOpen = ref(false);
+
 const lang = computed(() => activeTab.value?.language ?? "—");
 const cursor = computed(() => activeTab.value?.cursor ?? { line: 1, column: 1 });
 const dirty = computed(() =>
@@ -24,6 +27,38 @@ const branch = computed(() =>
   snapshot.value.initialized ? snapshot.value.branch : null,
 );
 const themeLabel = computed(() => THEME_LABELS[theme.value]);
+
+const themeOptions = computed(() =>
+  THEME_ORDER.map((id) => ({ id, label: THEME_LABELS[id] })),
+);
+
+function toggleThemeMenu(event: MouseEvent) {
+  event.stopPropagation();
+  themeMenuOpen.value = !themeMenuOpen.value;
+}
+
+function selectTheme(id: ThemeId) {
+  settings.setTheme(id);
+  themeMenuOpen.value = false;
+}
+
+function cycleTheme() {
+  const idx = THEME_ORDER.indexOf(theme.value);
+  const next = THEME_ORDER[(idx + 1) % THEME_ORDER.length] ?? THEME_ORDER[0];
+  settings.setTheme(next);
+}
+
+function onDocClick() {
+  themeMenuOpen.value = false;
+}
+
+onMounted(() => {
+  window.addEventListener("click", onDocClick);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("click", onDocClick);
+});
 </script>
 
 <template>
@@ -46,7 +81,30 @@ const themeLabel = computed(() => THEME_LABELS[theme.value]);
       <span class="sep">·</span>
       <span>Spaces: {{ editorPrefs.tabSize }}</span>
       <span class="sep">·</span>
-      <span>{{ themeLabel }}</span>
+      <div class="theme-switch" @click.stop>
+        <button
+          type="button"
+          class="theme-btn"
+          title="点击切换主题 · 右键循环"
+          @click="toggleThemeMenu"
+          @contextmenu.prevent="cycleTheme"
+        >
+          {{ themeLabel }}
+        </button>
+        <div v-if="themeMenuOpen" class="theme-menu" role="menu">
+          <button
+            v-for="item in themeOptions"
+            :key="item.id"
+            type="button"
+            class="theme-item"
+            :class="{ active: theme === item.id }"
+            role="menuitem"
+            @click="selectTheme(item.id)"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+      </div>
       <span class="sep">·</span>
       <span class="ok">就绪</span>
     </div>
@@ -100,5 +158,57 @@ const themeLabel = computed(() => THEME_LABELS[theme.value]);
 
 .ok {
   color: var(--success);
+}
+
+.theme-switch {
+  position: relative;
+}
+
+.theme-btn {
+  padding: 2px 6px;
+  margin: -2px 0;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  line-height: 1.2;
+}
+
+.theme-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.theme-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  min-width: 148px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-modal);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.theme-item {
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.theme-item:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.theme-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
 }
 </style>

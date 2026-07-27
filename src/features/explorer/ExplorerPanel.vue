@@ -6,15 +6,18 @@ import {
   ChevronsDownUp,
   Crosshair,
   File,
+  FilePlus,
   Folder,
   FolderOpen,
-  MoreHorizontal,
+  FolderPlus,
+  FolderInput,
   RefreshCw,
-  X,
 } from "lucide-vue-next";
+import { open } from "@tauri-apps/plugin-dialog";
 import { storeToRefs } from "pinia";
 import { writeClipboard } from "@/shared/clipboard";
 import { basename, dirname, relativeToRoot } from "@/shared/fs";
+import { openFolderInNewWindow } from "@/shared/openWorkspace";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
@@ -27,15 +30,13 @@ const settings = useSettingsStore();
 const {
   rootPath,
   rootName,
-  filter,
   selectedPath,
   flatTree,
   recentFolders,
   clipboard,
+  childrenMap,
   revealToken,
   revealTarget,
-  locateHits,
-  locateLoading,
   refreshing,
 } = storeToRefs(workspace);
 const { activePath } = storeToRefs(editor);
@@ -47,12 +48,90 @@ const menu = ref<{
   isDir: boolean;
   isRoot: boolean;
 } | null>(null);
-const filterRef = ref<HTMLInputElement | null>(null);
 const treeBodyRef = ref<HTMLElement | null>(null);
+const projectMenuOpen = ref(false);
+const pendingOpenPath = ref<string | null>(null);
+const openingMode = ref(false);
 
 const dirtySet = computed(() => editor.dirtyPaths);
 const canLocate = computed(() => Boolean(rootPath.value && activePath.value));
 const isRootTarget = computed(() => Boolean(menu.value?.isRoot));
+const panelTitle = computed(() => (rootPath.value ? rootName.value : "选择项目"));
+const switchCandidates = computed(() =>
+  recentFolders.value.filter((p) => p !== rootPath.value),
+);
+
+/** 工具栏新建：优先落在选中目录，否则落在选中文件的父目录 / 根目录 */
+function resolveCreateParent(): string | null {
+  if (!rootPath.value) return null;
+  const selected = selectedPath.value;
+  if (!selected || selected === rootPath.value) return rootPath.value;
+
+  const inTree = flatTree.value.find((n) => n.path === selected);
+  if (inTree?.isDir) return selected;
+  if (selected in childrenMap.value) return selected;
+  return dirname(selected);
+}
+
+async function createFromToolbar(isDir: boolean) {
+  const parent = resolveCreateParent();
+  if (!parent) return;
+  const created = await workspace.createIn(parent, isDir);
+  if (created && !isDir) await editor.openFile(created);
+}
+
+function closeProjectMenu() {
+  projectMenuOpen.value = false;
+}
+
+function toggleProjectMenu() {
+  projectMenuOpen.value = !projectMenuOpen.value;
+  menu.value = null;
+}
+
+function requestOpenPath(path: string) {
+  closeProjectMenu();
+  pendingOpenPath.value = path;
+}
+
+async function onOpenNewProject() {
+  closeProjectMenu();
+  try {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "打开新项目",
+    });
+    if (!selected || Array.isArray(selected)) return;
+    pendingOpenPath.value = selected;
+  } catch (error) {
+    workspace.showNotice(error instanceof Error ? error.message : String(error), 3200);
+  }
+}
+
+async function confirmOpenMode(mode: "current" | "new") {
+  const path = pendingOpenPath.value;
+  if (!path || openingMode.value) return;
+  openingMode.value = true;
+  try {
+    if (mode === "new") {
+      await openFolderInNewWindow(path);
+      workspace.showNotice(`已在新窗口打开 ${basename(path)}`);
+    } else {
+      await workspace.openFolder(path);
+    }
+    pendingOpenPath.value = null;
+  } catch (error) {
+    workspace.showNotice(error instanceof Error ? error.message : String(error), 3200);
+  } finally {
+    openingMode.value = false;
+  }
+}
+
+function cancelOpenMode() {
+  if (openingMode.value) return;
+  pendingOpenPath.value = null;
+}
 
 function scrollRowIntoView(path: string) {
   const root = treeBodyRef.value;
@@ -92,14 +171,15 @@ watch(activePath, (path) => {
 
 function closeMenu() {
   menu.value = null;
+  closeProjectMenu();
 }
 
 async function onOpen() {
-  await workspace.openFolder();
+  await onOpenNewProject();
 }
 
 async function onOpenRecent(path: string) {
-  await workspace.openFolder(path);
+  requestOpenPath(path);
 }
 
 async function onRowClick(path: string, isDir: boolean) {
@@ -137,28 +217,6 @@ async function locateActiveFile() {
   settings.setSidebarCollapsed(false);
   await workspace.revealPath(activePath.value);
   workspace.showNotice(`已定位 ${basename(activePath.value)}`);
-}
-
-function focusFilter() {
-  filterRef.value?.focus();
-  filterRef.value?.select();
-}
-
-async function onLocateHit(path: string) {
-  await workspace.revealPath(path);
-  await editor.openFile(path);
-}
-
-async function onFilterEnter() {
-  const hit = locateHits.value[0];
-  if (hit) {
-    await onLocateHit(hit.path);
-    return;
-  }
-  const firstFile = flatTree.value.find((n) => !n.isDir);
-  if (firstFile) {
-    await onRowClick(firstFile.path, false);
-  }
 }
 
 async function runMenu(action: string) {
@@ -234,14 +292,61 @@ async function runMenu(action: string) {
   }
 }
 
-defineExpose({ locateActiveFile, focusFilter });
+defineExpose({ locateActiveFile });
 </script>
 
 <template>
   <div class="panel" @click="closeMenu">
     <header class="header">
-      <span class="title">资源管理器</span>
+      <div class="title-wrap">
+        <button
+          type="button"
+          class="title-btn"
+          :title="rootPath ?? '选择或切换项目'"
+          @click.stop="toggleProjectMenu"
+        >
+          <span class="title">{{ panelTitle }}</span>
+          <ChevronDown :size="14" class="title-caret" />
+        </button>
+        <div v-if="projectMenuOpen" class="project-menu" @click.stop>
+          <button type="button" class="project-item primary" @click="onOpenNewProject">
+            <FolderInput :size="14" />
+            <span>打开新项目…</span>
+          </button>
+          <template v-if="switchCandidates.length">
+            <div class="project-sep" />
+            <p class="project-label">最近项目</p>
+            <button
+              v-for="item in switchCandidates"
+              :key="item"
+              type="button"
+              class="project-item"
+              :title="item"
+              @click="requestOpenPath(item)"
+            >
+              <span class="project-name">{{ basename(item) }}</span>
+              <span class="project-path">{{ item }}</span>
+            </button>
+          </template>
+        </div>
+      </div>
       <div v-if="rootPath" class="header-actions">
+        <button
+          type="button"
+          class="icon-btn"
+          title="新建文件"
+          @click.stop="createFromToolbar(false)"
+        >
+          <FilePlus :size="15" />
+        </button>
+        <button
+          type="button"
+          class="icon-btn"
+          title="新建文件夹"
+          @click.stop="createFromToolbar(true)"
+        >
+          <FolderPlus :size="15" />
+        </button>
         <button
           type="button"
           class="icon-btn"
@@ -268,43 +373,44 @@ defineExpose({ locateActiveFile, focusFilter });
         >
           <ChevronsDownUp :size="15" />
         </button>
-        <button
-          type="button"
-          class="icon-btn"
-          title="打开其他文件夹"
-          @click.stop="onOpen"
-        >
-          <MoreHorizontal :size="16" />
-        </button>
       </div>
     </header>
 
-    <div v-if="rootPath" class="toolbar">
-      <div class="filter-wrap">
-        <input
-          ref="filterRef"
-          class="ui-input filter"
-          type="search"
-          placeholder="过滤 / 定位文件…"
-          :value="filter"
-          @input="workspace.setFilter(($event.target as HTMLInputElement).value)"
-          @keydown.enter.prevent="onFilterEnter"
-          @keydown.escape.prevent="workspace.clearFilter()"
-        />
+    <div
+      v-if="pendingOpenPath"
+      class="mode-overlay"
+      @mousedown.self="cancelOpenMode"
+    >
+      <div class="mode-card" @click.stop>
+        <p class="mode-title">打开项目</p>
+        <p class="mode-path" :title="pendingOpenPath">
+          {{ basename(pendingOpenPath) }}
+        </p>
         <button
-          v-if="filter"
           type="button"
-          class="clear"
-          title="清除"
-          @click="workspace.clearFilter()"
+          class="mode-btn"
+          :disabled="openingMode"
+          @click="confirmOpenMode('current')"
         >
-          <X :size="12" />
+          在本窗口打开
+        </button>
+        <button
+          type="button"
+          class="mode-btn accent"
+          :disabled="openingMode"
+          @click="confirmOpenMode('new')"
+        >
+          在新窗口打开
+        </button>
+        <button
+          type="button"
+          class="mode-cancel"
+          :disabled="openingMode"
+          @click="cancelOpenMode"
+        >
+          取消
         </button>
       </div>
-      <p v-if="locateLoading" class="filter-hint">全项目检索中…</p>
-      <p v-else-if="filter.trim() && locateHits.length" class="filter-hint">
-        {{ locateHits.length }} 个定位结果 · Enter 打开首项
-      </p>
     </div>
 
     <div ref="treeBodyRef" class="body">
@@ -332,34 +438,9 @@ defineExpose({ locateActiveFile, focusFilter });
 
       <template v-else>
         <div
-          v-if="filter.trim() && locateHits.length"
-          class="locate-block"
-        >
-          <div class="locate-title">快速定位</div>
-          <button
-            v-for="hit in locateHits"
-            :key="hit.path"
-            type="button"
-            class="locate-hit"
-            :class="{ active: selectedPath === hit.path }"
-            :data-tree-path="hit.path"
-            :title="hit.path"
-            @click="onLocateHit(hit.path)"
-          >
-            <File :size="13" class="file-icon" />
-            <span class="locate-name">{{ hit.name }}</span>
-            <span class="locate-rel">{{ hit.relative }}</span>
-          </button>
-        </div>
-
-        <div
-          class="root-label"
-          :data-tree-path="rootPath"
+          class="tree"
           @contextmenu="onContext($event, rootPath, true)"
         >
-          {{ rootName }}
-        </div>
-        <div class="tree">
           <button
             v-for="node in flatTree"
             :key="node.path"
@@ -391,12 +472,6 @@ defineExpose({ locateActiveFile, focusFilter });
             />
             <span v-if="dirtySet.has(node.path)" class="dirty-dot" />
           </button>
-          <div
-            v-if="filter.trim() && !flatTree.length && !locateHits.length && !locateLoading"
-            class="empty-filter"
-          >
-            无匹配文件
-          </div>
         </div>
       </template>
     </div>
@@ -461,18 +536,178 @@ defineExpose({ locateActiveFile, focusFilter });
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.title-wrap {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  margin-right: 6px;
+}
+
+.title-btn {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 2px 6px 2px 4px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+
+.title-btn:hover {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
 .title {
+  min-width: 0;
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title-caret {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.project-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  min-width: 220px;
+  max-width: min(320px, 70vw);
+  padding: 6px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-modal);
+}
+
+.project-item {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text-primary);
+}
+
+.project-item.primary {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.project-item:hover {
+  background: var(--accent-soft);
+}
+
+.project-item .project-name {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.project-item .project-path {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-item:not(.primary) {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border-subtle);
+}
+
+.project-label {
+  margin: 2px 10px 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.mode-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: var(--bg-overlay);
+}
+
+.mode-card {
+  width: min(280px, calc(100% - 24px));
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mode-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mode-path {
+  margin: 0 0 4px;
+  font-size: 12px;
   color: var(--text-secondary);
-  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mode-btn {
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.mode-btn.accent {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-fg);
+}
+
+.mode-btn:disabled,
+.mode-cancel:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.mode-cancel {
+  height: 28px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .icon-btn {
@@ -502,45 +737,6 @@ defineExpose({ locateActiveFile, focusFilter });
   to {
     transform: rotate(360deg);
   }
-}
-
-.toolbar {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.filter-wrap {
-  position: relative;
-}
-
-.filter {
-  width: 100%;
-  height: 30px;
-  padding-right: 28px;
-}
-
-.clear {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  display: grid;
-  place-items: center;
-  color: var(--text-muted);
-}
-
-.clear:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.filter-hint {
-  margin: 6px 2px 0;
-  font-size: 11px;
-  color: var(--text-muted);
 }
 
 .body {
@@ -614,62 +810,8 @@ defineExpose({ locateActiveFile, focusFilter });
   color: var(--accent);
 }
 
-.locate-block {
-  padding: 8px 8px 4px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.locate-title {
-  padding: 0 6px 6px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.03em;
-}
-
-.locate-hit {
-  width: 100%;
-  display: grid;
-  grid-template-columns: 16px minmax(0, auto) minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  text-align: left;
-  color: var(--text-primary);
-}
-
-.locate-hit:hover,
-.locate-hit.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.locate-name {
-  font-size: 12.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.locate-rel {
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: right;
-}
-
-.root-label {
-  padding: 8px 12px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.03em;
-}
-
 .tree {
+  min-height: 100%;
   padding: 4px 6px 12px;
 }
 
@@ -750,13 +892,6 @@ defineExpose({ locateActiveFile, focusFilter });
   border-radius: 50%;
   background: var(--accent);
   flex-shrink: 0;
-}
-
-.empty-filter {
-  padding: 16px 8px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--text-muted);
 }
 
 .menu {

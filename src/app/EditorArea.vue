@@ -1,20 +1,28 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { Eye, FileCode, TerminalSquare, X } from "lucide-vue-next";
+import { Columns2, Eye, FileCode, TerminalSquare, X } from "lucide-vue-next";
 import { marked } from "marked";
 import { storeToRefs } from "pinia";
 import CodeMirrorEditor from "@/features/editor/CodeMirrorEditor.vue";
+import CompareView from "@/features/git/CompareView.vue";
 import SessionsView from "@/features/sessions/SessionsView.vue";
+import { useCompareStore } from "@/stores/compare";
 import { useEditorStore } from "@/stores/editor";
 import { useSessionsStore } from "@/stores/sessions";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const editor = useEditorStore();
 const sessions = useSessionsStore();
+const compare = useCompareStore();
 const workspace = useWorkspaceStore();
 const { tabs, activePath, activeTab } = storeToRefs(editor);
 const { open: sessionsOpen, isFocused: sessionsFocused, tabId: sessionsTabId } =
   storeToRefs(sessions);
+const {
+  tabs: compareTabs,
+  activeId: compareActiveId,
+  isFocused: compareFocused,
+} = storeToRefs(compare);
 
 const markdownPreview = ref(false);
 
@@ -24,30 +32,64 @@ const isMarkdown = computed(() => {
 });
 
 const previewHtml = computed(() => {
-  if (!activeTab.value || !markdownPreview.value || sessionsFocused.value) return "";
+  if (
+    !activeTab.value ||
+    !markdownPreview.value ||
+    sessionsFocused.value ||
+    compareFocused.value
+  ) {
+    return "";
+  }
   return marked.parse(activeTab.value.content, { async: false }) as string;
 });
 
-const hasAnyTab = computed(() => tabs.value.length > 0 || sessionsOpen.value);
+const hasAnyTab = computed(
+  () =>
+    tabs.value.length > 0 ||
+    sessionsOpen.value ||
+    compareTabs.value.length > 0,
+);
+
+const showFileEditor = computed(
+  () => !sessionsFocused.value && !compareFocused.value && Boolean(activeTab.value),
+);
 
 function togglePreview() {
-  if (!isMarkdown.value || sessionsFocused.value) return;
+  if (!isMarkdown.value || sessionsFocused.value || compareFocused.value) return;
   markdownPreview.value = !markdownPreview.value;
 }
 
 function activateFile(path: string) {
   sessions.blurSessions();
+  compare.blurCompare();
   editor.activate(path);
 }
 
 function activateSessions() {
+  compare.blurCompare();
   sessions.focusSessions();
+}
+
+function activateCompare(id: string) {
+  sessions.blurSessions();
+  compare.activate(id);
 }
 
 function closeSessionsTab() {
   sessions.closeSessions();
+  if (compareTabs.value.length && !editor.activePath) {
+    compare.focusCompare();
+    return;
+  }
   if (!editor.activePath && editor.tabs.length) {
     editor.activate(editor.tabs[0].path);
+  }
+}
+
+function closeCompareTab(id: string) {
+  compare.closeTab(id);
+  if (!compare.tabs.length && !sessionsFocused.value && editor.activePath) {
+    compare.blurCompare();
   }
 }
 </script>
@@ -60,7 +102,7 @@ function closeSessionsTab() {
         :key="tab.path"
         type="button"
         class="tab"
-        :class="{ active: !sessionsFocused && tab.path === activePath }"
+        :class="{ active: showFileEditor && tab.path === activePath }"
         @click="activateFile(tab.path)"
         @auxclick.middle.prevent="editor.closeTab(tab.path)"
       >
@@ -71,6 +113,22 @@ function closeSessionsTab() {
           title="关闭"
           @click.stop="editor.closeTab(tab.path)"
         >
+          <X :size="12" />
+        </span>
+      </button>
+
+      <button
+        v-for="tab in compareTabs"
+        :key="tab.id"
+        type="button"
+        class="tab compare-tab"
+        :class="{ active: compareFocused && tab.id === compareActiveId }"
+        @click="activateCompare(tab.id)"
+        @auxclick.middle.prevent="closeCompareTab(tab.id)"
+      >
+        <Columns2 :size="12" class="cmp-icon" />
+        <span class="name">{{ tab.title }}</span>
+        <span class="close" title="关闭" @click.stop="closeCompareTab(tab.id)">
           <X :size="12" />
         </span>
       </button>
@@ -92,7 +150,7 @@ function closeSessionsTab() {
       </button>
 
       <button
-        v-if="isMarkdown && activeTab && !sessionsFocused"
+        v-if="isMarkdown && activeTab && showFileEditor"
         type="button"
         class="preview-toggle"
         :title="markdownPreview ? '编辑模式' : '预览模式'"
@@ -105,10 +163,17 @@ function closeSessionsTab() {
     </div>
 
     <div class="canvas">
-      <!-- 会话标签保持挂载，切换文件时不销毁 PTY -->
       <SessionsView v-if="sessionsOpen" v-show="sessionsFocused" />
 
-      <template v-if="!sessionsFocused && activeTab">
+      <CompareView
+        v-for="tab in compareTabs"
+        v-show="compareFocused && tab.id === compareActiveId"
+        :key="tab.id"
+        :tab-id="tab.id"
+        :active="compareFocused && tab.id === compareActiveId"
+      />
+
+      <template v-if="showFileEditor && activeTab">
         <CodeMirrorEditor
           v-show="!markdownPreview"
           :key="activeTab.path"
@@ -122,7 +187,10 @@ function closeSessionsTab() {
         />
       </template>
 
-      <div v-else-if="!sessionsFocused && !activeTab" class="welcome">
+      <div
+        v-else-if="!sessionsFocused && !compareFocused && !activeTab"
+        class="welcome"
+      >
         <h1>Miro Code</h1>
         <p>轻量化桌面代码编辑器</p>
         <div class="actions">
@@ -169,7 +237,7 @@ function closeSessionsTab() {
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   color: var(--text-muted);
   font-size: 12px;
-  max-width: 200px;
+  max-width: 220px;
 }
 
 .tab:hover {
@@ -183,7 +251,8 @@ function closeSessionsTab() {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-.session-tab .term-icon {
+.session-tab .term-icon,
+.compare-tab .cmp-icon {
   color: var(--accent);
   flex-shrink: 0;
 }
@@ -250,6 +319,7 @@ function closeSessionsTab() {
 .canvas {
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
 .md-preview {

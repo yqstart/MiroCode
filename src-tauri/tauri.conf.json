@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Miro Code",
         "width": 1280,
         "height": 800,

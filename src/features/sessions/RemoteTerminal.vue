@@ -2,16 +2,28 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { spawn, type IPty } from "tauri-pty";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
 import { storeToRefs } from "pinia";
 import { terminalThemeColors } from "@/features/sessions/terminalTheme";
+import {
+  sshShellClose,
+  sshShellOpen,
+  sshShellResize,
+  sshShellWrite,
+  type SshConnectConfig,
+} from "@/shared/sshApi";
 import { useSettingsStore } from "@/stores/settings";
 
 const props = defineProps<{
   sessionId: string;
-  cwd: string | null;
+  config: SshConnectConfig;
   active: boolean;
+}>();
+
+const emit = defineEmits<{
+  closed: [];
+  failed: [message: string];
 }>();
 
 const host = ref<HTMLDivElement | null>(null);
@@ -20,26 +32,21 @@ const { theme } = storeToRefs(settings);
 
 let term: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
-let pty: IPty | null = null;
 let disposed = false;
+let connected = false;
 let resizeObserver: ResizeObserver | null = null;
-
-function defaultShell(): string {
-  const platform = navigator.platform.toLowerCase();
-  if (platform.includes("win")) return "powershell.exe";
-  if (platform.includes("mac")) return "/bin/zsh";
-  return "/bin/bash";
-}
+let unlistenData: UnlistenFn | null = null;
+let unlistenExit: UnlistenFn | null = null;
 
 function fit() {
   if (!term || !fitAddon || !props.active) return;
   try {
     fitAddon.fit();
-    if (pty) {
-      pty.resize(term.cols, term.rows);
+    if (connected) {
+      void sshShellResize(props.sessionId, term.cols, term.rows);
     }
   } catch {
-    // 尺寸未就绪时忽略
+    // ignore
   }
 }
 
@@ -60,35 +67,38 @@ async function boot() {
   await nextTick();
   fit();
 
+  term.writeln(
+    `\x1b[90m连接 ${props.config.username}@${props.config.host}:${props.config.port || 22} …\x1b[0m`,
+  );
+
   try {
-    pty = spawn(defaultShell(), [], {
-      cols: term.cols,
-      rows: term.rows,
-      cwd: props.cwd ?? undefined,
-      name: "xterm-256color",
-    });
-
-    pty.onData((data) => {
+    unlistenData = await listen<string>(`ssh://data/${props.sessionId}`, (event) => {
       if (!term || disposed) return;
-      const text =
-        typeof data === "string"
-          ? data
-          : new TextDecoder().decode(data);
-      term.write(text);
+      term.write(event.payload);
+    });
+    unlistenExit = await listen(`ssh://exit/${props.sessionId}`, () => {
+      connected = false;
+      term?.writeln("\r\n\x1b[90m[远程会话已结束]\x1b[0m");
+      emit("closed");
     });
 
-    pty.onExit(() => {
-      term?.writeln("\r\n\x1b[90m[进程已退出]\x1b[0m");
-    });
+    await sshShellOpen(
+      props.sessionId,
+      props.config,
+      term.cols || 80,
+      term.rows || 24,
+    );
+    connected = true;
+    term.focus();
 
     term.onData((data) => {
-      pty?.write(data);
+      if (!connected) return;
+      void sshShellWrite(props.sessionId, data).catch(() => undefined);
     });
   } catch (error) {
-    term.writeln(
-      `\r\n\x1b[31m终端启动失败: ${error instanceof Error ? error.message : String(error)}\x1b[0m`,
-    );
-    term.writeln("\x1b[90m请确认已通过桌面应用运行（pnpm tauri:dev），而非纯浏览器预览。\x1b[0m");
+    const message = error instanceof Error ? error.message : String(error);
+    term.writeln(`\r\n\x1b[31m连接失败: ${message}\x1b[0m`);
+    emit("failed", message);
   }
 
   resizeObserver = new ResizeObserver(() => fit());
@@ -103,12 +113,14 @@ onBeforeUnmount(() => {
   disposed = true;
   resizeObserver?.disconnect();
   resizeObserver = null;
-  try {
-    pty?.kill();
-  } catch {
-    // ignore
+  void unlistenData?.();
+  void unlistenExit?.();
+  unlistenData = null;
+  unlistenExit = null;
+  if (connected) {
+    void sshShellClose(props.sessionId);
   }
-  pty = null;
+  connected = false;
   term?.dispose();
   term = null;
   fitAddon = null;

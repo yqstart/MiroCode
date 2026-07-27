@@ -8,6 +8,7 @@ import {
   writeTextFile,
 } from "@/shared/fs";
 import type { EditorJumpTarget, EditorOpenAt } from "@/shared/types";
+import { useCompareStore } from "@/stores/compare";
 import { useGitStore } from "@/stores/git";
 import { useSessionsStore } from "@/stores/sessions";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -70,6 +71,7 @@ export const useEditorStore = defineStore("editor", () => {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
     useSessionsStore().blurSessions();
+    useCompareStore().blurCompare();
 
     const existing = tabs.value.find((t) => t.path === path);
     if (existing) {
@@ -185,6 +187,7 @@ export const useEditorStore = defineStore("editor", () => {
 
   function activate(path: string) {
     useSessionsStore().blurSessions();
+    useCompareStore().blurCompare();
     activePath.value = path;
     const workspace = useWorkspaceStore();
     workspace.selectPath(path);

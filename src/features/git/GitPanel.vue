@@ -232,10 +232,22 @@ async function toggleLog() {
             :key="entry.path"
             class="change-row conflict"
           >
-            <button type="button" class="path" @click="openFile(entry.path)">
+            <button
+              type="button"
+              class="path"
+              title="分栏合并对比"
+              @click="git.openConflictCompare(entry.path)"
+            >
               {{ basename(entry.path) }}
             </button>
             <div class="row-actions">
+              <button
+                type="button"
+                class="tag"
+                @click="git.openConflictCompare(entry.path)"
+              >
+                分栏合并
+              </button>
               <button
                 type="button"
                 class="tag"
@@ -253,9 +265,9 @@ async function toggleLog() {
               <button
                 type="button"
                 class="tag"
-                @click="git.resolveConflict(entry.path, 'manual')"
+                @click="openFile(entry.path)"
               >
-                手动已解决
+                打开文件
               </button>
             </div>
           </div>

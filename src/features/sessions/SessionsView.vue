@@ -1,22 +1,116 @@
 <script setup lang="ts">
 import { HardDrive, Plus, Server, TerminalSquare, X } from "lucide-vue-next";
+import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 import LocalTerminal from "@/features/sessions/LocalTerminal.vue";
-import { useSessionsStore, type SessionSubView } from "@/stores/sessions";
+import RemoteTerminal from "@/features/sessions/RemoteTerminal.vue";
+import SftpPanel from "@/features/sessions/SftpPanel.vue";
+import SshConnectForm from "@/features/sessions/SshConnectForm.vue";
+import { sftpClose, sftpOpen, type SshConnectConfig } from "@/shared/sshApi";
+import {
+  sftpSessionId,
+  useSessionsStore,
+  type SessionSubView,
+} from "@/stores/sessions";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const sessions = useSessionsStore();
 const workspace = useWorkspaceStore();
-const { subView, localTerminals, activeLocalId } = storeToRefs(sessions);
+const {
+  subView,
+  localTerminals,
+  activeLocalId,
+  remoteSessions,
+  activeRemoteId,
+} = storeToRefs(sessions);
 
-const navItems: { id: SessionSubView; label: string; hint?: string }[] = [
+const remoteConnecting = ref(false);
+const remoteError = ref("");
+const showRemoteForm = ref(false);
+const sftpBusy = ref(false);
+const sftpError = ref("");
+
+const navItems: { id: SessionSubView; label: string }[] = [
   { id: "local", label: "本地终端" },
-  { id: "remote", label: "远程终端", hint: "即将支持" },
-  { id: "sftp", label: "SFTP", hint: "即将支持" },
+  { id: "remote", label: "远程 SSH" },
 ];
+
+const activeRemote = computed(() =>
+  remoteSessions.value.find((t) => t.id === activeRemoteId.value) ?? null,
+);
 
 function onAddLocal() {
   sessions.addLocalTerminal(workspace.rootPath);
+}
+
+function onAddRemote() {
+  showRemoteForm.value = true;
+  remoteError.value = "";
+  sftpError.value = "";
+}
+
+function onRemoteConnect(config: SshConnectConfig) {
+  remoteConnecting.value = true;
+  remoteError.value = "";
+  sessions.addRemoteSession(config);
+  showRemoteForm.value = false;
+  remoteConnecting.value = false;
+}
+
+function onRemoteFailed(id: string, message: string) {
+  remoteError.value = message;
+  void closeRemoteFully(id);
+  showRemoteForm.value = true;
+}
+
+function onRemoteClosed(id: string) {
+  void closeRemoteFully(id);
+}
+
+async function closeRemoteFully(id: string) {
+  const session = remoteSessions.value.find((t) => t.id === id);
+  if (session?.sftpOpened) {
+    try {
+      await sftpClose(sftpSessionId(id));
+    } catch {
+      // 忽略已断开
+    }
+  }
+  sessions.closeRemoteSession(id);
+}
+
+async function switchRemotePane(pane: "shell" | "sftp") {
+  const session = activeRemote.value;
+  if (!session) return;
+  sftpError.value = "";
+  if (pane === "shell") {
+    sessions.setRemotePane(session.id, "shell");
+    return;
+  }
+  if (session.sftpOpened) {
+    sessions.setRemotePane(session.id, "sftp");
+    return;
+  }
+  sftpBusy.value = true;
+  try {
+    await sftpOpen(sftpSessionId(session.id), session.config);
+    sessions.markSftpOpened(session.id, true);
+  } catch (e) {
+    sftpError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    sftpBusy.value = false;
+  }
+}
+
+function onSftpFailed(id: string, message: string) {
+  sftpError.value = message;
+  sessions.markSftpOpened(id, false);
+  sessions.setRemotePane(id, "shell");
+}
+
+function onSftpDisconnected(id: string) {
+  sessions.markSftpOpened(id, false);
+  sessions.setRemotePane(id, "shell");
 }
 </script>
 
@@ -32,14 +126,13 @@ function onAddLocal() {
         @click="sessions.setSubView(item.id)"
       >
         <TerminalSquare v-if="item.id === 'local'" :size="16" />
-        <Server v-else-if="item.id === 'remote'" :size="16" />
-        <HardDrive v-else :size="16" />
+        <Server v-else :size="16" />
         <span>{{ item.label }}</span>
-        <em v-if="item.hint">{{ item.hint }}</em>
       </button>
     </aside>
 
     <section class="main">
+      <!-- 本地 -->
       <template v-if="subView === 'local'">
         <header class="subtabs">
           <button
@@ -79,22 +172,91 @@ function onAddLocal() {
         </div>
       </template>
 
-      <div v-else class="placeholder">
-        <component
-          :is="subView === 'remote' ? Server : HardDrive"
-          :size="36"
-          class="icon"
-        />
-        <h2>{{ subView === "remote" ? "远程终端" : "SFTP 文件管理" }}</h2>
-        <p>
-          {{
-            subView === "remote"
-              ? "后续将在此连接 SSH 远程服务器，交互与本地终端同窗。"
-              : "后续将在此提供远程文件浏览、上传下载的 SFTP GUI。"
-          }}
-        </p>
-        <span class="badge">架构位已预留 · 尚未接入</span>
-      </div>
+      <!-- 远程 SSH（含 SFTP） -->
+      <template v-else>
+        <header class="subtabs">
+          <button
+            v-for="term in remoteSessions"
+            :key="term.id"
+            type="button"
+            class="subtab"
+            :class="{ active: term.id === activeRemoteId && !showRemoteForm }"
+            @click="showRemoteForm = false; sessions.activateRemote(term.id)"
+          >
+            <span>{{ term.title }}</span>
+            <span
+              class="close"
+              title="关闭"
+              @click.stop="closeRemoteFully(term.id)"
+            >
+              <X :size="12" />
+            </span>
+          </button>
+          <button type="button" class="add" title="新建 SSH 连接" @click="onAddRemote">
+            <Plus :size="14" />
+          </button>
+        </header>
+
+        <div
+          v-if="activeRemote && !showRemoteForm"
+          class="pane-switch"
+        >
+          <button
+            type="button"
+            class="pane-btn"
+            :class="{ active: activeRemote.pane === 'shell' }"
+            @click="switchRemotePane('shell')"
+          >
+            <TerminalSquare :size="13" />
+            终端
+          </button>
+          <button
+            type="button"
+            class="pane-btn"
+            :class="{ active: activeRemote.pane === 'sftp' }"
+            :disabled="sftpBusy"
+            @click="switchRemotePane('sftp')"
+          >
+            <HardDrive :size="13" />
+            {{ sftpBusy ? "连接中…" : "SFTP" }}
+          </button>
+          <p v-if="sftpError" class="pane-error">{{ sftpError }}</p>
+        </div>
+
+        <div class="body">
+          <div
+            v-if="showRemoteForm || !remoteSessions.length"
+            class="form-wrap"
+          >
+            <SshConnectForm
+              title="连接远程 SSH"
+              :connecting="remoteConnecting"
+              :error="remoteError"
+              @connect="onRemoteConnect"
+            />
+          </div>
+          <template v-else>
+            <template v-for="term in remoteSessions" :key="term.id">
+              <RemoteTerminal
+                v-show="term.id === activeRemoteId && term.pane === 'shell'"
+                :session-id="term.id"
+                :config="term.config"
+                :active="term.id === activeRemoteId && term.pane === 'shell'"
+                @failed="onRemoteFailed(term.id, $event)"
+                @closed="onRemoteClosed(term.id)"
+              />
+              <SftpPanel
+                v-if="term.sftpOpened"
+                v-show="term.id === activeRemoteId && term.pane === 'sftp'"
+                :session-id="sftpSessionId(term.id)"
+                :config="term.config"
+                @failed="onSftpFailed(term.id, $event)"
+                @disconnected="onSftpDisconnected(term.id)"
+              />
+            </template>
+          </template>
+        </div>
+      </template>
     </section>
   </div>
 </template>
@@ -131,12 +293,6 @@ function onAddLocal() {
 .rail-item span {
   font-size: 12px;
   font-weight: 600;
-}
-
-.rail-item em {
-  font-style: normal;
-  font-size: 10px;
-  color: var(--text-muted);
 }
 
 .rail-item:hover {
@@ -215,14 +371,60 @@ function onAddLocal() {
   background: var(--accent-soft);
 }
 
+.pane-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+
+.pane-btn {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pane-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--accent-soft);
+}
+
+.pane-btn.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.pane-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.pane-error {
+  margin: 0 0 0 auto;
+  font-size: 11px;
+  color: var(--danger);
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .body {
   flex: 1;
   min-height: 0;
   position: relative;
 }
 
-.empty,
-.placeholder {
+.form-wrap,
+.empty {
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -232,33 +434,7 @@ function onAddLocal() {
   color: var(--text-secondary);
   text-align: center;
   padding: 24px;
-}
-
-.placeholder h2 {
-  margin: 0;
-  font-size: 18px;
-  color: var(--text-primary);
-}
-
-.placeholder p {
-  margin: 0;
-  max-width: 360px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-muted);
-}
-
-.placeholder .icon {
-  color: var(--text-muted);
-}
-
-.badge {
-  margin-top: 4px;
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  overflow: auto;
 }
 
 .cta {

@@ -304,14 +304,16 @@ export const useGitStore = defineStore("git", () => {
   async function showDiff(path?: string, staged?: boolean) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
+    // 分栏对比需要具体文件；整组 diff 仍回退为 patch 弹层
+    if (path?.trim()) {
+      const { useCompareStore } = await import("@/stores/compare");
+      await useCompareStore().openDiff(path, staged ?? false);
+      return;
+    }
     try {
       const result = await gitDiff(workspace.rootPath, path, staged);
       diffResults.value = [result];
-      diffTitle.value = path
-        ? `${path}${staged ? "（已暂存）" : ""}`
-        : staged
-          ? "已暂存更改"
-          : "工作区更改";
+      diffTitle.value = staged ? "已暂存更改" : "工作区更改";
       diffVisible.value = true;
     } catch (error) {
       workspace.showNotice(
@@ -324,6 +326,11 @@ export const useGitStore = defineStore("git", () => {
   function closeDiff() {
     diffVisible.value = false;
     diffResults.value = [];
+  }
+
+  async function openConflictCompare(path: string) {
+    const { useCompareStore } = await import("@/stores/compare");
+    await useCompareStore().openMerge(path);
   }
 
   async function resetHard() {
@@ -467,6 +474,7 @@ export const useGitStore = defineStore("git", () => {
     loadLog,
     showDiff,
     closeDiff,
+    openConflictCompare,
     resetHard,
     undoCommit,
     revertTo,

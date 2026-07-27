@@ -113,6 +113,37 @@ export async function gitDiff(
   return invoke("git_diff", { root, path, staged });
 }
 
+export interface GitFileSides {
+  path: string;
+  left: string;
+  right: string;
+  leftLabel: string;
+  rightLabel: string;
+}
+
+export interface GitConflictSides {
+  path: string;
+  base: string;
+  ours: string;
+  theirs: string;
+  working: string;
+}
+
+export async function gitFileSides(
+  root: string,
+  path: string,
+  staged?: boolean,
+): Promise<GitFileSides> {
+  return invoke("git_file_sides", { root, path, staged });
+}
+
+export async function gitConflictSides(
+  root: string,
+  path: string,
+): Promise<GitConflictSides> {
+  return invoke("git_conflict_sides", { root, path });
+}
+
 export async function gitPull(root: string): Promise<string> {
   return invoke("git_pull", { root });
 }
