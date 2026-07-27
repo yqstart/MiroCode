@@ -12,6 +12,8 @@ export interface SshProfile {
 
 const STORAGE_KEY = "mirocode.sshProfiles.v1";
 
+/** 应用级全局主机列表（与工作区/项目无关） */
+
 export function loadSshProfiles(): SshProfile[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);

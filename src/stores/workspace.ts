@@ -281,7 +281,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (previousRoot !== selected) {
         useEditorStore().clearForWorkspaceSwitch();
         useCompareStore().clearAll();
-        useSessionsStore().resetLocalForWorkspace(selected);
+        await useSessionsStore().resetLocalForWorkspace(selected);
         const search = useSearchStore();
         search.clearResults();
         search.closeQuickOpen();

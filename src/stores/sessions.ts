@@ -1,6 +1,6 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
-import type { SshConnectConfig } from "@/shared/sshApi";
+import { sftpClose, sshShellClose, type SshConnectConfig } from "@/shared/sshApi";
 
 export type SessionSubView = "local" | "remote";
 export type RemotePane = "shell" | "sftp";
@@ -96,17 +96,37 @@ export const useSessionsStore = defineStore("sessions", () => {
   }
 
   /**
-   * 打开/切换工作区时：本地终端一律重建为单个新会话。
-   * SSH 远程会话与项目无关，保持不动。
+   * 打开/切换工作区时：
+   * - 本地终端一律重建
+   * - 强制切回「本地终端」子视图
+   * - 强制断开本窗口全部 SSH/SFTP 远程连接
+   * 已保存的 SSH 主机配置（全局 localStorage）不受影响。
    */
-  function resetLocalForWorkspace(cwd: string | null) {
+  async function resetLocalForWorkspace(cwd: string | null) {
+    const remotes = remoteSessions.value.slice();
+    for (const session of remotes) {
+      try {
+        await sshShellClose(session.id);
+      } catch {
+        // 已断开则忽略
+      }
+      try {
+        await sftpClose(sftpSessionId(session.id));
+      } catch {
+        // 未打开 SFTP 则忽略
+      }
+    }
+    remoteSessions.value = [];
+    activeRemoteId.value = null;
+
     const keepOpen = open.value;
     const hadLocal = localTerminals.value.length > 0;
     localTerminals.value = [];
     activeLocalId.value = null;
+    subView.value = "local";
+
     if (keepOpen || hadLocal) {
       ensureDefaultLocal(cwd);
-      subView.value = "local";
     }
   }
 

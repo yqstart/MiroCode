@@ -35,7 +35,10 @@ src/
 src-tauri/             # Tauri 后端、Git/搜索命令、PTY 插件
 ```
 
-会话视图（`features/sessions`）以编辑区标签打开：本地终端 / SSH（主机卡片列表 + 终端/SFTP）；SSH 凭据密码不落盘。
+会话视图（`features/sessions`）以编辑区标签打开：本地终端 / SSH（主机卡片列表 + 终端/SFTP）。
+- 本地终端：随工作区切换重建（cwd = 项目根），并强制切回「本地终端」子视图
+- SSH 主机配置：应用级全局（`localStorage`），与项目无关，切换项目不丢失；密码不落盘
+- SSH 活跃连接：切换项目时强制关闭本窗口全部远程 Shell / SFTP
 
 ## 命名规范
 

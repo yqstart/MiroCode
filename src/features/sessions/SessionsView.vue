@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { HardDrive, LayoutGrid, Plus, Server, TerminalSquare, X } from "lucide-vue-next";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import LocalTerminal from "@/features/sessions/LocalTerminal.vue";
 import RemoteTerminal from "@/features/sessions/RemoteTerminal.vue";
@@ -132,6 +132,14 @@ function onSelectNav(id: SessionSubView) {
     sshSurface.value = "hosts";
   }
 }
+
+watch(remoteSessions, (list) => {
+  if (!list.length) {
+    sshSurface.value = "hosts";
+    remoteError.value = "";
+    sftpError.value = "";
+  }
+});
 </script>
 
 <template>
