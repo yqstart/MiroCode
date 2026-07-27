@@ -6,6 +6,7 @@ import { spawn, type IPty } from "tauri-pty";
 import "@xterm/xterm/css/xterm.css";
 import { storeToRefs } from "pinia";
 import { terminalThemeColors } from "@/features/sessions/terminalTheme";
+import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 
 const props = defineProps<{
@@ -16,7 +17,9 @@ const props = defineProps<{
 
 const host = ref<HTMLDivElement | null>(null);
 const settings = useSettingsStore();
+const sessions = useSessionsStore();
 const { theme } = storeToRefs(settings);
+const { pendingLocalWrite } = storeToRefs(sessions);
 
 let term: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
@@ -129,6 +132,27 @@ watch(theme, () => {
   if (!term) return;
   term.options.theme = terminalThemeColors(theme.value);
 });
+
+watch(
+  pendingLocalWrite,
+  async (job) => {
+    if (!job || job.terminalId !== props.sessionId) return;
+    for (let i = 0; i < 40 && !pty; i += 1) {
+      await new Promise((r) => window.setTimeout(r, 50));
+      if (disposed) return;
+    }
+    if (!pty || disposed) return;
+    try {
+      pty.write(job.data);
+    } catch {
+      // ignore
+    }
+    sessions.consumePendingLocalWrite(job.seq);
+    if (props.active) {
+      term?.focus();
+    }
+  },
+);
 </script>
 
 <template>

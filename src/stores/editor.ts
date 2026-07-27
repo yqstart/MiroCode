@@ -194,40 +194,61 @@ export const useEditorStore = defineStore("editor", () => {
     workspace.revealPath(path);
   }
 
-  async function saveActive() {
+  async function saveActive(options?: { quiet?: boolean }) {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
     if (!workspace.rootPath || !activeTab.value) {
-      workspace.showNotice("当前无活动文件可保存");
+      if (!options?.quiet) {
+        workspace.showNotice("当前无活动文件可保存");
+      }
       return;
     }
     const tab = activeTab.value;
+    if (tab.content === tab.original) return;
     try {
       workspace.markSelfWrite(tab.path);
       await writeTextFile(workspace.rootPath, tab.path, tab.content);
       tab.original = tab.content;
-      workspace.showNotice(`已保存 ${tab.name}`);
+      if (!options?.quiet) {
+        workspace.showNotice(`已保存 ${tab.name}`);
+      }
       void git.refresh();
     } catch (error) {
-      workspace.showNotice(
-        error instanceof Error ? error.message : String(error),
-        3200,
-      );
+      if (!options?.quiet) {
+        workspace.showNotice(
+          error instanceof Error ? error.message : String(error),
+          3200,
+        );
+      }
     }
   }
 
-  async function saveAll() {
+  async function saveAll(options?: { quiet?: boolean }) {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
     if (!workspace.rootPath) return;
-    for (const tab of tabs.value) {
-      if (tab.content === tab.original) continue;
-      workspace.markSelfWrite(tab.path);
-      await writeTextFile(workspace.rootPath, tab.path, tab.content);
-      tab.original = tab.content;
+    const dirty = tabs.value.filter((t) => t.content !== t.original);
+    if (!dirty.length) return;
+    try {
+      for (const tab of dirty) {
+        workspace.markSelfWrite(tab.path);
+        await writeTextFile(workspace.rootPath, tab.path, tab.content);
+        tab.original = tab.content;
+      }
+      if (!options?.quiet) {
+        workspace.showNotice(
+          dirty.length === 1 ? `已保存 ${dirty[0].name}` : `已保存 ${dirty.length} 个文件`,
+        );
+      }
+      void git.refresh();
+    } catch (error) {
+      if (!options?.quiet) {
+        workspace.showNotice(
+          error instanceof Error ? error.message : String(error),
+          3200,
+        );
+      }
     }
-    workspace.showNotice("已保存全部");
-    void git.refresh();
   }
 
   async function closeTab(path: string) {

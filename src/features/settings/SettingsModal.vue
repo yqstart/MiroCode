@@ -165,6 +165,40 @@ function onOverlayClick(event: MouseEvent) {
             </div>
 
             <div class="ui-card section">
+              <h3>文件保存</h3>
+              <div class="save-row">
+                <div class="save-copy">
+                  <span class="field-label">自动保存</span>
+                  <p class="desc">
+                    编辑后延迟写盘；窗口隐藏或退出前会强制落盘，降低崩溃丢改风险。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="ui-toggle"
+                  role="switch"
+                  :aria-checked="editor.autoSave"
+                  :data-on="editor.autoSave"
+                  :title="editor.autoSave ? '已开启' : '已关闭'"
+                  @click="settings.patchEditor({ autoSave: !editor.autoSave })"
+                />
+              </div>
+              <label v-if="editor.autoSave" class="field delay-field">
+                <span class="field-label">延迟</span>
+                <select
+                  class="ui-select"
+                  :value="editor.autoSaveDelayMs"
+                  @change="settings.patchEditor({ autoSaveDelayMs: Number(($event.target as HTMLSelectElement).value) || 1000 })"
+                >
+                  <option :value="500">0.5 秒</option>
+                  <option :value="1000">1 秒</option>
+                  <option :value="2000">2 秒</option>
+                  <option :value="5000">5 秒</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="ui-card section">
               <h3>代码补全</h3>
               <p class="desc">
                 内置本地补全：语法关键字、代码片段、当前文档词、语言提示。输入即提示，⌘/Ctrl + Space 手动触发。无需模型，不联网。
@@ -473,6 +507,33 @@ function onOverlayClick(event: MouseEvent) {
 .field-label {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.save-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.save-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.save-copy .field-label {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.save-copy .desc {
+  margin-top: 6px;
+}
+
+.delay-field {
+  margin-top: 14px;
+  max-width: 200px;
 }
 
 .row-between {

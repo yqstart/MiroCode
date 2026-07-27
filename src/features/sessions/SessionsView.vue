@@ -3,6 +3,7 @@ import { HardDrive, LayoutGrid, Plus, Server, TerminalSquare, X } from "lucide-v
 import { computed, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import LocalTerminal from "@/features/sessions/LocalTerminal.vue";
+import PackageScriptsMenu from "@/features/sessions/PackageScriptsMenu.vue";
 import RemoteTerminal from "@/features/sessions/RemoteTerminal.vue";
 import SftpPanel from "@/features/sessions/SftpPanel.vue";
 import SshHostsView from "@/features/sessions/SshHostsView.vue";
@@ -12,10 +13,12 @@ import {
   useSessionsStore,
   type SessionSubView,
 } from "@/stores/sessions";
+import { usePackageScriptsStore } from "@/stores/packageScripts";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const sessions = useSessionsStore();
 const workspace = useWorkspaceStore();
+const pkg = usePackageScriptsStore();
 const {
   subView,
   localTerminals,
@@ -23,6 +26,7 @@ const {
   remoteSessions,
   activeRemoteId,
 } = storeToRefs(sessions);
+const { available: hasScripts } = storeToRefs(pkg);
 
 const remoteConnecting = ref(false);
 const remoteError = ref("");
@@ -131,7 +135,18 @@ function onSelectNav(id: SessionSubView) {
   if (id === "remote" && !remoteSessions.value.length) {
     sshSurface.value = "hosts";
   }
+  if (id === "local") {
+    void pkg.refresh();
+  }
 }
+
+watch(
+  () => workspace.rootPath,
+  () => {
+    void pkg.refresh(true);
+  },
+  { immediate: true },
+);
 
 watch(remoteSessions, (list) => {
   if (!list.length) {
@@ -183,6 +198,9 @@ watch(remoteSessions, (list) => {
           <button type="button" class="add" title="新建本地终端" @click="onAddLocal">
             <Plus :size="14" />
           </button>
+          <div v-if="hasScripts" class="scripts-slot">
+            <PackageScriptsMenu variant="compact" />
+          </div>
         </header>
         <div class="body">
           <LocalTerminal
@@ -350,6 +368,16 @@ watch(remoteSessions, (list) => {
   padding: 0 8px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-panel);
+  min-width: 0;
+}
+
+.scripts-slot {
+  flex: 1;
+  min-width: 0;
+  margin-left: 4px;
+  display: flex;
+  justify-content: flex-end;
+  overflow: hidden;
 }
 
 .subtab {

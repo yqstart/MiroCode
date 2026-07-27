@@ -72,6 +72,9 @@ export const useGitStore = defineStore("git", () => {
     snapshot.value.entries.filter((e) => e.conflicted),
   );
 
+  /** 有变更的文件数（含暂存/未暂存/冲突） */
+  const changedFileCount = computed(() => snapshot.value.entries.length);
+
   async function refresh() {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) {
@@ -488,6 +491,7 @@ export const useGitStore = defineStore("git", () => {
     stagedEntries,
     unstagedEntries,
     conflictEntries,
+    changedFileCount,
     refresh,
     initRepo,
     stage,

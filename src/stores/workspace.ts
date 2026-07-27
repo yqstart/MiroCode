@@ -287,6 +287,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         search.closeQuickOpen();
         search.closeFindInFiles();
         useGitStore().clearForWorkspaceSwitch();
+        const { usePackageScriptsStore } = await import("@/stores/packageScripts");
+        usePackageScriptsStore().clear();
+        void usePackageScriptsStore().refresh(true);
       }
 
       if (!options?.quiet) {

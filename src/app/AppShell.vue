@@ -11,6 +11,7 @@ import QuickOpen from "@/features/search/QuickOpen.vue";
 import SettingsModal from "@/features/settings/SettingsModal.vue";
 import PromptDialog from "@/shared/PromptDialog.vue";
 import { basename } from "@/shared/fs";
+import { setupAutoSave } from "@/features/editor/autoSave";
 import { readBootFolder } from "@/shared/openWorkspace";
 import { useEditorStore } from "@/stores/editor";
 import { useSearchStore } from "@/stores/search";
@@ -28,6 +29,7 @@ const settings = useSettingsStore();
 const { settingsOpen } = storeToRefs(ui);
 
 let unlistenMenu: (() => void) | undefined;
+let teardownAutoSave: (() => void) | undefined;
 
 async function locateActiveInExplorer() {
   if (!editor.activePath) {
@@ -111,6 +113,7 @@ function onWindowFocus() {
 onMounted(async () => {
   window.addEventListener("keydown", onKeydown);
   window.addEventListener("focus", onWindowFocus);
+  teardownAutoSave = setupAutoSave();
   try {
     unlistenMenu = await listen<string>("menu://action", (event) => {
       handleMenuAction(event.payload);
@@ -130,6 +133,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
   window.removeEventListener("focus", onWindowFocus);
+  teardownAutoSave?.();
   workspace.stopWatch();
   unlistenMenu?.();
 });

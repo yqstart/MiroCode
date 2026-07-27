@@ -7,6 +7,10 @@ export interface EditorPreferences {
   tabSize: 2 | 4;
   wordWrap: boolean;
   lineNumbers: boolean;
+  /** 编辑后延迟自动保存到磁盘 */
+  autoSave: boolean;
+  /** 自动保存延迟（毫秒） */
+  autoSaveDelayMs: number;
 }
 
 export interface LayoutState {
@@ -30,6 +34,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     tabSize: 2,
     wordWrap: true,
     lineNumbers: true,
+    autoSave: true,
+    autoSaveDelayMs: 1000,
   },
   layout: {
     sidebarCollapsed: false,

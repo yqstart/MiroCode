@@ -34,7 +34,14 @@ export const useSessionsStore = defineStore("sessions", () => {
   const activeLocalId = ref<string | null>(null);
   const remoteSessions = ref<RemoteSession[]>([]);
   const activeRemoteId = ref<string | null>(null);
+  /** 注入到本地 PTY 的待发送输入 */
+  const pendingLocalWrite = ref<{
+    terminalId: string;
+    data: string;
+    seq: number;
+  } | null>(null);
   let seq = 0;
+  let writeSeq = 0;
 
   const tabId = SESSIONS_TAB_ID;
   const isFocused = computed(() => open.value && focused.value);
@@ -200,6 +207,25 @@ export const useSessionsStore = defineStore("sessions", () => {
     if (opened) session.pane = "sftp";
   }
 
+  /** 打开本地终端视图并向活动本地终端写入命令（含回车） */
+  function runInLocalTerminal(command: string, cwd: string | null = null) {
+    openSessions(cwd);
+    focusSessions();
+    const id = activeLocalId.value;
+    if (!id) return;
+    const data = command.endsWith("\r") || command.endsWith("\n")
+      ? command
+      : `${command}\r`;
+    writeSeq += 1;
+    pendingLocalWrite.value = { terminalId: id, data, seq: writeSeq };
+  }
+
+  function consumePendingLocalWrite(seq: number) {
+    if (pendingLocalWrite.value?.seq === seq) {
+      pendingLocalWrite.value = null;
+    }
+  }
+
   // 兼容旧命名
   const addRemoteTerminal = addRemoteSession;
   const closeRemoteTerminal = closeRemoteSession;
@@ -214,6 +240,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     activeLocalId,
     remoteSessions,
     activeRemoteId,
+    pendingLocalWrite,
     /** @deprecated 使用 remoteSessions */
     remoteTerminals: remoteSessions,
     openSessions,
@@ -230,6 +257,8 @@ export const useSessionsStore = defineStore("sessions", () => {
     activateRemote,
     setRemotePane,
     markSftpOpened,
+    runInLocalTerminal,
+    consumePendingLocalWrite,
     addRemoteTerminal,
     closeRemoteTerminal,
   };
