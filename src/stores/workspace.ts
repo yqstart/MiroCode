@@ -29,6 +29,11 @@ const WATCH_IGNORE_NAMES = new Set([
   ".DS_Store",
 ]);
 
+/** 终端 / 外部 git 命令会改这些路径；需触发状态刷新，但不要刷新资源树 */
+function isGitMetaPath(path: string): boolean {
+  return /(?:^|[/\\])\.git(?:[/\\]|$)/.test(path);
+}
+
 export interface TreeNode extends DirEntryInfo {
   depth: number;
   expanded?: boolean;
@@ -60,6 +65,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   let locateTimer: number | undefined;
   let unwatchFn: UnwatchFn | null = null;
   let refreshTimer: number | undefined;
+  let gitRefreshTimer: number | undefined;
   const selfWriteUntil = new Map<string, number>();
   let pendingWatchPaths = new Set<string>();
 
@@ -146,7 +152,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     unwatchFn = null;
     watchActive.value = false;
     window.clearTimeout(refreshTimer);
+    window.clearTimeout(gitRefreshTimer);
     pendingWatchPaths = new Set();
+  }
+
+  function scheduleGitRefresh() {
+    window.clearTimeout(gitRefreshTimer);
+    gitRefreshTimer = window.setTimeout(() => {
+      void useGitStore().refresh();
+    }, 420);
   }
 
   async function startWatch(root: string) {
@@ -168,11 +182,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   function onWatchEvent(event: WatchEvent) {
     if (!rootPath.value) return;
-    const paths = (event.paths || []).filter(
-      (p) => !shouldIgnoreWatchPath(p) && !isSelfWrite(p),
-    );
-    if (!paths.length) return;
-    for (const p of paths) pendingWatchPaths.add(p);
+    let gitTouched = false;
+    for (const p of event.paths || []) {
+      if (isSelfWrite(p)) continue;
+      // .git 变更：仅刷新 Git 状态（终端 commit/checkout 等）
+      if (isGitMetaPath(p)) {
+        gitTouched = true;
+        continue;
+      }
+      if (shouldIgnoreWatchPath(p)) continue;
+      pendingWatchPaths.add(p);
+    }
+    if (gitTouched) scheduleGitRefresh();
+    if (!pendingWatchPaths.size) return;
     window.clearTimeout(refreshTimer);
     refreshTimer = window.setTimeout(() => {
       void flushWatchChanges();
@@ -183,6 +205,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (!rootPath.value || !pendingWatchPaths.size) return;
     const changed = [...pendingWatchPaths];
     pendingWatchPaths = new Set();
+    // 工作区文件变了也会刷新 git；取消排队中的纯 git 刷新，避免重复
+    window.clearTimeout(gitRefreshTimer);
     await refreshFromDisk(changed, { quiet: true });
   }
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { MergeView } from "@codemirror/merge";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Prec, type Extension } from "@codemirror/state";
 import {
   EditorView,
   highlightActiveLine,
@@ -11,8 +11,8 @@ import {
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { storeToRefs } from "pinia";
-import { editorThemeExtensions } from "@/features/editor/theme";
 import { languageExtensionForPath } from "@/features/editor/languages";
+import { editorThemeExtensions } from "@/features/editor/theme";
 import { joinPath, writeTextFile } from "@/shared/fs";
 import { useCompareStore } from "@/stores/compare";
 import { useGitStore } from "@/stores/git";
@@ -36,20 +36,66 @@ const tab = computed(() => compare.tabs.find((t) => t.id === props.tabId) ?? nul
 let mergeView: MergeView | null = null;
 let applying = false;
 let lastEditable = false;
+let resizeObserver: ResizeObserver | null = null;
 
-function buildExtensions(path: string, editable: boolean) {
+/** 对比视图专用主题：块状着色，覆盖包默认的底部细线高亮 */
+const mergeHighlightTheme = Prec.highest(
+  EditorView.theme({
+    "&.cm-merge-a .cm-changedLine, .cm-deletedChunk": {
+      backgroundColor: "rgba(248, 113, 113, 0.12)",
+    },
+    "&.cm-merge-b .cm-changedLine, .cm-inlineChangedLine": {
+      backgroundColor: "rgba(52, 211, 153, 0.12)",
+    },
+    "&.cm-merge-a .cm-changedText, .cm-deletedChunk .cm-deletedText": {
+      background: "rgba(248, 113, 113, 0.35)",
+      borderRadius: "2px",
+      color: "inherit",
+      textDecoration: "none",
+    },
+    "&.cm-merge-b .cm-changedText": {
+      background: "rgba(52, 211, 153, 0.35)",
+      borderRadius: "2px",
+      color: "inherit",
+      textDecoration: "none",
+    },
+    "&.cm-merge-b .cm-deletedText": {
+      background: "rgba(248, 113, 113, 0.3)",
+      borderRadius: "2px",
+      textDecoration: "none",
+    },
+  }),
+);
+
+/** MergeView 自身整体滚动；去掉主编辑器 40vh 底垫 */
+const mergeLayoutTheme = Prec.highest(
+  EditorView.theme({
+    "&": {
+      height: "auto",
+      fontSize: "13px",
+    },
+    ".cm-scroller": {
+      fontFamily: "var(--font-mono)",
+      lineHeight: "1.55",
+    },
+    ".cm-content": {
+      paddingBottom: "24px",
+    },
+  }),
+);
+
+function buildExtensions(path: string, editable: boolean): Extension[] {
   const lang = languageExtensionForPath(path);
-  const exts = [
+  const exts: Extension[] = [
     lineNumbers(),
     highlightActiveLine(),
     highlightActiveLineGutter(),
     history(),
     keymap.of([...defaultKeymap, ...historyKeymap]),
-    editorThemeExtensions(theme.value),
-    EditorView.theme({
-      "&": { height: "100%", fontSize: "13px" },
-      ".cm-scroller": { overflow: "auto", fontFamily: "var(--font-mono)" },
-    }),
+    // 语法高亮与配色复用主主题，再用 merge 布局主题覆盖高度/底垫
+    ...editorThemeExtensions(theme.value),
+    mergeLayoutTheme,
+    mergeHighlightTheme,
     EditorView.editable.of(editable),
     EditorState.readOnly.of(!editable),
   ];
@@ -70,9 +116,15 @@ function destroyView() {
   mergeView = null;
 }
 
+function measureView() {
+  if (!mergeView) return;
+  mergeView.a.requestMeasure();
+  mergeView.b.requestMeasure();
+}
+
 function createView() {
   const current = tab.value;
-  if (!host.value || !current) return;
+  if (!host.value || !current || !props.active) return;
   destroyView();
   lastEditable = current.editableRight;
 
@@ -90,6 +142,11 @@ function createView() {
       doc: current.right,
       extensions: buildExtensions(current.path, current.editableRight),
     },
+  });
+
+  // 初次挂载后强制测量，避免容器尚未布局完成时高度为 0
+  requestAnimationFrame(() => {
+    measureView();
   });
 }
 
@@ -178,18 +235,31 @@ function toggleCompareMode() {
 
 onMounted(() => {
   createView();
+  if (host.value) {
+    resizeObserver = new ResizeObserver(() => {
+      if (!props.active) return;
+      measureView();
+    });
+    resizeObserver.observe(host.value);
+  }
 });
 
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
   destroyView();
 });
 
 watch(
   () => props.active,
   async (active) => {
-    if (active) {
-      await nextTick();
-      if (!mergeView) createView();
+    if (!active) return;
+    await nextTick();
+    if (!mergeView) {
+      createView();
+    } else {
+      // v-show 切回时容器尺寸变化，需要重新测量对齐 spacer
+      measureView();
     }
   },
 );
@@ -197,7 +267,7 @@ watch(
 watch(
   () =>
     tab.value
-      ? [tab.value.left, tab.value.right, tab.value.editableRight] as const
+      ? ([tab.value.left, tab.value.right, tab.value.editableRight] as const)
       : null,
   (next) => {
     if (!next || !props.active) return;
@@ -211,7 +281,7 @@ watch(
 );
 
 watch(theme, () => {
-  createView();
+  if (props.active) createView();
 });
 </script>
 
@@ -335,16 +405,62 @@ watch(theme, () => {
   color: var(--text-muted);
 }
 
+/*
+  CodeMirror MergeView 约定：外层 .cm-mergeView 设固定高度 + overflow:auto 才能滚动；
+  两侧编辑器内容高度为 auto，由外层统一滚动并对齐。
+*/
 .merge-host {
   flex: 1;
   min-height: 0;
+  position: relative;
   overflow: hidden;
 }
 
-.merge-host :deep(.cm-mergeView),
-.merge-host :deep(.cm-mergeViewEditors),
-.merge-host :deep(.cm-mergeViewEditor),
-.merge-host :deep(.cm-editor) {
+.merge-host :deep(.cm-mergeView) {
   height: 100%;
+  overflow: auto;
+  outline: none;
+}
+
+.merge-host :deep(.cm-mergeViewEditors) {
+  display: flex;
+  align-items: stretch;
+  min-height: 100%;
+}
+
+.merge-host :deep(.cm-mergeViewEditor) {
+  flex: 1;
+  min-width: 0;
+}
+
+.merge-host :deep(.cm-editor) {
+  height: auto;
+}
+
+/* 强制块状改动高亮（覆盖 merge 包默认底部 2px 细线） */
+.merge-host :deep(.cm-changedText),
+.merge-host :deep(.cm-deletedText) {
+  background-image: none !important;
+  text-decoration: none !important;
+  border-radius: 2px;
+}
+
+.merge-host :deep(.cm-merge-a .cm-changedText),
+.merge-host :deep(.cm-deletedChunk .cm-deletedText) {
+  background-color: rgba(248, 113, 113, 0.35) !important;
+}
+
+.merge-host :deep(.cm-merge-b .cm-changedText) {
+  background-color: rgba(52, 211, 153, 0.35) !important;
+}
+
+.merge-host :deep(.cm-merge-a .cm-changedLine),
+.merge-host :deep(.cm-deletedChunk) {
+  background-color: rgba(248, 113, 113, 0.1);
+}
+
+.merge-host :deep(.cm-merge-b .cm-changedLine),
+.merge-host :deep(.cm-inlineChangedLine) {
+  background-color: rgba(52, 211, 153, 0.1);
 }
 </style>

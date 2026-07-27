@@ -320,6 +320,8 @@ function closeCompareTab(id: string) {
   flex: 1;
   min-height: 0;
   position: relative;
+  height: 100%;
+  overflow: hidden;
 }
 
 .md-preview {

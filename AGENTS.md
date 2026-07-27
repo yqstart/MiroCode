@@ -35,7 +35,7 @@ src/
 src-tauri/             # Tauri 后端、Git/搜索命令、PTY 插件
 ```
 
-会话视图（`features/sessions`）以编辑区标签打开：本地终端 / 远程 SSH（终端 + SFTP 同连接切换）；SSH 凭据密码不落盘。
+会话视图（`features/sessions`）以编辑区标签打开：本地终端 / SSH（主机卡片列表 + 终端/SFTP）；SSH 凭据密码不落盘。
 
 ## 命名规范
 

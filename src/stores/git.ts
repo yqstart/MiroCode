@@ -49,6 +49,8 @@ export const useGitStore = defineStore("git", () => {
   const diffVisible = ref(false);
   const loading = ref(false);
   const commitMessage = ref("");
+  let refreshSeq = 0;
+  let refreshAgain = false;
 
   const statusMap = computed(() => {
     const map = new Map<string, GitStatusEntry>();
@@ -78,27 +80,41 @@ export const useGitStore = defineStore("git", () => {
       conflictFiles.value = [];
       return;
     }
+    // 合并并发刷新：进行中再触发则结束后补刷一次
+    if (loading.value) {
+      refreshAgain = true;
+      return;
+    }
     loading.value = true;
+    const seq = ++refreshSeq;
     try {
-      snapshot.value = await gitStatus(workspace.rootPath);
-      if (snapshot.value.initialized) {
-        branches.value = await gitBranches(workspace.rootPath);
-        if (snapshot.value.conflictCount > 0) {
-          conflictFiles.value = await gitConflictFiles(workspace.rootPath);
+      do {
+        refreshAgain = false;
+        const next = await gitStatus(workspace.rootPath);
+        if (seq !== refreshSeq) return;
+        snapshot.value = next;
+        if (snapshot.value.initialized) {
+          branches.value = await gitBranches(workspace.rootPath);
+          if (seq !== refreshSeq) return;
+          if (snapshot.value.conflictCount > 0) {
+            conflictFiles.value = await gitConflictFiles(workspace.rootPath);
+          } else {
+            conflictFiles.value = [];
+          }
         } else {
+          branches.value = [];
           conflictFiles.value = [];
         }
-      } else {
-        branches.value = [];
-        conflictFiles.value = [];
-      }
+      } while (refreshAgain && seq === refreshSeq);
     } catch (error) {
-      workspace.showNotice(
-        error instanceof Error ? error.message : String(error),
-        3200,
-      );
+      if (seq === refreshSeq) {
+        workspace.showNotice(
+          error instanceof Error ? error.message : String(error),
+          3200,
+        );
+      }
     } finally {
-      loading.value = false;
+      if (seq === refreshSeq) loading.value = false;
     }
   }
 

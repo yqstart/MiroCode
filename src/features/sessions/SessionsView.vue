@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { HardDrive, Plus, Server, TerminalSquare, X } from "lucide-vue-next";
+import { HardDrive, LayoutGrid, Plus, Server, TerminalSquare, X } from "lucide-vue-next";
 import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 import LocalTerminal from "@/features/sessions/LocalTerminal.vue";
 import RemoteTerminal from "@/features/sessions/RemoteTerminal.vue";
 import SftpPanel from "@/features/sessions/SftpPanel.vue";
-import SshConnectForm from "@/features/sessions/SshConnectForm.vue";
+import SshHostsView from "@/features/sessions/SshHostsView.vue";
 import { sftpClose, sftpOpen, type SshConnectConfig } from "@/shared/sshApi";
 import {
   sftpSessionId,
@@ -26,25 +26,30 @@ const {
 
 const remoteConnecting = ref(false);
 const remoteError = ref("");
-const showRemoteForm = ref(false);
+/** SSH 区：主机列表 / 已连接会话 */
+const sshSurface = ref<"hosts" | "session">("hosts");
 const sftpBusy = ref(false);
 const sftpError = ref("");
 
 const navItems: { id: SessionSubView; label: string }[] = [
   { id: "local", label: "本地终端" },
-  { id: "remote", label: "远程 SSH" },
+  { id: "remote", label: "SSH" },
 ];
 
 const activeRemote = computed(() =>
   remoteSessions.value.find((t) => t.id === activeRemoteId.value) ?? null,
 );
 
+const showHosts = computed(
+  () => sshSurface.value === "hosts" || !remoteSessions.value.length,
+);
+
 function onAddLocal() {
   sessions.addLocalTerminal(workspace.rootPath);
 }
 
-function onAddRemote() {
-  showRemoteForm.value = true;
+function goHosts() {
+  sshSurface.value = "hosts";
   remoteError.value = "";
   sftpError.value = "";
 }
@@ -53,14 +58,14 @@ function onRemoteConnect(config: SshConnectConfig) {
   remoteConnecting.value = true;
   remoteError.value = "";
   sessions.addRemoteSession(config);
-  showRemoteForm.value = false;
+  sshSurface.value = "session";
   remoteConnecting.value = false;
 }
 
 function onRemoteFailed(id: string, message: string) {
   remoteError.value = message;
   void closeRemoteFully(id);
-  showRemoteForm.value = true;
+  sshSurface.value = "hosts";
 }
 
 function onRemoteClosed(id: string) {
@@ -77,6 +82,14 @@ async function closeRemoteFully(id: string) {
     }
   }
   sessions.closeRemoteSession(id);
+  if (!remoteSessions.value.length) {
+    sshSurface.value = "hosts";
+  }
+}
+
+function activateRemoteSession(id: string) {
+  sshSurface.value = "session";
+  sessions.activateRemote(id);
 }
 
 async function switchRemotePane(pane: "shell" | "sftp") {
@@ -112,6 +125,13 @@ function onSftpDisconnected(id: string) {
   sessions.markSftpOpened(id, false);
   sessions.setRemotePane(id, "shell");
 }
+
+function onSelectNav(id: SessionSubView) {
+  sessions.setSubView(id);
+  if (id === "remote" && !remoteSessions.value.length) {
+    sshSurface.value = "hosts";
+  }
+}
 </script>
 
 <template>
@@ -123,7 +143,7 @@ function onSftpDisconnected(id: string) {
         type="button"
         class="rail-item"
         :class="{ active: subView === item.id }"
-        @click="sessions.setSubView(item.id)"
+        @click="onSelectNav(item.id)"
       >
         <TerminalSquare v-if="item.id === 'local'" :size="16" />
         <Server v-else :size="16" />
@@ -172,16 +192,26 @@ function onSftpDisconnected(id: string) {
         </div>
       </template>
 
-      <!-- 远程 SSH（含 SFTP） -->
+      <!-- SSH（主机列表 + 会话） -->
       <template v-else>
-        <header class="subtabs">
+        <header v-if="remoteSessions.length" class="subtabs">
+          <button
+            type="button"
+            class="subtab"
+            :class="{ active: showHosts }"
+            title="主机列表"
+            @click="goHosts"
+          >
+            <LayoutGrid :size="12" />
+            <span>主机</span>
+          </button>
           <button
             v-for="term in remoteSessions"
             :key="term.id"
             type="button"
             class="subtab"
-            :class="{ active: term.id === activeRemoteId && !showRemoteForm }"
-            @click="showRemoteForm = false; sessions.activateRemote(term.id)"
+            :class="{ active: !showHosts && term.id === activeRemoteId }"
+            @click="activateRemoteSession(term.id)"
           >
             <span>{{ term.title }}</span>
             <span
@@ -192,13 +222,10 @@ function onSftpDisconnected(id: string) {
               <X :size="12" />
             </span>
           </button>
-          <button type="button" class="add" title="新建 SSH 连接" @click="onAddRemote">
-            <Plus :size="14" />
-          </button>
         </header>
 
         <div
-          v-if="activeRemote && !showRemoteForm"
+          v-if="!showHosts && activeRemote"
           class="pane-switch"
         >
           <button
@@ -224,17 +251,12 @@ function onSftpDisconnected(id: string) {
         </div>
 
         <div class="body">
-          <div
-            v-if="showRemoteForm || !remoteSessions.length"
-            class="form-wrap"
-          >
-            <SshConnectForm
-              title="连接远程 SSH"
-              :connecting="remoteConnecting"
-              :error="remoteError"
-              @connect="onRemoteConnect"
-            />
-          </div>
+          <SshHostsView
+            v-if="showHosts"
+            :connecting="remoteConnecting"
+            :error="remoteError"
+            @connect="onRemoteConnect"
+          />
           <template v-else>
             <template v-for="term in remoteSessions" :key="term.id">
               <RemoteTerminal
@@ -423,7 +445,6 @@ function onSftpDisconnected(id: string) {
   position: relative;
 }
 
-.form-wrap,
 .empty {
   height: 100%;
   display: flex;
@@ -434,7 +455,6 @@ function onSftpDisconnected(id: string) {
   color: var(--text-secondary);
   text-align: center;
   padding: 24px;
-  overflow: auto;
 }
 
 .cta {

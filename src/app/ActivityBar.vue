@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Files, GitBranch, Settings, TerminalSquare } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
+import { useGitStore } from "@/stores/git";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
@@ -11,6 +12,7 @@ const settings = useSettingsStore();
 const ui = useUiStore();
 const sessions = useSessionsStore();
 const workspace = useWorkspaceStore();
+const git = useGitStore();
 const { layout } = storeToRefs(settings);
 const { isFocused } = storeToRefs(sessions);
 
@@ -20,6 +22,9 @@ function selectPanel(panel: SidePanelId) {
     return;
   }
   settings.setActivePanel(panel);
+  if (panel === "git" && workspace.rootPath) {
+    void git.refresh();
+  }
 }
 
 function openTerminal() {
