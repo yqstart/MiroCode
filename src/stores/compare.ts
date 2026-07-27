@@ -66,6 +66,13 @@ export const useCompareStore = defineStore("compare", () => {
     }
   }
 
+  /** 切换工作区时关闭全部对比标签 */
+  function clearAll() {
+    tabs.value = [];
+    activeId.value = null;
+    focused.value = false;
+  }
+
   function upsertTab(tab: CompareTab) {
     const existing = tabs.value.find(
       (t) => t.kind === tab.kind && t.path === tab.path && t.staged === tab.staged,
@@ -178,6 +185,7 @@ export const useCompareStore = defineStore("compare", () => {
     blurCompare,
     activate,
     closeTab,
+    clearAll,
     openDiff,
     openMerge,
     setRightContent,

@@ -17,7 +17,11 @@ import {
 import { loadRecentFolders, pushRecentFolder } from "@/shared/path";
 import { promptInput } from "@/shared/promptDialog";
 import { searchFiles, type FileSearchHit } from "@/shared/searchApi";
+import { useCompareStore } from "@/stores/compare";
+import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
+import { useSearchStore } from "@/stores/search";
+import { useSessionsStore } from "@/stores/sessions";
 
 const WATCH_IGNORE_NAMES = new Set([
   ".git",
@@ -255,14 +259,36 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       }
       if (!selected || Array.isArray(selected)) return false;
 
+      const previousRoot = rootPath.value;
+      if (previousRoot !== selected) {
+        const editor = useEditorStore();
+        if (!editor.confirmDiscardForWorkspaceSwitch()) return false;
+      }
+
       stopWatch();
       rootPath.value = selected;
       rootName.value = basename(selected);
       childrenMap.value = {};
       expanded.value = new Set([selected]);
       selectedPath.value = selected;
+      filter.value = "";
+      locateHits.value = [];
+      clipboard.value = null;
+      selfWriteUntil.clear();
       await loadChildren(selected);
       recentFolders.value = pushRecentFolder(selected);
+
+      if (previousRoot !== selected) {
+        useEditorStore().clearForWorkspaceSwitch();
+        useCompareStore().clearAll();
+        useSessionsStore().resetLocalForWorkspace(selected);
+        const search = useSearchStore();
+        search.clearResults();
+        search.closeQuickOpen();
+        search.closeFindInFiles();
+        useGitStore().clearForWorkspaceSwitch();
+      }
+
       if (!options?.quiet) {
         showNotice(`已打开 ${rootName.value}`);
       }

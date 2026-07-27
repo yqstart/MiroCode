@@ -342,6 +342,20 @@ export const useGitStore = defineStore("git", () => {
   function closeDiff() {
     diffVisible.value = false;
     diffResults.value = [];
+    diffTitle.value = "";
+  }
+
+  /** 切换工作区时清空仓库相关临时 UI 状态（随后会 refresh） */
+  function clearForWorkspaceSwitch() {
+    snapshot.value = { ...EMPTY };
+    branches.value = [];
+    log.value = [];
+    conflictFiles.value = [];
+    commitMessage.value = "";
+    closeDiff();
+    refreshSeq += 1;
+    refreshAgain = false;
+    loading.value = false;
   }
 
   async function openConflictCompare(path: string) {
@@ -490,6 +504,7 @@ export const useGitStore = defineStore("git", () => {
     loadLog,
     showDiff,
     closeDiff,
+    clearForWorkspaceSwitch,
     openConflictCompare,
     resetHard,
     undoCommit,

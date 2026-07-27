@@ -95,6 +95,21 @@ export const useSessionsStore = defineStore("sessions", () => {
     openSessions(cwd);
   }
 
+  /**
+   * 打开/切换工作区时：本地终端一律重建为单个新会话。
+   * SSH 远程会话与项目无关，保持不动。
+   */
+  function resetLocalForWorkspace(cwd: string | null) {
+    const keepOpen = open.value;
+    const hadLocal = localTerminals.value.length > 0;
+    localTerminals.value = [];
+    activeLocalId.value = null;
+    if (keepOpen || hadLocal) {
+      ensureDefaultLocal(cwd);
+      subView.value = "local";
+    }
+  }
+
   function closeLocalTerminal(id: string) {
     const idx = localTerminals.value.findIndex((t) => t.id === id);
     if (idx < 0) return;
@@ -187,6 +202,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     closeSessions,
     setSubView,
     addLocalTerminal,
+    resetLocalForWorkspace,
     closeLocalTerminal,
     activateLocal,
     addRemoteSession,

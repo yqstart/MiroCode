@@ -270,6 +270,23 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
+  /** 切换工作区前：有未保存更改则确认是否丢弃 */
+  function confirmDiscardForWorkspaceSwitch(): boolean {
+    const dirty = tabs.value.filter((t) => t.content !== t.original);
+    if (!dirty.length) return true;
+    return window.confirm(
+      `${dirty.length} 个文件有未保存更改，切换项目将丢弃这些更改。继续？`,
+    );
+  }
+
+  /** 切换工作区后清空文件标签与跳转栈 */
+  function clearForWorkspaceSwitch() {
+    tabs.value = [];
+    activePath.value = null;
+    jumpStack.value = [];
+    openAt.value = null;
+  }
+
   return {
     tabs,
     activePath,
@@ -292,5 +309,7 @@ export const useEditorStore = defineStore("editor", () => {
     closeTab,
     renameTabPath,
     closeTabsUnder,
+    confirmDiscardForWorkspaceSwitch,
+    clearForWorkspaceSwitch,
   };
 });
