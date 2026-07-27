@@ -243,4 +243,41 @@ defineExpose({ scrollTo });
 .cm-host :deep(.cm-editor.cm-focused) {
   outline: none;
 }
+
+.cm-host :deep(.cm-tooltip-autocomplete) {
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--bg-elevated) !important;
+  box-shadow: var(--shadow-modal);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.cm-host :deep(.cm-tooltip-autocomplete > ul) {
+  font-family: inherit;
+  max-height: 280px;
+}
+
+.cm-host :deep(.cm-tooltip-autocomplete > ul > li) {
+  padding: 4px 10px;
+  line-height: 1.45;
+}
+
+.cm-host :deep(.cm-tooltip-autocomplete > ul > li[aria-selected]) {
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+}
+
+.cm-host :deep(.cm-completionLabel) {
+  color: var(--text-primary);
+}
+
+.cm-host :deep(.cm-completionDetail) {
+  color: var(--text-muted);
+  font-style: normal;
+  margin-left: 8px;
+}
+
+.cm-host :deep(.cm-completionIcon) {
+  opacity: 0.7;
+}
 </style>

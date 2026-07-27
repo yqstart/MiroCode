@@ -13,7 +13,8 @@ import {
   X,
 } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
-import { basename, dirname } from "@/shared/fs";
+import { writeClipboard } from "@/shared/clipboard";
+import { basename, dirname, relativeToRoot } from "@/shared/fs";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
@@ -39,14 +40,19 @@ const {
 } = storeToRefs(workspace);
 const { activePath } = storeToRefs(editor);
 
-const menu = ref<{ x: number; y: number; path: string; isDir: boolean } | null>(
-  null,
-);
+const menu = ref<{
+  x: number;
+  y: number;
+  path: string;
+  isDir: boolean;
+  isRoot: boolean;
+} | null>(null);
 const filterRef = ref<HTMLInputElement | null>(null);
 const treeBodyRef = ref<HTMLElement | null>(null);
 
 const dirtySet = computed(() => editor.dirtyPaths);
 const canLocate = computed(() => Boolean(rootPath.value && activePath.value));
+const isRootTarget = computed(() => Boolean(menu.value?.isRoot));
 
 function scrollRowIntoView(path: string) {
   const root = treeBodyRef.value;
@@ -107,8 +113,19 @@ async function onRowClick(path: string, isDir: boolean) {
 
 function onContext(event: MouseEvent, path: string, isDir: boolean) {
   event.preventDefault();
+  event.stopPropagation();
   workspace.selectPath(path);
-  menu.value = { x: event.clientX, y: event.clientY, path, isDir };
+  const menuWidth = 200;
+  const menuHeight = 320;
+  const x = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
+  const y = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
+  menu.value = {
+    x: Math.max(8, x),
+    y: Math.max(8, y),
+    path,
+    isDir,
+    isRoot: Boolean(rootPath.value && path === rootPath.value),
+  };
 }
 
 async function locateActiveFile() {
@@ -146,57 +163,74 @@ async function onFilterEnter() {
 
 async function runMenu(action: string) {
   if (!menu.value || !rootPath.value) return;
-  const { path, isDir } = menu.value;
+  const { path, isDir, isRoot } = menu.value;
   const parent = isDir ? path : dirname(path);
   closeMenu();
 
-  if (action === "new-file") {
-    const created = await workspace.createIn(parent, false);
-    if (created) await editor.openFile(created);
-    return;
-  }
-  if (action === "new-folder") {
-    await workspace.createIn(parent, true);
-    return;
-  }
-  if (action === "rename") {
-    const result = await workspace.renamePath(path);
-    if (result) {
-      editor.renameTabPath(result.from, result.to);
+  try {
+    if (action === "new-file") {
+      const created = await workspace.createIn(parent, false);
+      if (created) await editor.openFile(created);
+      return;
     }
-    return;
-  }
-  if (action === "delete") {
-    const ok = await workspace.removePath(path);
-    if (ok) editor.closeTabsUnder(path);
-    return;
-  }
-  if (action === "copy") {
-    workspace.setClipboard("copy", path);
-    return;
-  }
-  if (action === "cut") {
-    workspace.setClipboard("cut", path);
-    return;
-  }
-  if (action === "paste") {
-    const result = await workspace.pasteInto(parent);
-    if (result?.cut) {
-      editor.renameTabPath(result.from, result.to);
+    if (action === "new-folder") {
+      await workspace.createIn(parent, true);
+      return;
     }
-    return;
-  }
-  if (action === "copy-path") {
-    await navigator.clipboard.writeText(path);
-    workspace.showNotice("路径已复制");
-    return;
-  }
-  if (action === "reveal") {
-    await workspace.revealPath(path);
-  }
-  if (action === "locate-here") {
-    await workspace.revealPath(path);
-    if (!isDir) await editor.openFile(path);
+    if (action === "rename") {
+      if (isRoot) {
+        workspace.showNotice("不能重命名工作区根目录");
+        return;
+      }
+      const result = await workspace.renamePath(path);
+      if (result) {
+        editor.renameTabPath(result.from, result.to);
+      }
+      return;
+    }
+    if (action === "delete") {
+      if (isRoot) {
+        workspace.showNotice("不能删除工作区根目录");
+        return;
+      }
+      const ok = await workspace.removePath(path);
+      if (ok) editor.closeTabsUnder(path);
+      return;
+    }
+    if (action === "copy") {
+      workspace.setClipboard("copy", path);
+      return;
+    }
+    if (action === "cut") {
+      if (isRoot) {
+        workspace.showNotice("不能剪切工作区根目录");
+        return;
+      }
+      workspace.setClipboard("cut", path);
+      return;
+    }
+    if (action === "paste") {
+      const result = await workspace.pasteInto(parent);
+      if (result?.cut) {
+        editor.renameTabPath(result.from, result.to);
+      }
+      return;
+    }
+    if (action === "copy-abs-path") {
+      await writeClipboard(path);
+      workspace.showNotice("已复制绝对路径");
+      return;
+    }
+    if (action === "copy-rel-path") {
+      const rel = relativeToRoot(rootPath.value, path);
+      await writeClipboard(rel);
+      workspace.showNotice("已复制相对路径");
+    }
+  } catch (error) {
+    workspace.showNotice(
+      error instanceof Error ? error.message : String(error),
+      3200,
+    );
   }
 }
 
@@ -372,21 +406,40 @@ defineExpose({ locateActiveFile, focusFilter });
       class="menu"
       :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
       @click.stop
+      @contextmenu.prevent
     >
       <button type="button" @click="runMenu('new-file')">新建文件</button>
       <button type="button" @click="runMenu('new-folder')">新建文件夹</button>
       <hr />
-      <button type="button" @click="runMenu('rename')">重命名</button>
-      <button type="button" @click="runMenu('delete')">删除</button>
+      <button
+        type="button"
+        :disabled="isRootTarget"
+        @click="runMenu('rename')"
+      >
+        重命名
+      </button>
+      <button
+        type="button"
+        :disabled="isRootTarget"
+        @click="runMenu('delete')"
+      >
+        删除
+      </button>
       <hr />
       <button type="button" @click="runMenu('copy')">复制</button>
-      <button type="button" @click="runMenu('cut')">剪切</button>
+      <button
+        type="button"
+        :disabled="isRootTarget"
+        @click="runMenu('cut')"
+      >
+        剪切
+      </button>
       <button type="button" :disabled="!clipboard" @click="runMenu('paste')">
         粘贴
       </button>
       <hr />
-      <button type="button" @click="runMenu('copy-path')">复制路径</button>
-      <button type="button" @click="runMenu('locate-here')">在树中定位并打开</button>
+      <button type="button" @click="runMenu('copy-abs-path')">复制绝对路径</button>
+      <button type="button" @click="runMenu('copy-rel-path')">复制相对路径</button>
     </div>
   </div>
 </template>

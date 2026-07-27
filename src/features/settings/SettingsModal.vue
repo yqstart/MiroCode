@@ -9,15 +9,9 @@ import type { ThemeId, ThemeMeta } from "@/shared/types";
 
 const settings = useSettingsStore();
 const ui = useUiStore();
-const { theme, editor, locale, ai } = storeToRefs(settings);
+const { theme, editor, locale } = storeToRefs(settings);
 
-type NavId =
-  | "editor"
-  | "provider"
-  | "agent"
-  | "mcp"
-  | "shortcuts"
-  | "system";
+type NavId = "editor" | "shortcuts" | "system";
 
 const activeNav = ref<NavId>("editor");
 
@@ -30,27 +24,14 @@ const themes: ThemeMeta[] = [
 
 const navItems: { id: NavId; label: string }[] = [
   { id: "editor", label: "编辑器" },
-  { id: "provider", label: "模型供应商" },
-  { id: "agent", label: "智能体" },
-  { id: "mcp", label: "MCP" },
   { id: "shortcuts", label: "快捷键" },
-  { id: "system", label: "系统" },
+  { id: "system", label: "关于" },
 ];
 
 const activeThemeLabel = computed(() => THEME_LABELS[theme.value]);
 
-const activeProvider = computed(
-  () =>
-    ai.value.providers.find((p) => p.id === ai.value.activeProviderId) ??
-    ai.value.providers[0],
-);
-
 function selectTheme(id: ThemeId) {
   settings.setTheme(id);
-}
-
-function toggleCompletion() {
-  settings.patchAiCompletion({ enabled: !ai.value.completion.enabled });
 }
 
 function onOverlayClick(event: MouseEvent) {
@@ -95,11 +76,8 @@ function onOverlayClick(event: MouseEvent) {
             <p v-if="activeNav === 'editor'">
               外观、排版与编辑偏好 · 当前 {{ activeThemeLabel }}
             </p>
-            <p v-else-if="activeNav === 'provider'">配置模型供应商（本地占位）</p>
-            <p v-else-if="activeNav === 'agent'">智能体占位面板</p>
-            <p v-else-if="activeNav === 'mcp'">MCP 服务器配置</p>
             <p v-else-if="activeNav === 'shortcuts'">常用快捷键一览</p>
-            <p v-else>系统与关于</p>
+            <p v-else>关于 Miro Code</p>
           </div>
           <button type="button" class="close" title="关闭" @click="ui.closeSettings()">
             <X :size="18" />
@@ -184,108 +162,10 @@ function onOverlayClick(event: MouseEvent) {
             </div>
 
             <div class="ui-card section">
-              <div class="row-between">
-                <div>
-                  <h3>AI 代码补全</h3>
-                  <p class="desc">本地占位模式，未连接真实模型</p>
-                </div>
-                <button
-                  type="button"
-                  class="ui-toggle"
-                  :data-on="ai.completion.enabled ? 'true' : 'false'"
-                  aria-label="AI 补全开关"
-                  @click="toggleCompletion"
-                />
-              </div>
-              <div class="form-grid mt">
-                <label class="field">
-                  <span class="field-label">触发延迟 (ms)</span>
-                  <input
-                    class="ui-input"
-                    type="number"
-                    min="100"
-                    max="2000"
-                    :value="ai.completion.delayMs"
-                    @change="settings.patchAiCompletion({ delayMs: Number(($event.target as HTMLInputElement).value) || 300 })"
-                  />
-                </label>
-                <label class="field">
-                  <span class="field-label">最大 Token</span>
-                  <input
-                    class="ui-input"
-                    type="number"
-                    min="16"
-                    max="4096"
-                    :value="ai.completion.maxTokens"
-                    @change="settings.patchAiCompletion({ maxTokens: Number(($event.target as HTMLInputElement).value) || 128 })"
-                  />
-                </label>
-                <label class="field full">
-                  <span class="field-label">触发字符</span>
-                  <input
-                    class="ui-input"
-                    type="text"
-                    :value="ai.completion.triggerChars"
-                    @change="settings.patchAiCompletion({ triggerChars: ($event.target as HTMLInputElement).value })"
-                  />
-                </label>
-              </div>
-            </div>
-          </template>
-
-          <template v-else-if="activeNav === 'provider'">
-            <div class="ui-card section">
-              <h3>当前供应商</h3>
-              <p class="desc">「{{ activeProvider?.name }}」— 本地占位，不会发起真实 API 请求</p>
-              <div class="form-grid mt">
-                <label class="field full">
-                  <span class="field-label">Base URL</span>
-                  <input
-                    class="ui-input"
-                    type="text"
-                    placeholder="https://api.example.com"
-                    :value="activeProvider?.baseUrl"
-                    disabled
-                  />
-                </label>
-                <label class="field">
-                  <span class="field-label">模型</span>
-                  <input
-                    class="ui-input"
-                    type="text"
-                    :value="activeProvider?.model"
-                    disabled
-                  />
-                </label>
-              </div>
-            </div>
-          </template>
-
-          <template v-else-if="activeNav === 'agent'">
-            <div class="ui-card section placeholder">
-              <h3>智能体</h3>
+              <h3>代码补全</h3>
               <p class="desc">
-                Miro Code 智能体功能正在规划中。此处为占位面板，后续将支持对话式编程助手、任务编排与工具调用。
+                内置本地补全：语法关键字、代码片段、当前文档词、语言提示。输入即提示，⌘/Ctrl + Space 手动触发。无需模型，不联网。
               </p>
-              <label class="field full mt">
-                <span class="field-label">系统提示词（占位）</span>
-                <textarea
-                  class="commit-input"
-                  rows="4"
-                  :value="ai.agent.systemPrompt"
-                  disabled
-                />
-              </label>
-            </div>
-          </template>
-
-          <template v-else-if="activeNav === 'mcp'">
-            <div class="ui-card section placeholder">
-              <h3>MCP 服务器</h3>
-              <p class="desc">
-                模型上下文协议（MCP）配置占位。可在后续版本添加本地/远程 MCP 服务器。
-              </p>
-              <p v-if="!ai.mcpServers.length" class="muted">尚未配置 MCP 服务器</p>
             </div>
           </template>
 
@@ -295,11 +175,14 @@ function onOverlayClick(event: MouseEvent) {
               <dl class="shortcut-list">
                 <div><dt>⌘/Ctrl + O</dt><dd>打开文件夹</dd></div>
                 <div><dt>⌘/Ctrl + P</dt><dd>快速打开文件</dd></div>
-                <div><dt>⌘/Ctrl + Shift + F</dt><dd>打开搜索面板</dd></div>
+                <div><dt>⌘/Ctrl + Shift + F</dt><dd>在文件中查找</dd></div>
                 <div><dt>⌘/Ctrl + S</dt><dd>保存当前文件</dd></div>
                 <div><dt>⌘/Ctrl + ,</dt><dd>打开设置</dd></div>
+                <div><dt>⌘/Ctrl + Space</dt><dd>触发代码补全</dd></div>
                 <div><dt>⌘/Ctrl + Enter</dt><dd>跳转到 import/路径</dd></div>
                 <div><dt>⌘/Ctrl + [</dt><dd>返回上一跳转位置</dd></div>
+                <div><dt>⌥/Alt + F1</dt><dd>在资源管理器中定位</dd></div>
+                <div><dt>⌘/Ctrl + `</dt><dd>打开终端</dd></div>
               </dl>
             </div>
           </template>
@@ -307,8 +190,9 @@ function onOverlayClick(event: MouseEvent) {
           <template v-else>
             <div class="ui-card section">
               <h3>关于 Miro Code</h3>
-              <p class="desc">米罗编辑器 · 轻量化桌面代码编辑器</p>
+              <p class="desc">米罗编辑器 · 轻量、丝滑、美观的桌面代码编辑器</p>
               <p class="desc">版本 0.1.0 · Tauri + Vue 3 + CodeMirror 6</p>
+              <p class="desc muted">专注本地编辑体验，不含 AI Agent / 模型配置。</p>
             </div>
           </template>
         </div>

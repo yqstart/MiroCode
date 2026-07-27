@@ -16,4 +16,6 @@
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --transition-fast: 160ms ease;
   --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.28);
+  --scrollbar-size: 6px;
+  --scrollbar-radius: 999px;
 }

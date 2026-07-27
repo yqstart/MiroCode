@@ -1,10 +1,7 @@
 import { computed, reactive, watch } from "vue";
 import { defineStore } from "pinia";
 import {
-  DEFAULT_AI_SETTINGS,
   DEFAULT_SETTINGS,
-  type AiCompletionSettings,
-  type AiSettings,
   type AppSettings,
   type EditorPreferences,
   type SidePanelId,
@@ -17,28 +14,18 @@ function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return structuredClone(DEFAULT_SETTINGS);
-    const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & { ai?: unknown };
     const layout = { ...DEFAULT_SETTINGS.layout, ...parsed.layout };
     // 全局搜索已改为 WebStorm 弹层，旧配置中的 search 面板回退到资源管理器
     if ((layout.activePanel as string) === "search") {
       layout.activePanel = "explorer";
     }
+    // 丢弃历史 AI/Agent/MCP 占位字段，不再持久化
     return {
-      ...DEFAULT_SETTINGS,
-      ...parsed,
+      theme: parsed.theme ?? DEFAULT_SETTINGS.theme,
+      locale: parsed.locale ?? DEFAULT_SETTINGS.locale,
       editor: { ...DEFAULT_SETTINGS.editor, ...parsed.editor },
       layout,
-      ai: {
-        ...DEFAULT_AI_SETTINGS,
-        ...parsed.ai,
-        completion: {
-          ...DEFAULT_AI_SETTINGS.completion,
-          ...parsed.ai?.completion,
-        },
-        agent: { ...DEFAULT_AI_SETTINGS.agent, ...parsed.ai?.agent },
-        providers: parsed.ai?.providers ?? DEFAULT_AI_SETTINGS.providers,
-        mcpServers: parsed.ai?.mcpServers ?? DEFAULT_AI_SETTINGS.mcpServers,
-      },
     };
   } catch {
     return structuredClone(DEFAULT_SETTINGS);
@@ -77,14 +64,6 @@ export const useSettingsStore = defineStore("settings", () => {
     settings.theme = next;
   }
 
-  function patchAi(patch: Partial<AiSettings>) {
-    Object.assign(settings.ai, patch);
-  }
-
-  function patchAiCompletion(patch: Partial<AiCompletionSettings>) {
-    Object.assign(settings.ai.completion, patch);
-  }
-
   function patchEditor(patch: Partial<EditorPreferences>) {
     Object.assign(settings.editor, patch);
   }
@@ -112,19 +91,14 @@ export const useSettingsStore = defineStore("settings", () => {
     settings.locale = next;
   }
 
-  const ai = computed(() => settings.ai);
-
   return {
     settings,
     theme,
     locale,
     editor,
     layout,
-    ai,
     isDark,
     setTheme,
-    patchAi,
-    patchAiCompletion,
     patchEditor,
     setSidebarCollapsed,
     setSidebarWidth,

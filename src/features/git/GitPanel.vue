@@ -66,7 +66,13 @@ async function openFile(path: string) {
 }
 
 async function onCreateBranch() {
-  const name = window.prompt("新分支名称");
+  const { promptInput } = await import("@/shared/promptDialog");
+  const name = await promptInput({
+    title: "新建分支",
+    label: "分支名称",
+    placeholder: "feature/my-branch",
+    confirmText: "创建",
+  });
   if (!name?.trim()) return;
   await git.createBranch(name.trim(), true);
   branchMenuOpen.value = false;
@@ -75,7 +81,13 @@ async function onCreateBranch() {
 async function onRenameBranch() {
   const current = snapshot.value.branch;
   if (!current) return;
-  const name = window.prompt("重命名为", current);
+  const { promptInput } = await import("@/shared/promptDialog");
+  const name = await promptInput({
+    title: "重命名分支",
+    label: "新名称",
+    defaultValue: current,
+    confirmText: "重命名",
+  });
   if (!name?.trim() || name.trim() === current) return;
   await git.renameBranch(current, name.trim());
 }
@@ -87,10 +99,13 @@ async function onDeleteBranch() {
     workspace.showNotice("没有可删除的本地分支");
     return;
   }
-  const name = window.prompt(
-    `要删除的分支（当前：${current}）`,
-    locals[0]?.name ?? "",
-  );
+  const { promptInput } = await import("@/shared/promptDialog");
+  const name = await promptInput({
+    title: "删除分支",
+    label: `要删除的分支（当前：${current}）`,
+    defaultValue: locals[0]?.name ?? "",
+    confirmText: "删除",
+  });
   if (!name?.trim()) return;
   await git.deleteBranch(name.trim());
 }
@@ -101,7 +116,12 @@ async function onCheckout(name: string) {
 }
 
 async function onMerge() {
-  const name = window.prompt("要合并的分支名称");
+  const { promptInput } = await import("@/shared/promptDialog");
+  const name = await promptInput({
+    title: "合并分支",
+    label: "要合并的分支名称",
+    confirmText: "合并",
+  });
   if (!name?.trim()) return;
   await git.mergeBranch(name.trim());
 }

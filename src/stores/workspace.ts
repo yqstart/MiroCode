@@ -15,6 +15,7 @@ import {
   type DirEntryInfo,
 } from "@/shared/fs";
 import { loadRecentFolders, pushRecentFolder } from "@/shared/path";
+import { promptInput } from "@/shared/promptDialog";
 import { searchFiles, type FileSearchHit } from "@/shared/searchApi";
 import { useGitStore } from "@/stores/git";
 
@@ -282,7 +283,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   async function createIn(parent: string, isDir: boolean) {
     if (!rootPath.value) return;
     const label = isDir ? "新建文件夹" : "新建文件";
-    const name = window.prompt(label);
+    const name = await promptInput({
+      title: label,
+      label: isDir ? "文件夹名称" : "文件名称",
+      placeholder: isDir ? "components" : "index.ts",
+      confirmText: "创建",
+    });
     if (!name?.trim()) return;
     const target = joinPath(parent, name.trim());
     try {
@@ -301,7 +307,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   async function renamePath(path: string) {
     if (!rootPath.value) return;
-    const nextName = window.prompt("重命名", basename(path));
+    if (path === rootPath.value) {
+      showNotice("不能重命名工作区根目录");
+      return;
+    }
+    const nextName = await promptInput({
+      title: "重命名",
+      label: "新名称",
+      defaultValue: basename(path),
+      confirmText: "重命名",
+    });
     if (!nextName?.trim() || nextName.trim() === basename(path)) return;
     const target = joinPath(dirname(path), nextName.trim());
     try {
@@ -320,6 +335,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   async function removePath(path: string) {
     if (!rootPath.value) return;
+    if (path === rootPath.value) {
+      showNotice("不能删除工作区根目录");
+      return false;
+    }
     const ok = await ask(`确定删除「${basename(path)}」？此操作不可撤销。`, {
       title: "确认删除",
       kind: "warning",

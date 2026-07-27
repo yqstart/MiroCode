@@ -315,7 +315,7 @@ settings.set(patch: Partial<AppSettings>): Promise<void>
 | WebStorm 级 Git 全量复刻过大 | 排期失控 | 按 L1→L3 分层，冲突可视化后置 |
 | Vue/TS 深度语言能力不足 | 「专业编辑」感知弱 | 一期保基本体验，二期接 LSP |
 | Tailwind 自定义配置解析复杂 | 类名补全不准 | 先支持默认类表 + 简易 config 读取 |
-| 设计稿含 AI/MCP，需求未列 | 范围蔓延 | 设置信息架构预留入口，功能排在远期 |
+| 设计稿曾含 AI/MCP | 范围蔓延 | 已从产品中移除，仅保留本地语法补全 |
 
 ---
 

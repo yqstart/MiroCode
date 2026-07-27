@@ -78,6 +78,17 @@ export function dirname(path: string): string {
   return path.slice(0, idx);
 }
 
+/** 相对工作区根的路径；根自身返回 `.` */
+export function relativeToRoot(root: string, absPath: string): string {
+  const normRoot = root.replace(/[/\\]+$/, "");
+  if (absPath === normRoot) return ".";
+  const prefixSlash = `${normRoot}/`;
+  const prefixBack = `${normRoot}\\`;
+  if (absPath.startsWith(prefixSlash)) return absPath.slice(prefixSlash.length);
+  if (absPath.startsWith(prefixBack)) return absPath.slice(prefixBack.length);
+  return absPath;
+}
+
 export function languageFromPath(path: string): string {
   const name = basename(path).toLowerCase();
   if (name.endsWith(".vue")) return "Vue";

@@ -9,6 +9,7 @@ import StatusBar from "@/app/StatusBar.vue";
 import FindInFilesDialog from "@/features/search/FindInFilesDialog.vue";
 import QuickOpen from "@/features/search/QuickOpen.vue";
 import SettingsModal from "@/features/settings/SettingsModal.vue";
+import PromptDialog from "@/shared/PromptDialog.vue";
 import { basename } from "@/shared/fs";
 import { useEditorStore } from "@/stores/editor";
 import { useSearchStore } from "@/stores/search";
@@ -136,6 +137,7 @@ onUnmounted(() => {
     <StatusBar />
     <QuickOpen />
     <FindInFilesDialog />
+    <PromptDialog />
     <SettingsModal v-if="settingsOpen" />
   </div>
 </template>
