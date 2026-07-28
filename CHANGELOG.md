@@ -4,13 +4,23 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-28
+
 ### 新增
 
-- 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
-- GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
-- 多平台发版工作流（`.github/workflows/release.yml`）：macOS / Windows / Linux 云端打包并上传 Release
-- Intel macOS 使用 `macos-15-intel` 原生构建，避免 ARM 交叉编译 OpenSSL 失败
 - 应用内自动检查更新（`tauri-plugin-updater`）：启动静默检查 + 设置页手动检查；依赖 GitHub Release `latest.json`
+- 多平台发版工作流（`.github/workflows/release.yml`）：macOS / Windows / Linux 云端打包并上传 Release
+- 系统 Logo / 应用图标资源
+- 图片文件类型预览支持
+
+### 修复
+
+- 终端在 macOS 中文输入法下 Delete/退格误插空格、组字显示异常
+- macOS Overlay 标题栏红绿灯对齐
+
+### 构建
+
+- Intel macOS 改用 `macos-15-intel` 原生构建，避免 ARM 交叉编译 OpenSSL 失败
 
 ## [0.1.0] - 2026-07-27
 
@@ -24,6 +34,9 @@
 - 会话：本地终端（PTY）与 SSH（终端 + SFTP）；主机配置全局保存，密码不落盘
 - 主题：`miro-dark` / `dawn` / `midnight` / `cyberpunk`
 - MIT 许可证与第三方声明打包进安装产物
+- 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
+- GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/yqstart/MiroCode/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.0

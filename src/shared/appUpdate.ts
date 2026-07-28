@@ -10,12 +10,12 @@ function isTauriRuntime(): boolean {
 
 /** 读取壳内版本号；纯 Vite 预览回退到构建占位 */
 export async function getAppVersion(): Promise<string> {
-  if (!isTauriRuntime()) return "0.1.0";
+  if (!isTauriRuntime()) return "0.1.1";
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
     return await getVersion();
   } catch {
-    return "0.1.0";
+    return "0.1.1";
   }
 }
 
