@@ -61,3 +61,5 @@ src-tauri/             # Tauri 后端、Git/搜索命令、PTY 插件
 ## 变更约定
 
 架构级变更（目录结构调整、核心技术选型变更）须同步更新本文档与 `docs/Miro Code技术架构文档.md`。
+
+**发版**：每次升版本号发 Release 前，必须同步更新 `CHANGELOG.md`（将 `[Unreleased]` 条目归入新版本节并写明日期）；步骤见 `docs/多平台发布.md`。
