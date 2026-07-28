@@ -107,5 +107,5 @@ jobs:
           releaseDraft: false
           prerelease: false
           # 生成 latest.json，供应用内 updater 拉取
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
           args: ${{ matrix.args }}
