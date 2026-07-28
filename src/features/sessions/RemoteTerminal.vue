@@ -5,6 +5,10 @@ import { Terminal } from "@xterm/xterm";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
 import { storeToRefs } from "pinia";
+import {
+  attachTerminalInputBridge,
+  terminalBaseOptions,
+} from "@/features/sessions/terminalInputBridge";
 import { terminalThemeColors } from "@/features/sessions/terminalTheme";
 import {
   sshShellClose,
@@ -37,6 +41,7 @@ let connected = false;
 let resizeObserver: ResizeObserver | null = null;
 let unlistenData: UnlistenFn | null = null;
 let unlistenExit: UnlistenFn | null = null;
+let detachInput: (() => void) | null = null;
 
 function fit() {
   if (!term || !fitAddon || !props.active) return;
@@ -54,12 +59,8 @@ async function boot() {
   if (!host.value || term) return;
 
   term = new Terminal({
-    cursorBlink: true,
-    fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace',
-    fontSize: 13,
-    lineHeight: 1.35,
+    ...terminalBaseOptions(),
     theme: terminalThemeColors(theme.value),
-    allowProposedApi: true,
   });
   fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
@@ -91,7 +92,7 @@ async function boot() {
     connected = true;
     term.focus();
 
-    term.onData((data) => {
+    detachInput = attachTerminalInputBridge(term, (data) => {
       if (!connected) return;
       void sshShellWrite(props.sessionId, data).catch(() => undefined);
     });
@@ -113,6 +114,8 @@ onBeforeUnmount(() => {
   disposed = true;
   resizeObserver?.disconnect();
   resizeObserver = null;
+  detachInput?.();
+  detachInput = null;
   void unlistenData?.();
   void unlistenExit?.();
   unlistenData = null;
@@ -162,5 +165,17 @@ watch(theme, () => {
 
 .terminal-host :deep(.xterm-viewport) {
   overflow-y: auto !important;
+}
+
+.terminal-host :deep(.composition-view) {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--accent);
+  padding: 0 2px;
+}
+
+.terminal-host :deep(.xterm-helper-textarea) {
+  user-select: text !important;
+  -webkit-user-select: text !important;
 }
 </style>

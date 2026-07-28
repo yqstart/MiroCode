@@ -5,6 +5,10 @@ import { Terminal } from "@xterm/xterm";
 import { spawn, type IPty } from "tauri-pty";
 import "@xterm/xterm/css/xterm.css";
 import { storeToRefs } from "pinia";
+import {
+  attachTerminalInputBridge,
+  terminalBaseOptions,
+} from "@/features/sessions/terminalInputBridge";
 import { terminalThemeColors } from "@/features/sessions/terminalTheme";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
@@ -26,6 +30,7 @@ let fitAddon: FitAddon | null = null;
 let pty: IPty | null = null;
 let disposed = false;
 let resizeObserver: ResizeObserver | null = null;
+let detachInput: (() => void) | null = null;
 
 function defaultShell(): string {
   const platform = navigator.platform.toLowerCase();
@@ -50,12 +55,8 @@ async function boot() {
   if (!host.value || term) return;
 
   term = new Terminal({
-    cursorBlink: true,
-    fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace',
-    fontSize: 13,
-    lineHeight: 1.35,
+    ...terminalBaseOptions(),
     theme: terminalThemeColors(theme.value),
-    allowProposedApi: true,
   });
   fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
@@ -84,7 +85,7 @@ async function boot() {
       term?.writeln("\r\n\x1b[90m[进程已退出]\x1b[0m");
     });
 
-    term.onData((data) => {
+    detachInput = attachTerminalInputBridge(term, (data) => {
       pty?.write(data);
     });
   } catch (error) {
@@ -106,6 +107,8 @@ onBeforeUnmount(() => {
   disposed = true;
   resizeObserver?.disconnect();
   resizeObserver = null;
+  detachInput?.();
+  detachInput = null;
   try {
     pty?.kill();
   } catch {
@@ -174,5 +177,18 @@ watch(
 
 .terminal-host :deep(.xterm-viewport) {
   overflow-y: auto !important;
+}
+
+/* 组字预览对齐主题，避免黑底白字叠在深色终端上难辨 */
+.terminal-host :deep(.composition-view) {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--accent);
+  padding: 0 2px;
+}
+
+.terminal-host :deep(.xterm-helper-textarea) {
+  user-select: text !important;
+  -webkit-user-select: text !important;
 }
 </style>
