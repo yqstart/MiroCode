@@ -1,0 +1,24 @@
+/* ==================== 全局基础 Token ==================== */
+:root {
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --activity-bar-width: 48px;
+  --status-bar-height: 28px;
+  /* macOS Overlay 标题栏：高度须与 Rust TITLEBAR_HEIGHT 一致；红绿灯由原生垂直居中 */
+  --titlebar-height: 38px;
+  --traffic-light-pad: 78px;
+  --font-ui: ui-sans-serif, system-ui, "PingFang SC", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --transition-fast: 160ms ease;
+  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.28);
+  --scrollbar-size: 6px;
+  --scrollbar-radius: 999px;
+}

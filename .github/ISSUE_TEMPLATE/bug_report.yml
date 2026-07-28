@@ -1,0 +1,53 @@
+name: Bug 报告
+description: 报告功能异常或崩溃
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先搜索是否已有相同 Issue。安全漏洞请走 [SECURITY.md](../SECURITY.md)，不要公开披露。
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 尽量具体，可附截图
+      placeholder: |
+        1. 打开…
+        2. 点击…
+        3. 看到…
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / 提交
+      placeholder: 0.1.0 或 commit SHA
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 日志、相关文件类型、是否必现等

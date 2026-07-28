@@ -1,0 +1,93 @@
+/* ==================== Miro Dark（默认深色） ==================== */
+:root,
+[data-theme="miro-dark"] {
+  --bg-app: #0f0f12;
+  --bg-header: #1a1a20;
+  --bg-panel: #16161a;
+  --bg-elevated: #1c1c22;
+  --bg-editor: #0f0f12;
+  --bg-terminal: #0c0c10;
+  --bg-overlay: rgba(0, 0, 0, 0.45);
+  --border-subtle: #2a2a32;
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --accent: #8b5cf6;
+  --accent-soft: rgba(139, 92, 246, 0.16);
+  --accent-fg: #ffffff;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --focus-ring: rgba(139, 92, 246, 0.45);
+  --shadow-card: none;
+}
+
+/* ==================== Miro Dawn（浅色） ==================== */
+[data-theme="dawn"] {
+  --bg-app: #f7f8fa;
+  --bg-header: #e8eaef;
+  --bg-panel: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-editor: #ffffff;
+  --bg-terminal: #e8ecf1;
+  --bg-overlay: rgba(15, 23, 42, 0.32);
+  --border-subtle: #e6e8ec;
+  --text-primary: #1c1c21;
+  --text-secondary: #55555f;
+  --text-muted: #8c8c97;
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.1);
+  --accent-fg: #ffffff;
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --focus-ring: rgba(37, 99, 235, 0.35);
+  --shadow-card: 0 1px 3px rgba(28, 28, 33, 0.05);
+  --shadow-modal: 0 16px 48px rgba(28, 28, 33, 0.14);
+}
+
+/* ==================== Miro Midnight（深蓝深色） ==================== */
+[data-theme="midnight"] {
+  --bg-app: #0b1220;
+  --bg-header: #111827;
+  --bg-panel: #0f172a;
+  --bg-elevated: #111827;
+  --bg-editor: #0b1220;
+  --bg-terminal: #080e1a;
+  --bg-overlay: rgba(2, 6, 23, 0.55);
+  --border-subtle: #1e293b;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent: #38bdf8;
+  --accent-soft: rgba(56, 189, 248, 0.14);
+  --accent-fg: #0f172a;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --focus-ring: rgba(56, 189, 248, 0.4);
+  --shadow-card: none;
+}
+
+/* ==================== Miro Cyberpunk（高对比霓虹） ==================== */
+[data-theme="cyberpunk"] {
+  --bg-app: #120a16;
+  --bg-header: #1f1328;
+  --bg-panel: #1a1020;
+  --bg-elevated: #221428;
+  --bg-editor: #120a16;
+  --bg-terminal: #0a0610;
+  --bg-overlay: rgba(18, 10, 22, 0.62);
+  --border-subtle: #3b1f45;
+  --text-primary: #f5f3ff;
+  --text-secondary: #d8b4fe;
+  --text-muted: #9ca3af;
+  --accent: #22d3ee;
+  --accent-soft: rgba(34, 211, 238, 0.14);
+  --accent-fg: #0f172a;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+  --focus-ring: rgba(244, 114, 182, 0.45);
+  --shadow-card: none;
+}
