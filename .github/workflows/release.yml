@@ -1,0 +1,103 @@
+# 多平台打包并上传到 GitHub Release
+# 触发：推送 v* 标签，或 Actions 页手动 Run workflow
+# 说明：无需本机 Windows/Linux；签名/公证可后置（当前产出未签名包）
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            platform: macos-latest
+            args: --target aarch64-apple-darwin
+            rust_targets: aarch64-apple-darwin
+          - name: macOS Intel
+            platform: macos-latest
+            args: --target x86_64-apple-darwin
+            rust_targets: x86_64-apple-darwin
+          - name: Linux x64
+            platform: ubuntu-22.04
+            args: ""
+            rust_targets: ""
+          - name: Windows x64
+            platform: windows-latest
+            args: ""
+            rust_targets: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.platform }}-${{ matrix.rust_targets || 'default' }}
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 若该 tag 已有 Release（如已手建的 v0.1.0），会把产物挂上去；
+      # 若没有，则自动创建同名 Release。
+      - name: Build and upload to Release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Miro Code v__VERSION__
+          releaseBody: |
+            多平台安装包由 GitHub Actions 自动构建。
+
+            - macOS：`.dmg`（Apple Silicon / Intel 各一）
+            - Windows：`.msi` / `.exe`
+            - Linux：`.deb` / `.AppImage`
+
+            未做代码签名/公证时，系统可能提示「未验证开发者」或 SmartScreen 警告，属预期。
+            详见仓库 [CHANGELOG.md](https://github.com/yqstart/MiroCode/blob/master/CHANGELOG.md)。
+          # 已发布的 Release 须为 false；若希望先审再发，可改为 true（且勿对手动已发布 tag 再跑）
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

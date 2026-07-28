@@ -13,6 +13,7 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 | 功能排期 | `docs/Miro Code功能排期.md` |
 | 使用说明 | `docs/使用说明.md` |
 | 开源准备清单 | `docs/开源准备清单.md` |
+| 多平台发布 | `docs/多平台发布.md` |
 | 开源许可 | `LICENSE`（MIT） |
 | 第三方声明 | `THIRD-PARTY-NOTICES.md` |
 | 贡献指南 | `CONTRIBUTING.md` |

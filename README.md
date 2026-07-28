@@ -41,11 +41,13 @@ pnpm tauri:dev
 pnpm build
 ```
 
-发布构建（生成安装包）：
+本机发布构建（仅当前系统）：
 
 ```bash
 pnpm release
 ```
+
+多平台安装包（无需 Windows/Linux 机器）：打 `v*` 标签或 Actions 手动触发，见 [多平台发布](docs/多平台发布.md)。
 
 ## 文档
 
@@ -56,6 +58,7 @@ pnpm release
 | [安全政策](SECURITY.md) | 漏洞报告方式 |
 | [更新日志](CHANGELOG.md) | 版本变更 |
 | [开源准备清单](docs/开源准备清单.md) | 公开发布勾选表 |
+| [多平台发布](docs/多平台发布.md) | GitHub Actions 打 macOS / Win / Linux 包 |
 | [官方定名](docs/Miro%20Code（米罗编辑器）官方定名文档.md) | 品牌与命名 |
 | [产品需求](docs/Miro%20Code代码编辑器需求文档.md) | 功能与非功能需求 |
 | [技术架构](docs/Miro%20Code技术架构文档.md) | 选型、分层、IPC |

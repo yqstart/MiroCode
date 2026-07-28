@@ -60,6 +60,10 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 参与本项目即表示同意遵守 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
 
+## 多平台发版
+
+维护者发布安装包请看 [docs/多平台发布.md](docs/多平台发布.md)（GitHub Actions，不依赖本机 Windows/Linux）。
+
 ## 许可证
 
 贡献代码默认按仓库 [MIT](LICENSE) 许可授权。
