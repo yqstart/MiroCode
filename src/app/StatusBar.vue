@@ -31,6 +31,16 @@ const dirty = computed(() =>
 const branch = computed(() =>
   snapshot.value.initialized ? snapshot.value.branch : null,
 );
+const syncLabel = computed(() => {
+  if (!snapshot.value.initialized) return "";
+  const { ahead, behind, upstream } = snapshot.value;
+  if (!upstream && !ahead && !behind) return "";
+  const parts: string[] = [];
+  if (ahead) parts.push(`↑${ahead}`);
+  if (behind) parts.push(`↓${behind}`);
+  if (!parts.length && upstream) return "已同步";
+  return parts.join(" ");
+});
 const themeLabel = computed(() => THEME_LABELS[theme.value]);
 
 const themeOptions = computed(() =>
@@ -111,6 +121,7 @@ onBeforeUnmount(() => {
         >
           <GitBranch :size="12" />
           <span class="branch-name">{{ branch }}</span>
+          <span v-if="syncLabel" class="sync-label">{{ syncLabel }}</span>
         </button>
         <div
           v-if="branchMenuOpen"
@@ -238,6 +249,12 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sync-label {
+  font-size: 11px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
 }
 
 .branch-menu {

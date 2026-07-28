@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import {
+  Eye,
+  EyeOff,
   Pencil,
   Plus,
   Server,
@@ -36,6 +38,10 @@ const remember = ref(true);
 const unlockId = ref<string | null>(null);
 const unlockPassword = ref("");
 const unlockPassphrase = ref("");
+const showFormPassword = ref(false);
+const showPassphrase = ref(false);
+const showUnlockPassword = ref(false);
+const showUnlockPassphrase = ref(false);
 
 const editorTitle = computed(() =>
   editingId.value ? "编辑主机" : "添加主机",
@@ -319,13 +325,24 @@ const unlocking = computed(() =>
           </label>
           <label v-if="form.authKind === 'password'" class="field">
             <span>密码（连接时使用，不保存）</span>
-            <input
-              v-model="password"
-              v-bind="PLAIN_INPUT_ATTRS"
-              class="ui-input"
-              type="password"
-              name="miro-ssh-password"
-            />
+            <div class="password-field">
+              <input
+                v-model="password"
+                v-bind="PLAIN_INPUT_ATTRS"
+                class="ui-input"
+                :type="showFormPassword ? 'text' : 'password'"
+                name="miro-ssh-password"
+              />
+              <button
+                type="button"
+                class="pwd-toggle"
+                :title="showFormPassword ? '隐藏密码' : '显示密码'"
+                @click="showFormPassword = !showFormPassword"
+              >
+                <EyeOff v-if="showFormPassword" :size="14" />
+                <Eye v-else :size="14" />
+              </button>
+            </div>
           </label>
           <template v-else>
             <label class="field">
@@ -341,13 +358,24 @@ const unlocking = computed(() =>
             </label>
             <label class="field">
               <span>私钥口令（可选，不保存）</span>
-              <input
-                v-model="passphrase"
-                v-bind="PLAIN_INPUT_ATTRS"
-                class="ui-input"
-                type="password"
-                name="miro-ssh-passphrase"
-              />
+              <div class="password-field">
+                <input
+                  v-model="passphrase"
+                  v-bind="PLAIN_INPUT_ATTRS"
+                  class="ui-input"
+                  :type="showPassphrase ? 'text' : 'password'"
+                  name="miro-ssh-passphrase"
+                />
+                <button
+                  type="button"
+                  class="pwd-toggle"
+                  :title="showPassphrase ? '隐藏口令' : '显示口令'"
+                  @click="showPassphrase = !showPassphrase"
+                >
+                  <EyeOff v-if="showPassphrase" :size="14" />
+                  <Eye v-else :size="14" />
+                </button>
+              </div>
             </label>
           </template>
           <label v-if="!editingId" class="check">
@@ -390,25 +418,47 @@ const unlocking = computed(() =>
           <p class="unlock-meta">ssh · {{ unlocking.username }}@{{ unlocking.host }}:{{ unlocking.port }}</p>
           <label v-if="unlocking.authKind === 'password'" class="field">
             <span>密码</span>
-            <input
-              v-model="unlockPassword"
-              v-bind="PLAIN_INPUT_ATTRS"
-              class="ui-input"
-              type="password"
-              name="miro-ssh-unlock-password"
-              @keydown.enter="confirmUnlock"
-            />
+            <div class="password-field">
+              <input
+                v-model="unlockPassword"
+                v-bind="PLAIN_INPUT_ATTRS"
+                class="ui-input"
+                :type="showUnlockPassword ? 'text' : 'password'"
+                name="miro-ssh-unlock-password"
+                @keydown.enter="confirmUnlock"
+              />
+              <button
+                type="button"
+                class="pwd-toggle"
+                :title="showUnlockPassword ? '隐藏密码' : '显示密码'"
+                @click="showUnlockPassword = !showUnlockPassword"
+              >
+                <EyeOff v-if="showUnlockPassword" :size="14" />
+                <Eye v-else :size="14" />
+              </button>
+            </div>
           </label>
           <label v-else class="field">
             <span>私钥口令（如无请留空）</span>
-            <input
-              v-model="unlockPassphrase"
-              v-bind="PLAIN_INPUT_ATTRS"
-              class="ui-input"
-              type="password"
-              name="miro-ssh-unlock-passphrase"
-              @keydown.enter="confirmUnlock"
-            />
+            <div class="password-field">
+              <input
+                v-model="unlockPassphrase"
+                v-bind="PLAIN_INPUT_ATTRS"
+                class="ui-input"
+                :type="showUnlockPassphrase ? 'text' : 'password'"
+                name="miro-ssh-unlock-passphrase"
+                @keydown.enter="confirmUnlock"
+              />
+              <button
+                type="button"
+                class="pwd-toggle"
+                :title="showUnlockPassphrase ? '隐藏口令' : '显示口令'"
+                @click="showUnlockPassphrase = !showUnlockPassphrase"
+              >
+                <EyeOff v-if="showUnlockPassphrase" :size="14" />
+                <Eye v-else :size="14" />
+              </button>
+            </div>
           </label>
         </div>
         <footer class="sheet-foot">
@@ -610,6 +660,9 @@ const unlocking = computed(() =>
   background: var(--accent);
   color: var(--accent-fg);
   font-weight: 600;
+}
+
+.empty .cta {
   margin-top: 6px;
 }
 
@@ -687,10 +740,43 @@ const unlocking = computed(() =>
 
 .sheet-foot {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border-subtle);
+}
+
+.sheet-foot .cta {
+  height: 32px;
+  margin-top: 0;
+}
+
+.password-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-field .ui-input {
+  width: 100%;
+  padding-right: 36px;
+}
+
+.pwd-toggle {
+  position: absolute;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.pwd-toggle:hover {
+  background: var(--accent-soft);
+  color: var(--text-primary);
 }
 
 .field {

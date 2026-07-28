@@ -131,6 +131,22 @@ async function onRevert(commitId: string) {
   await git.revertTo(commitId);
 }
 
+async function onDiscard(path: string) {
+  if (!confirm(`确定丢弃「${basename(path)}」的未提交变更？此操作不可撤销。`)) {
+    return;
+  }
+  await git.discard([path]);
+}
+
+async function onDiscardAll() {
+  const count = unstagedEntries.value.length;
+  if (!count) return;
+  if (!confirm(`确定丢弃全部 ${count} 个文件的未提交变更？此操作不可撤销。`)) {
+    return;
+  }
+  await git.discardAll();
+}
+
 async function toggleLog() {
   showLog.value = !showLog.value;
   if (showLog.value) await git.loadLog();
@@ -172,8 +188,21 @@ async function toggleLog() {
             <GitBranch :size="14" />
             {{ snapshot.branch ?? "无分支" }}
           </button>
-          <span v-if="snapshot.upstream" class="upstream">
-            ↑ {{ snapshot.upstream }}
+          <span v-if="snapshot.upstream || snapshot.ahead || snapshot.behind" class="upstream">
+            <template v-if="snapshot.upstream">{{ snapshot.upstream }}</template>
+            <span v-if="snapshot.ahead" class="sync ahead" title="未推送到远端">
+              ↑{{ snapshot.ahead }}
+            </span>
+            <span v-if="snapshot.behind" class="sync behind" title="远端有新提交">
+              ↓{{ snapshot.behind }}
+            </span>
+            <span
+              v-if="snapshot.upstream && !snapshot.ahead && !snapshot.behind"
+              class="sync ok"
+              title="已与远端同步"
+            >
+              已同步
+            </span>
           </span>
         </div>
         <div class="actions">
@@ -183,9 +212,21 @@ async function toggleLog() {
           <button type="button" class="mini" title="推送" @click="git.push()">
             <ArrowUp :size="14" /> 推送
           </button>
-          <button type="button" class="mini" @click="git.stash()">暂存</button>
-          <button type="button" class="mini" @click="git.stashPop()">
-            恢复
+          <button
+            type="button"
+            class="mini"
+            title="贮藏工作区更改（git stash）"
+            @click="git.stash()"
+          >
+            贮藏
+          </button>
+          <button
+            type="button"
+            class="mini"
+            title="弹出最近一次贮藏（git stash pop）"
+            @click="git.stashPop()"
+          >
+            弹出贮藏
           </button>
           <button type="button" class="mini" @click="toggleLog">
             <History :size="14" /> 日志
@@ -311,13 +352,23 @@ async function toggleLog() {
         <section class="section">
           <div class="section-head">
             <h3>更改</h3>
-            <button
-              type="button"
-              class="link"
-              @click="git.showDiff(undefined, false)"
-            >
-              查看 diff
-            </button>
+            <div class="section-actions">
+              <button
+                v-if="unstagedEntries.length"
+                type="button"
+                class="link danger-link"
+                @click="onDiscardAll"
+              >
+                丢弃全部
+              </button>
+              <button
+                type="button"
+                class="link"
+                @click="git.showDiff(undefined, false)"
+              >
+                查看 diff
+              </button>
+            </div>
           </div>
           <div v-if="!unstagedEntries.length" class="muted">工作区干净</div>
           <div v-for="entry in unstagedEntries" :key="`u-${entry.path}`" class="change-row">
@@ -327,6 +378,13 @@ async function toggleLog() {
             <span class="status">{{ statusLabel(entry.status) }}</span>
             <button type="button" class="tag" @click="git.stage([entry.path])">
               暂存
+            </button>
+            <button
+              type="button"
+              class="tag danger-tag"
+              @click="onDiscard(entry.path)"
+            >
+              丢弃
             </button>
             <button
               type="button"
@@ -354,16 +412,46 @@ async function toggleLog() {
 
         <section v-if="showLog" class="section">
           <h3>提交历史</h3>
-          <div v-for="item in log" :key="item.id" class="log-row">
-            <div class="log-main">
-              <span class="log-id">{{ item.id.slice(0, 7) }}</span>
-              <span class="log-summary">{{ item.summary }}</span>
-            </div>
-            <div class="log-meta">
-              {{ item.author }} · {{ item.time }}
-              <button type="button" class="link" @click="onRevert(item.id)">
-                回退
-              </button>
+          <div class="log-graph">
+            <div
+              v-for="(item, index) in log"
+              :key="item.id"
+              class="log-row"
+              :class="{ unpushed: item.unpushed }"
+            >
+              <div class="graph-col" aria-hidden="true">
+                <span
+                  class="graph-line"
+                  :class="{
+                    merge: (item.parents?.length ?? 0) > 1,
+                    head: index === 0,
+                  }"
+                >
+                  <template v-if="(item.parents?.length ?? 0) > 1">*─┐</template>
+                  <template v-else-if="index < log.length - 1">* │</template>
+                  <template v-else>*  </template>
+                </span>
+              </div>
+              <div class="log-body">
+                <div class="log-main">
+                  <span class="log-id">{{ item.id }}</span>
+                  <span
+                    v-for="refName in item.refs"
+                    :key="refName"
+                    class="log-ref"
+                  >{{ refName }}</span>
+                  <span v-if="item.unpushed" class="log-unpushed" title="尚未推送到远端">
+                    未推送
+                  </span>
+                  <span class="log-summary">{{ item.summary }}</span>
+                </div>
+                <div class="log-meta">
+                  {{ item.author }} · {{ item.time }}
+                  <button type="button" class="link" @click="onRevert(item.id)">
+                    回退
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -505,6 +593,26 @@ async function toggleLog() {
 .upstream {
   font-size: 11px;
   color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sync {
+  font-variant-numeric: tabular-nums;
+}
+
+.sync.ahead {
+  color: var(--accent);
+}
+
+.sync.behind {
+  color: var(--warning, #d97706);
+}
+
+.sync.ok {
+  color: var(--success, #16a34a);
 }
 
 .actions {
@@ -604,6 +712,12 @@ async function toggleLog() {
   margin-bottom: 8px;
 }
 
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .section-head h3 {
   margin: 0;
 }
@@ -696,17 +810,72 @@ async function toggleLog() {
 .log-row {
   padding: 8px 4px;
   border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.log-row.unpushed {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.log-graph {
+  display: flex;
+  flex-direction: column;
+}
+
+.graph-col {
+  flex-shrink: 0;
+  width: 28px;
+  padding-top: 2px;
+}
+
+.graph-line {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--text-muted);
+  white-space: pre;
+}
+
+.graph-line.head,
+.graph-line.merge {
+  color: var(--accent);
+}
+
+.log-body {
+  min-width: 0;
+  flex: 1;
 }
 
 .log-main {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
   font-size: 12px;
 }
 
 .log-id {
   font-family: var(--font-mono);
   color: var(--accent);
+}
+
+.log-ref {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.log-unpushed {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .log-summary {
@@ -719,6 +888,11 @@ async function toggleLog() {
   color: var(--text-muted);
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+.danger-tag {
+  color: var(--danger) !important;
 }
 
 .danger-link {

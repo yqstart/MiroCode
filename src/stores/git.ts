@@ -8,6 +8,7 @@ import {
   gitCreateBranch,
   gitDeleteBranch,
   gitDiff,
+  gitDiscardPaths,
   gitInit,
   gitLog,
   gitMergeBranch,
@@ -35,6 +36,8 @@ const EMPTY: GitStatusSnapshot = {
   initialized: false,
   branch: null,
   upstream: null,
+  ahead: 0,
+  behind: 0,
   entries: [],
   conflictCount: 0,
 };
@@ -351,7 +354,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       await gitStash(workspace.rootPath, message);
-      workspace.showNotice("已暂存工作区更改");
+      workspace.showNotice("已贮藏工作区更改");
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -366,7 +369,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       await gitStashPop(workspace.rootPath);
-      workspace.showNotice("已恢复暂存");
+      workspace.showNotice("已弹出贮藏");
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -376,7 +379,33 @@ export const useGitStore = defineStore("git", () => {
     }
   }
 
-  async function loadLog(limit = 30) {
+  async function discard(paths: string[]) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath || !paths.length) return;
+    try {
+      await gitDiscardPaths(workspace.rootPath, paths);
+      workspace.showNotice(
+        paths.length === 1 ? "已丢弃变更" : `已丢弃 ${paths.length} 个文件的变更`,
+      );
+      await refresh();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function discardAll() {
+    const paths = unstagedEntries.value.map((e) => e.path);
+    if (!paths.length) {
+      useWorkspaceStore().showNotice("没有可丢弃的更改");
+      return;
+    }
+    await discard(paths);
+  }
+
+  async function loadLog(limit = 50) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath || !snapshot.value.initialized) return;
     try {
@@ -574,6 +603,8 @@ export const useGitStore = defineStore("git", () => {
     push,
     stash,
     stashPop,
+    discard,
+    discardAll,
     loadLog,
     showDiff,
     closeDiff,

@@ -41,6 +41,7 @@ let connected = false;
 let resizeObserver: ResizeObserver | null = null;
 let unlistenData: UnlistenFn | null = null;
 let unlistenExit: UnlistenFn | null = null;
+let unlistenError: UnlistenFn | null = null;
 let detachInput: (() => void) | null = null;
 
 function fit() {
@@ -76,6 +77,11 @@ async function boot() {
     unlistenData = await listen<string>(`ssh://data/${props.sessionId}`, (event) => {
       if (!term || disposed) return;
       term.write(event.payload);
+    });
+    unlistenError = await listen<string>(`ssh://error/${props.sessionId}`, (event) => {
+      if (!term || disposed) return;
+      term.writeln(`\r\n\x1b[31m${event.payload}\x1b[0m`);
+      emit("failed", event.payload);
     });
     unlistenExit = await listen(`ssh://exit/${props.sessionId}`, () => {
       connected = false;
@@ -118,8 +124,10 @@ onBeforeUnmount(() => {
   detachInput = null;
   void unlistenData?.();
   void unlistenExit?.();
+  void unlistenError?.();
   unlistenData = null;
   unlistenExit = null;
+  unlistenError = null;
   if (connected) {
     void sshShellClose(props.sessionId);
   }

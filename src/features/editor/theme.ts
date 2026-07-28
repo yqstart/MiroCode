@@ -185,6 +185,8 @@ function uiTheme(palette: ThemePalette): Extension {
       ".cm-content": {
         caretColor: palette.caret,
         paddingBottom: "40vh",
+        userSelect: "text",
+        WebkitUserSelect: "text",
       },
       ".cm-gutters": {
         backgroundColor: palette.gutter,

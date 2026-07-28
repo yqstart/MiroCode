@@ -127,15 +127,21 @@ export const useSessionsStore = defineStore("sessions", () => {
     focused.value = true;
   }
 
+  function renumberLocalTitles() {
+    localTerminals.value.forEach((t, i) => {
+      t.title = `终端 ${i + 1}`;
+    });
+  }
+
   function addLocalTerminal(cwd: string | null = null) {
     seq += 1;
     const id = `local-${seq}`;
-    const index = localTerminals.value.length + 1;
     localTerminals.value.push({
       id,
-      title: `终端 ${index}`,
+      title: `终端 ${localTerminals.value.length + 1}`,
       cwd,
     });
+    renumberLocalTitles();
     activeLocalId.value = id;
     subView.value = "local";
     openSessions(cwd);
@@ -185,6 +191,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     const idx = localTerminals.value.findIndex((t) => t.id === id);
     if (idx < 0) return;
     localTerminals.value.splice(idx, 1);
+    renumberLocalTitles();
     if (activeLocalId.value === id) {
       const next = localTerminals.value[idx] || localTerminals.value[idx - 1] || null;
       activeLocalId.value = next?.id ?? null;

@@ -5,12 +5,17 @@ function isMacPlatform(): boolean {
   return /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
 }
 
+function isWhitespaceOnly(data: string): boolean {
+  return /^[\s\u00a0\u3000]+$/.test(data);
+}
+
 /**
  * 修复 macOS WKWebView + 中文输入法下 xterm 的输入缺陷：
  * 1. 组字中按退格时，xterm 会 finalize 并把拼音甩进 PTY → 看起来像删不掉、乱出字
  * 2. 非组字但 keyCode=229 时，textarea diff 常把空格/残字符当成「新增」送进 PTY → Delete 变追加空格
  * 3. 中文标点（Shift+数字）在 commit-first 顺序下会被 `_keyDownSeen` 门控丢掉
  * 4. 配对标点 IME 合成的 ArrowLeft 会把真光标拽乱
+ * 5. 中文切英文后 IME 常误插间隔符
  *
  * @returns dispose
  */
@@ -24,8 +29,6 @@ export function attachTerminalInputBridge(
 
   const textarea = term.textarea;
   if (textarea) {
-    // 软提示：偏好拉丁文，无法强制切换系统输入法
-    textarea.setAttribute("lang", "en");
     textarea.setAttribute("spellcheck", "false");
     textarea.setAttribute("autocapitalize", "off");
     textarea.setAttribute("autocomplete", "off");
@@ -43,8 +46,8 @@ export function attachTerminalInputBridge(
   const ime = {
     keyDownSeen: false,
     last229At: 0,
-    /** 最近一次「删除类」229 按键，用于拦 IME 误插空格 */
-    last229DeleteAt: 0,
+    /** 最近一次删除键（含常规 Delete/Backspace），用于拦 IME 误插空格 */
+    lastDeleteAt: 0,
     lastNonAsciiCommitAt: 0,
     lastCompositionEndAt: 0,
   };
@@ -64,6 +67,17 @@ export function attachTerminalInputBridge(
       if (ev.target !== textarea) return;
       const ie = ev as InputEvent;
       if (ie.inputType !== "insertText" || !ie.data || ie.isComposing) return;
+      // 中英切换 / 组字结束后的纯空白 commit 一律丢弃
+      if (isWhitespaceOnly(ie.data)) {
+        if (
+          performance.now() - ime.lastCompositionEndAt < 200 ||
+          performance.now() - ime.lastDeleteAt < 120
+        ) {
+          ev.stopPropagation();
+          textarea.value = "";
+          return;
+        }
+      }
       if (/[^\x00-\x7f]/.test(ie.data)) {
         ime.lastNonAsciiCommitAt = performance.now();
       }
@@ -82,14 +96,14 @@ export function attachTerminalInputBridge(
     );
   }
 
-  // 拦截「删成空格」：仅在删除键 229 之后，IME 往 textarea 误塞空白时切断
+  // 拦截「删成空格」与「组字结束后误插间隔符」
   const onBeforeInput = (ev: InputEvent) => {
     if (ev.isComposing) return;
     if (ev.inputType !== "insertText" || !ev.data) return;
-    if (
-      performance.now() - ime.last229DeleteAt < 80 &&
-      /^[\s\u00a0\u3000]+$/.test(ev.data)
-    ) {
+    if (!isWhitespaceOnly(ev.data)) return;
+    const afterDelete = performance.now() - ime.lastDeleteAt < 120;
+    const afterComposition = performance.now() - ime.lastCompositionEndAt < 200;
+    if (afterDelete || afterComposition) {
       ev.preventDefault();
       ev.stopImmediatePropagation();
       textarea.value = "";
@@ -132,16 +146,12 @@ export function attachTerminalInputBridge(
       return false;
     }
 
-    // Process/229 删除键：自己投递 DEL，清空 textarea，跳过错误的 value-diff
-    if (e.keyCode === 229 || e.key === "Process" || e.key === "Unidentified") {
-      ime.last229DeleteAt = performance.now();
-      write(isBackspace ? "\x7f" : "\x1b[3~");
-      textarea.value = "";
-      e.preventDefault();
-      return false;
-    }
-
-    return true;
+    // macOS：所有删除键自行投递 DEL，跳过 xterm textarea value-diff（会误插空格）
+    ime.lastDeleteAt = performance.now();
+    write(isBackspace ? "\x7f" : "\x1b[3~");
+    textarea.value = "";
+    e.preventDefault();
+    return false;
   });
 
   return () => {

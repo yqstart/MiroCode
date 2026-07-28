@@ -25,6 +25,18 @@ body {
   user-select: none;
 }
 
+/* WKWebView：可编辑区域必须恢复选区，否则复制/剪切/粘贴失效 */
+input,
+textarea,
+select,
+[contenteditable="true"],
+.cm-editor,
+.cm-content,
+.cm-line {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 button,
 input,
 select,

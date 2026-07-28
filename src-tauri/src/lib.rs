@@ -64,7 +64,24 @@ pub fn run() {
                 ],
             )?;
 
-            let menu = Menu::with_items(handle, &[&file_menu])?;
+            // macOS WKWebView：自定义菜单会替换系统默认「编辑」菜单，
+            // 必须显式加入剪切/复制/粘贴，否则 Cmd+X/C/V 无法路由到 Web 内容。
+            let edit_menu = Submenu::with_items(
+                handle,
+                "编辑",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(handle, None)?,
+                    &PredefinedMenuItem::redo(handle, None)?,
+                    &PredefinedMenuItem::separator(handle)?,
+                    &PredefinedMenuItem::cut(handle, None)?,
+                    &PredefinedMenuItem::copy(handle, None)?,
+                    &PredefinedMenuItem::paste(handle, None)?,
+                    &PredefinedMenuItem::select_all(handle, None)?,
+                ],
+            )?;
+
+            let menu = Menu::with_items(handle, &[&file_menu, &edit_menu])?;
             app.set_menu(menu)?;
 
             app.on_menu_event(|app, event| {
@@ -117,6 +134,7 @@ pub fn run() {
             commands::git::git_push,
             commands::git::git_stash,
             commands::git::git_stash_pop,
+            commands::git::git_discard_paths,
             commands::git::git_reset_hard,
             commands::git::git_undo_commit,
             commands::git::git_revert_to,

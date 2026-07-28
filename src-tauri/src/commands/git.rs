@@ -26,6 +26,10 @@ pub struct GitStatusSnapshot {
     pub initialized: bool,
     pub branch: Option<String>,
     pub upstream: Option<String>,
+    /// 本地领先上游的提交数
+    pub ahead: usize,
+    /// 本地落后上游的提交数
+    pub behind: usize,
     pub entries: Vec<GitStatusEntry>,
     pub conflict_count: usize,
 }
@@ -47,6 +51,12 @@ pub struct GitCommitInfo {
     pub author: String,
     pub time: String,
     pub files: Vec<String>,
+    /// 父提交短 id（用于绘制提交图）
+    pub parents: Vec<String>,
+    /// 指向该提交的本地/远程 refs（短名）
+    pub refs: Vec<String>,
+    /// 是否尚未推送到上游（位于 ahead 区间内）
+    pub unpushed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -107,6 +117,8 @@ pub fn git_status(root: String) -> Result<GitStatusSnapshot, String> {
                 initialized: false,
                 branch: None,
                 upstream: None,
+                ahead: 0,
+                behind: 0,
                 entries: vec![],
                 conflict_count: 0,
             });
@@ -128,6 +140,20 @@ pub fn git_status(root: String) -> Result<GitStatusSnapshot, String> {
         let up = branch.upstream().ok()?;
         up.name().ok().flatten().map(|s| s.to_string())
     })();
+
+    let (ahead, behind) = (|| {
+        let head = repo.head().ok()?;
+        if !head.is_branch() {
+            return None;
+        }
+        let name = head.shorthand().ok()?;
+        let branch = repo.find_branch(name, BranchType::Local).ok()?;
+        let local_oid = head.target()?;
+        let upstream_ref = branch.upstream().ok()?;
+        let remote_oid = upstream_ref.get().target()?;
+        repo.graph_ahead_behind(local_oid, remote_oid).ok()
+    })()
+    .unwrap_or((0, 0));
 
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
@@ -177,6 +203,8 @@ pub fn git_status(root: String) -> Result<GitStatusSnapshot, String> {
         initialized: true,
         branch: head_name,
         upstream,
+        ahead,
+        behind,
         entries,
         conflict_count,
     })
@@ -394,12 +422,69 @@ pub fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>,
     let repo = open_repo(&root)?;
     let mut revwalk = repo.revwalk().map_err(|e| e.to_string())?;
     revwalk.push_head().map_err(|e| e.to_string())?;
+    // TOPOLOGICAL 便于绘制父子关系图；TIME 作次要排序
     revwalk
-        .set_sorting(git2::Sort::TIME)
+        .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
         .map_err(|e| e.to_string())?;
     let limit = limit.unwrap_or(50);
-    let mut commits = Vec::new();
 
+    // 收集 ref → commit 短 id 映射
+    let mut ref_map: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    if let Ok(refs) = repo.references() {
+        for reference in refs.flatten() {
+            let Ok(name) = reference.shorthand() else {
+                continue;
+            };
+            if name == "HEAD" {
+                continue;
+            }
+            if let Some(oid) = reference.target() {
+                let id = oid.to_string();
+                let short = id[..7.min(id.len())].to_string();
+                ref_map.entry(short).or_default().push(name.to_string());
+            }
+        }
+    }
+
+    // ahead 区间：本地有、上游没有的提交
+    let mut unpushed_ids = std::collections::HashSet::new();
+    if let Ok(head) = repo.head() {
+        if head.is_branch() {
+            if let Ok(branch_name) = head.shorthand() {
+                if let Ok(branch) = repo.find_branch(branch_name, BranchType::Local) {
+                    if let Ok(upstream) = branch.upstream() {
+                        if let (Some(local), Some(remote)) =
+                            (head.target(), upstream.get().target())
+                        {
+                            if let Ok(mut walk) = repo.revwalk() {
+                                let _ = walk.push(local);
+                                let _ = walk.hide(remote);
+                                for oid in walk.flatten() {
+                                    let id = oid.to_string();
+                                    unpushed_ids.insert(id[..7.min(id.len())].to_string());
+                                }
+                            }
+                        }
+                    } else if let Ok(mut walk) = repo.revwalk() {
+                        // 无上游：当前可见提交视为未推送
+                        let _ = walk.push_head();
+                        for (i, oid) in walk.enumerate() {
+                            if i >= limit {
+                                break;
+                            }
+                            if let Ok(oid) = oid {
+                                let id = oid.to_string();
+                                unpushed_ids.insert(id[..7.min(id.len())].to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut commits = Vec::new();
     for (i, oid) in revwalk.enumerate() {
         if i >= limit {
             break;
@@ -434,8 +519,19 @@ pub fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>,
         }
 
         let id = oid.to_string();
+        let short = id[..7.min(id.len())].to_string();
+        let parents: Vec<String> = (0..commit.parent_count())
+            .filter_map(|i| commit.parent_id(i).ok())
+            .map(|pid| {
+                let s = pid.to_string();
+                s[..7.min(s.len())].to_string()
+            })
+            .collect();
+        let refs = ref_map.get(&short).cloned().unwrap_or_default();
+        let unpushed = unpushed_ids.contains(&short);
+
         commits.push(GitCommitInfo {
-            id: id[..8.min(id.len())].to_string(),
+            id: short,
             summary: commit
                 .summary()
                 .ok()
@@ -445,9 +541,103 @@ pub fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>,
             author: commit.author().name().unwrap_or("").to_string(),
             time,
             files,
+            parents,
+            refs,
+            unpushed,
         });
     }
     Ok(commits)
+}
+
+/// 丢弃工作区指定路径的未提交变更（已跟踪还原到 HEAD；未跟踪则删除）。
+#[tauri::command]
+pub fn git_discard_paths(root: String, paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let repo = open_repo(&root)?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| "裸仓库无法丢弃工作区变更".to_string())?
+        .to_path_buf();
+
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .exclude_submodules(true);
+    let statuses = repo.statuses(Some(&mut opts)).map_err(|e| e.to_string())?;
+
+    let path_set: std::collections::HashSet<&str> =
+        paths.iter().map(|p| p.as_str()).collect();
+    let mut tracked: Vec<String> = Vec::new();
+    let mut untracked: Vec<String> = Vec::new();
+
+    for entry in statuses.iter() {
+        let path = entry.path().unwrap_or("");
+        if path.is_empty() || !path_set.contains(path) {
+            continue;
+        }
+        let st = entry.status();
+        // 纯未跟踪（工作区新增且未入 index）→ 删除文件
+        if st.is_wt_new() && !st.intersects(
+            git2::Status::INDEX_NEW
+                | git2::Status::INDEX_MODIFIED
+                | git2::Status::INDEX_DELETED
+                | git2::Status::INDEX_RENAMED
+                | git2::Status::INDEX_TYPECHANGE,
+        ) {
+            untracked.push(path.to_string());
+        } else {
+            tracked.push(path.to_string());
+        }
+    }
+
+    if !tracked.is_empty() {
+        let mut builder = CheckoutBuilder::new();
+        builder.force();
+        for path in &tracked {
+            builder.path(path);
+        }
+        // checkout_head 会把指定路径的 index + worktree 一并还原到 HEAD
+        repo.checkout_head(Some(&mut builder))
+            .map_err(|e| format!("丢弃变更失败: {e}"))?;
+
+        // INDEX_NEW（已暂存但从未提交）在 HEAD 中不存在，需从 index 移除并删工作区文件
+        let mut index = repo.index().map_err(|e| e.to_string())?;
+        let head_tree = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_tree().ok());
+        for path in &tracked {
+            let in_head = head_tree
+                .as_ref()
+                .and_then(|t| t.get_path(Path::new(path)).ok())
+                .is_some();
+            if !in_head {
+                let _ = index.remove_path(Path::new(path));
+                let full = workdir.join(path);
+                if full.is_dir() {
+                    let _ = std::fs::remove_dir_all(&full);
+                } else if full.exists() {
+                    let _ = std::fs::remove_file(&full);
+                }
+            }
+        }
+        index.write().map_err(|e| e.to_string())?;
+    }
+
+    for path in &untracked {
+        let full = workdir.join(path);
+        if full.is_dir() {
+            std::fs::remove_dir_all(&full)
+                .map_err(|e| format!("删除未跟踪目录失败 {}: {e}", full.display()))?;
+        } else if full.exists() {
+            std::fs::remove_file(&full)
+                .map_err(|e| format!("删除未跟踪文件失败 {}: {e}", full.display()))?;
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

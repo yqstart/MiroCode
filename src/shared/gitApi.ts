@@ -12,6 +12,8 @@ export interface GitStatusSnapshot {
   initialized: boolean;
   branch: string | null;
   upstream: string | null;
+  ahead: number;
+  behind: number;
   entries: GitStatusEntry[];
   conflictCount: number;
 }
@@ -29,6 +31,9 @@ export interface GitCommitInfo {
   author: string;
   time: string;
   files: string[];
+  parents: string[];
+  refs: string[];
+  unpushed: boolean;
 }
 
 export interface GitDiffResult {
@@ -170,6 +175,13 @@ export async function gitStash(
 
 export async function gitStashPop(root: string): Promise<void> {
   return invoke("git_stash_pop", { root });
+}
+
+export async function gitDiscardPaths(
+  root: string,
+  paths: string[],
+): Promise<void> {
+  return invoke("git_discard_paths", { root, paths });
 }
 
 export async function gitResetHard(root: string): Promise<void> {

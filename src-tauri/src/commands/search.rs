@@ -31,30 +31,34 @@ pub struct ReplaceResult {
     pub files: Vec<String>,
 }
 
-fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
+/// 仅当文件名或任一路径段（文件夹名）包含查询子串时命中；不做跨段子序列模糊。
+fn segment_contains_score(query: &str, name: &str, relative: &str) -> Option<i32> {
     let q = query.to_lowercase();
-    let c = candidate.to_lowercase();
     if q.is_empty() {
-        return Some(0);
+        return None;
     }
-    if c.contains(&q) {
-        let bonus = if c.starts_with(&q) { 40 } else { 20 };
-        return Some(100 - (c.len() as i32).min(80) + bonus);
+
+    let name_lc = name.to_lowercase();
+    if name_lc.contains(&q) {
+        let bonus = if name_lc.starts_with(&q) { 40 } else { 20 };
+        return Some(200 + bonus - (name_lc.len() as i32).min(80));
     }
-    let mut ci = c.chars().peekable();
-    for qc in q.chars() {
-        let mut found = false;
-        while let Some(ch) = ci.next() {
-            if ch == qc {
-                found = true;
-                break;
-            }
+
+    let segments: Vec<&str> = relative
+        .split(['/', '\\'])
+        .filter(|s| !s.is_empty())
+        .collect();
+    // 排除最后一段（文件名已在上方匹配）
+    let folder_count = segments.len().saturating_sub(1);
+    for (i, seg) in segments.iter().take(folder_count).enumerate() {
+        let seg_lc = seg.to_lowercase();
+        if seg_lc.contains(&q) {
+            let bonus = if seg_lc.starts_with(&q) { 30 } else { 10 };
+            // 越靠近文件名的目录段略加分
+            return Some(100 + bonus + (i as i32) * 2 - (seg_lc.len() as i32).min(40));
         }
-        if !found {
-            return None;
-        }
     }
-    Some(30 - (c.len() as i32).min(25))
+    None
 }
 
 fn match_ext(path: &Path, extensions: &Option<Vec<String>>) -> bool {
@@ -104,9 +108,7 @@ pub fn search_files(
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
-        let score = fuzzy_score(q, &name)
-            .or_else(|| fuzzy_score(q, &relative))
-            .unwrap_or(-1);
+        let score = segment_contains_score(q, &name, &relative).unwrap_or(-1);
         if score < 0 {
             continue;
         }

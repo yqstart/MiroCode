@@ -178,7 +178,8 @@ pub fn ssh_shell_open(
     }
 
     let sess = connect_session(&config)?;
-    sess.set_timeout(200);
+    // 建通道 / 申请 PTY / 启动 shell 需要较长超时；过短会导致「打开通道失败」
+    sess.set_timeout(30_000);
 
     let mut channel = sess
         .channel_session()
@@ -189,6 +190,9 @@ pub fn ssh_shell_open(
     channel
         .shell()
         .map_err(|e| format!("启动远程 shell 失败: {e}"))?;
+
+    // 读循环改用短超时，配合 WouldBlock/TimedOut 轮询
+    sess.set_timeout(200);
 
     let stop = Arc::new(AtomicBool::new(false));
     let session = Arc::new(Mutex::new(sess));
@@ -210,7 +214,9 @@ pub fn ssh_shell_open(
     thread::spawn(move || {
         let event_data = format!("ssh://data/{reader_id}");
         let event_exit = format!("ssh://exit/{reader_id}");
+        let event_error = format!("ssh://error/{reader_id}");
         let mut buf = [0u8; 8192];
+        let mut last_error: Option<String> = None;
         loop {
             if stop.load(Ordering::SeqCst) {
                 break;
@@ -236,9 +242,13 @@ pub fn ssh_shell_open(
                         thread::sleep(Duration::from_millis(16));
                         continue;
                     }
+                    last_error = Some(format!("SSH 通道读取失败: {err}"));
                     break;
                 }
             }
+        }
+        if let Some(msg) = last_error {
+            let _ = app.emit(&event_error, msg);
         }
         let _ = app.emit(&event_exit, ());
     });
