@@ -105,6 +105,21 @@ export function languageFromPath(path: string): string {
   if (name.endsWith(".scss") || name.endsWith(".sass")) return "Sass";
   if (name.endsWith(".yaml") || name.endsWith(".yml")) return "YAML";
   if (name.endsWith(".xml")) return "XML";
+  if (name.endsWith(".svg")) return "SVG";
+  if (
+    name.endsWith(".png") ||
+    name.endsWith(".jpg") ||
+    name.endsWith(".jpeg") ||
+    name.endsWith(".gif") ||
+    name.endsWith(".webp") ||
+    name.endsWith(".bmp") ||
+    name.endsWith(".ico") ||
+    name.endsWith(".avif") ||
+    name.endsWith(".tif") ||
+    name.endsWith(".tiff")
+  ) {
+    return "Image";
+  }
   if (name === ".env" || name.startsWith(".env.")) return "Env";
   return "Plain Text";
 }

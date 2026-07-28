@@ -69,6 +69,25 @@ pub fn read_text_file(root: String, path: String) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "文件不是有效 UTF-8 文本".into())
 }
 
+/// 读取工作区内二进制文件为 base64（图片预览）
+#[tauri::command]
+pub fn read_file_base64(root: String, path: String) -> Result<String, String> {
+    const MAX_BYTES: usize = 40 * 1024 * 1024; // 40MB
+    let root_path = PathBuf::from(&root);
+    let file = normalize(&path)?;
+    ensure_inside_workspace(&root_path, &file)?;
+    if !file.is_file() {
+        return Err("目标不是文件".into());
+    }
+    let meta = fs::metadata(&file).map_err(|e| e.to_string())?;
+    if meta.len() as usize > MAX_BYTES {
+        return Err("图片过大，无法预览（上限 40MB）".into());
+    }
+    let bytes = fs::read(&file).map_err(|e| e.to_string())?;
+    use base64::Engine;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
 #[tauri::command]
 pub fn write_text_file(root: String, path: String, content: String) -> Result<(), String> {
     let root_path = PathBuf::from(&root);

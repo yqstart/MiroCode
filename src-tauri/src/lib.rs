@@ -88,6 +88,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::fs::list_dir,
             commands::fs::read_text_file,
+            commands::fs::read_file_base64,
             commands::fs::write_text_file,
             commands::fs::create_entry,
             commands::fs::rename_entry,

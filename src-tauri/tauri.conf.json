@@ -27,7 +27,17 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/**",
+          "/Volumes/**",
+          "/tmp/**",
+          "/private/tmp/**",
+          "**"
+        ]
+      }
     }
   },
   "bundle": {

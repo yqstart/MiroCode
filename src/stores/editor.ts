@@ -7,6 +7,7 @@ import {
   readTextFile,
   writeTextFile,
 } from "@/shared/fs";
+import { isRasterImagePath } from "@/shared/media";
 import type { EditorJumpTarget, EditorOpenAt } from "@/shared/types";
 import { useCompareStore } from "@/stores/compare";
 import { useGitStore } from "@/stores/git";
@@ -21,6 +22,8 @@ export interface EditorTab {
   original: string;
   language: string;
   cursor: { line: number; column: number };
+  /** 图片预览缓存破坏（外部变更时递增） */
+  previewNonce: number;
 }
 
 export const useEditorStore = defineStore("editor", () => {
@@ -34,8 +37,13 @@ export const useEditorStore = defineStore("editor", () => {
     () => tabs.value.find((t) => t.path === activePath.value) ?? null,
   );
 
-  const dirtyPaths = computed(() =>
-    new Set(tabs.value.filter((t) => t.content !== t.original).map((t) => t.path)),
+  const dirtyPaths = computed(
+    () =>
+      new Set(
+        tabs.value
+          .filter((t) => !isRasterImagePath(t.path) && t.content !== t.original)
+          .map((t) => t.path),
+      ),
   );
 
   function isDirty(path: string) {
@@ -82,7 +90,10 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     try {
-      const content = await readTextFile(workspace.rootPath, path);
+      // 栅格图：不读文本，仅作预览标签
+      const content = isRasterImagePath(path)
+        ? ""
+        : await readTextFile(workspace.rootPath, path);
       tabs.value.push({
         id: path,
         path,
@@ -91,6 +102,7 @@ export const useEditorStore = defineStore("editor", () => {
         original: content,
         language: languageFromPath(path),
         cursor: { line: 1, column: 1 },
+        previewNonce: Date.now(),
       });
       activePath.value = path;
       workspace.selectPath(path);
@@ -146,15 +158,24 @@ export const useEditorStore = defineStore("editor", () => {
           continue;
         }
 
+        // 栅格图：刷新预览即可
+        if (isRasterImagePath(path)) {
+          tab.previewNonce = Date.now();
+          workspace.showNotice(`「${tab.name}」已从磁盘重新加载`);
+          continue;
+        }
+
         const disk = await readTextFile(workspace.rootPath, path);
         if (disk === tab.content) {
           tab.original = disk;
+          tab.previewNonce = Date.now();
           continue;
         }
 
         if (tab.content === tab.original) {
           tab.content = disk;
           tab.original = disk;
+          tab.previewNonce = Date.now();
           workspace.showNotice(`「${tab.name}」已从磁盘重新加载`);
           continue;
         }
@@ -165,6 +186,7 @@ export const useEditorStore = defineStore("editor", () => {
         if (overwrite) {
           tab.content = disk;
           tab.original = disk;
+          tab.previewNonce = Date.now();
           workspace.showNotice(`「${tab.name}」已用磁盘版本覆盖`);
         } else {
           tab.original = disk;
@@ -204,6 +226,7 @@ export const useEditorStore = defineStore("editor", () => {
       return;
     }
     const tab = activeTab.value;
+    if (isRasterImagePath(tab.path)) return;
     if (tab.content === tab.original) return;
     try {
       workspace.markSelfWrite(tab.path);
@@ -227,7 +250,9 @@ export const useEditorStore = defineStore("editor", () => {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
     if (!workspace.rootPath) return;
-    const dirty = tabs.value.filter((t) => t.content !== t.original);
+    const dirty = tabs.value.filter(
+      (t) => !isRasterImagePath(t.path) && t.content !== t.original,
+    );
     if (!dirty.length) return;
     try {
       for (const tab of dirty) {
@@ -254,7 +279,7 @@ export const useEditorStore = defineStore("editor", () => {
   async function closeTab(path: string) {
     const tab = tabs.value.find((t) => t.path === path);
     if (!tab) return;
-    if (tab.content !== tab.original) {
+    if (tab.content !== tab.original && !isRasterImagePath(tab.path)) {
       const ok = window.confirm(`「${tab.name}」有未保存更改，仍要关闭？`);
       if (!ok) return;
     }
@@ -273,6 +298,7 @@ export const useEditorStore = defineStore("editor", () => {
     tab.id = to;
     tab.name = basename(to);
     tab.language = languageFromPath(to);
+    tab.previewNonce = Date.now();
     if (activePath.value === from) activePath.value = to;
   }
 
@@ -293,7 +319,9 @@ export const useEditorStore = defineStore("editor", () => {
 
   /** 切换工作区前：有未保存更改则确认是否丢弃 */
   function confirmDiscardForWorkspaceSwitch(): boolean {
-    const dirty = tabs.value.filter((t) => t.content !== t.original);
+    const dirty = tabs.value.filter(
+      (t) => !isRasterImagePath(t.path) && t.content !== t.original,
+    );
     if (!dirty.length) return true;
     return window.confirm(
       `${dirty.length} 个文件有未保存更改，切换项目将丢弃这些更改。继续？`,

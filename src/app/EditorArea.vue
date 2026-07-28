@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { Columns2, Eye, FileCode, TerminalSquare, X } from "lucide-vue-next";
 import { marked } from "marked";
 import { storeToRefs } from "pinia";
 import CodeMirrorEditor from "@/features/editor/CodeMirrorEditor.vue";
+import ImagePreview from "@/features/editor/ImagePreview.vue";
 import CompareView from "@/features/git/CompareView.vue";
 import SessionsView from "@/features/sessions/SessionsView.vue";
+import { isRasterImagePath, isSvgPath } from "@/shared/media";
 import { formatShortcut } from "@/shared/platform";
 import { useCompareStore } from "@/stores/compare";
 import { useEditorStore } from "@/stores/editor";
@@ -32,16 +34,69 @@ const {
 } = storeToRefs(compare);
 
 const markdownPreview = ref(false);
+const svgPreview = ref(true);
 
 const isMarkdown = computed(() => {
   const name = activeTab.value?.name.toLowerCase() ?? "";
   return name.endsWith(".md") || name.endsWith(".markdown");
 });
 
+const isSvg = computed(() =>
+  activeTab.value ? isSvgPath(activeTab.value.path) : false,
+);
+
+const isRaster = computed(() =>
+  activeTab.value ? isRasterImagePath(activeTab.value.path) : false,
+);
+
+const showFileEditor = computed(
+  () => !sessionsFocused.value && !compareFocused.value && Boolean(activeTab.value),
+);
+
+const showImagePreview = computed(
+  () =>
+    showFileEditor.value &&
+    Boolean(activeTab.value) &&
+    (isRaster.value || (isSvg.value && svgPreview.value)),
+);
+
+const showTextEditor = computed(
+  () =>
+    showFileEditor.value &&
+    Boolean(activeTab.value) &&
+    !isRaster.value &&
+    !(isMarkdown.value && markdownPreview.value) &&
+    !(isSvg.value && svgPreview.value),
+);
+
+const canTogglePreview = computed(
+  () =>
+    showFileEditor.value &&
+    Boolean(activeTab.value) &&
+    (isMarkdown.value || isSvg.value),
+);
+
+const previewShowing = computed(() =>
+  isMarkdown.value ? markdownPreview.value : isSvg.value ? svgPreview.value : false,
+);
+
+const previewToggleLabel = computed(() => {
+  if (isMarkdown.value) return markdownPreview.value ? "编辑" : "预览";
+  if (isSvg.value) return svgPreview.value ? "源码" : "预览";
+  return "预览";
+});
+
+const previewToggleTitle = computed(() => {
+  if (isMarkdown.value) return markdownPreview.value ? "编辑模式" : "预览模式";
+  if (isSvg.value) return svgPreview.value ? "编辑 SVG 源码" : "预览 SVG";
+  return "";
+});
+
 const previewHtml = computed(() => {
   if (
     !activeTab.value ||
     !markdownPreview.value ||
+    !isMarkdown.value ||
     sessionsFocused.value ||
     compareFocused.value
   ) {
@@ -57,13 +112,23 @@ const hasAnyTab = computed(
     compareTabs.value.length > 0,
 );
 
-const showFileEditor = computed(
-  () => !sessionsFocused.value && !compareFocused.value && Boolean(activeTab.value),
+watch(
+  () => activeTab.value?.path,
+  () => {
+    markdownPreview.value = false;
+    svgPreview.value = true;
+  },
 );
 
 function togglePreview() {
-  if (!isMarkdown.value || sessionsFocused.value || compareFocused.value) return;
-  markdownPreview.value = !markdownPreview.value;
+  if (!canTogglePreview.value) return;
+  if (isMarkdown.value) {
+    markdownPreview.value = !markdownPreview.value;
+    return;
+  }
+  if (isSvg.value) {
+    svgPreview.value = !svgPreview.value;
+  }
 }
 
 function activateFile(path: string) {
@@ -99,73 +164,87 @@ function closeCompareTab(id: string) {
     compare.blurCompare();
   }
 }
+
+/** 标签栏：滚轮纵向 → 横向滚动，不显示滚动条 */
+function onTabsWheel(event: WheelEvent) {
+  const el = event.currentTarget as HTMLElement;
+  if (el.scrollWidth <= el.clientWidth) return;
+  const delta =
+    Math.abs(event.deltaY) >= Math.abs(event.deltaX)
+      ? event.deltaY
+      : event.deltaX;
+  if (!delta) return;
+  el.scrollLeft += delta;
+}
 </script>
 
 <template>
   <section class="editor-area">
     <div v-if="hasAnyTab" class="tabs">
-      <button
-        v-for="tab in tabs"
-        :key="tab.path"
-        type="button"
-        class="tab"
-        :class="{ active: showFileEditor && tab.path === activePath }"
-        @click="activateFile(tab.path)"
-        @auxclick.middle.prevent="editor.closeTab(tab.path)"
-      >
-        <span class="dot" :class="{ dirty: editor.isDirty(tab.path) }" />
-        <span class="name">{{ tab.name }}</span>
-        <span
-          class="close"
-          title="关闭"
-          @click.stop="editor.closeTab(tab.path)"
+      <div class="tabs-scroll" @wheel.prevent="onTabsWheel">
+        <button
+          v-for="tab in tabs"
+          :key="tab.path"
+          type="button"
+          class="tab"
+          :class="{ active: showFileEditor && tab.path === activePath }"
+          @click="activateFile(tab.path)"
+          @auxclick.middle.prevent="editor.closeTab(tab.path)"
         >
-          <X :size="12" />
-        </span>
-      </button>
+          <span class="dot" :class="{ dirty: editor.isDirty(tab.path) }" />
+          <span class="name">{{ tab.name }}</span>
+          <span
+            class="close"
+            title="关闭"
+            @click.stop="editor.closeTab(tab.path)"
+          >
+            <X :size="12" />
+          </span>
+        </button>
+
+        <button
+          v-for="tab in compareTabs"
+          :key="tab.id"
+          type="button"
+          class="tab compare-tab"
+          :class="{ active: compareFocused && tab.id === compareActiveId }"
+          @click="activateCompare(tab.id)"
+          @auxclick.middle.prevent="closeCompareTab(tab.id)"
+        >
+          <Columns2 :size="12" class="cmp-icon" />
+          <span class="name">{{ tab.title }}</span>
+          <span class="close" title="关闭" @click.stop="closeCompareTab(tab.id)">
+            <X :size="12" />
+          </span>
+        </button>
+
+        <button
+          v-if="sessionsOpen"
+          type="button"
+          class="tab session-tab"
+          :class="{ active: sessionsFocused }"
+          :data-id="sessionsTabId"
+          @click="activateSessions"
+          @auxclick.middle.prevent="closeSessionsTab"
+        >
+          <TerminalSquare :size="12" class="term-icon" />
+          <span class="name">终端</span>
+          <span class="close" title="关闭终端（结束会话）" @click.stop="closeSessionsTab">
+            <X :size="12" />
+          </span>
+        </button>
+      </div>
 
       <button
-        v-for="tab in compareTabs"
-        :key="tab.id"
-        type="button"
-        class="tab compare-tab"
-        :class="{ active: compareFocused && tab.id === compareActiveId }"
-        @click="activateCompare(tab.id)"
-        @auxclick.middle.prevent="closeCompareTab(tab.id)"
-      >
-        <Columns2 :size="12" class="cmp-icon" />
-        <span class="name">{{ tab.title }}</span>
-        <span class="close" title="关闭" @click.stop="closeCompareTab(tab.id)">
-          <X :size="12" />
-        </span>
-      </button>
-
-      <button
-        v-if="sessionsOpen"
-        type="button"
-        class="tab session-tab"
-        :class="{ active: sessionsFocused }"
-        :data-id="sessionsTabId"
-        @click="activateSessions"
-        @auxclick.middle.prevent="closeSessionsTab"
-      >
-        <TerminalSquare :size="12" class="term-icon" />
-        <span class="name">终端</span>
-        <span class="close" title="关闭终端（结束会话）" @click.stop="closeSessionsTab">
-          <X :size="12" />
-        </span>
-      </button>
-
-      <button
-        v-if="isMarkdown && activeTab && showFileEditor"
+        v-if="canTogglePreview"
         type="button"
         class="preview-toggle"
-        :title="markdownPreview ? '编辑模式' : '预览模式'"
+        :title="previewToggleTitle"
         @click="togglePreview"
       >
-        <Eye v-if="!markdownPreview" :size="14" />
+        <Eye v-if="!previewShowing" :size="14" />
         <FileCode v-else :size="14" />
-        {{ markdownPreview ? "编辑" : "预览" }}
+        {{ previewToggleLabel }}
       </button>
     </div>
 
@@ -181,14 +260,20 @@ function closeCompareTab(id: string) {
       />
 
       <template v-if="showFileEditor && activeTab">
+        <ImagePreview
+          v-if="showImagePreview"
+          :path="activeTab.path"
+          :content="isSvg ? activeTab.content : undefined"
+          :cache-key="activeTab.previewNonce"
+        />
         <CodeMirrorEditor
-          v-show="!markdownPreview"
+          v-else-if="showTextEditor"
           :key="activeTab.path"
           :path="activeTab.path"
           :content="activeTab.content"
         />
         <div
-          v-if="markdownPreview && isMarkdown"
+          v-else-if="markdownPreview && isMarkdown"
           class="md-preview"
           v-html="previewHtml"
         />
@@ -229,15 +314,35 @@ function closeCompareTab(id: string) {
   flex-shrink: 0;
   display: flex;
   align-items: flex-end;
-  gap: 2px;
+  gap: 4px;
   padding: 0 8px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.tabs-scroll {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/旧 Edge */
+}
+
+.tabs-scroll::-webkit-scrollbar {
+  display: none; /* Chromium / WebKit */
+  width: 0;
+  height: 0;
 }
 
 .tab {
   height: 30px;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -266,7 +371,7 @@ function closeCompareTab(id: string) {
 }
 
 .preview-toggle {
-  margin-left: auto;
+  flex-shrink: 0;
   margin-bottom: 4px;
   height: 26px;
   padding: 0 10px;
