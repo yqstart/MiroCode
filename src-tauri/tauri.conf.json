@@ -33,6 +33,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "resources": [
       "../LICENSE",
       "../THIRD-PARTY-NOTICES.md"
@@ -48,6 +49,15 @@
   "plugins": {
     "fs": {
       "requireLiteralLeadingDot": false
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM2ODlCMDg1QTY4NTI1MDEKUldRQkpZV21oYkNKTmtaSE05eFBkbDhobytuUlExZ3V0TkU5N3ZOMWc3VE9JY2dOQ3MwUElQWlkK",
+      "endpoints": [
+        "https://github.com/yqstart/MiroCode/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

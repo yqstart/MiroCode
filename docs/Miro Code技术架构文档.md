@@ -44,6 +44,7 @@
 | 路由（可选） | 无路由或极简 | 桌面单窗为主，不引入页面路由复杂度 |
 | 文件系统 | `@tauri-apps/plugin-fs` + Rust 命令 | 打开目录、读写、监听变更 |
 | 对话框 | `@tauri-apps/plugin-dialog` | 打开文件夹 / 确认删除 |
+| 自动更新 | `@tauri-apps/plugin-updater` + GitHub `latest.json` | 启动/手动检查；产物需更新签名私钥（CI Secrets） |
 | Git | **Rust `git2`（libgit2）** | 性能与可控性优于前端壳调 CLI |
 | 搜索索引 | **Rust walkdir + 增量索引**；内容检索优先 ripgrep 风格扫描 | 千级文件可接受；过大项目可后续换 tantivy |
 | 配置持久化 | Tauri `Store` / 本地 JSON | 主题、布局、忽略规则、搜索历史 |

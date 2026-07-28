@@ -87,6 +87,9 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 更新包签名：仓库 Settings → Secrets 配置（内容为 .secrets/mirocode.key 全文）
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: Miro Code v__VERSION__
@@ -97,9 +100,12 @@ jobs:
             - Windows：`.msi` / `.exe`
             - Linux：`.deb` / `.AppImage`
 
+            应用内可通过「设置 → 关于 → 检查更新」或启动时自动检查升级。
             未做代码签名/公证时，系统可能提示「未验证开发者」或 SmartScreen 警告，属预期。
             详见仓库 [CHANGELOG.md](https://github.com/yqstart/MiroCode/blob/master/CHANGELOG.md)。
           # 已发布的 Release 须为 false；若希望先审再发，可改为 true（且勿对手动已发布 tag 再跑）
           releaseDraft: false
           prerelease: false
+          # 生成 latest.json，供应用内 updater 拉取
+          includeUpdaterJson: true
           args: ${{ matrix.args }}

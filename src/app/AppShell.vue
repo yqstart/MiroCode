@@ -14,6 +14,7 @@ import ChoiceDialog from "@/shared/ChoiceDialog.vue";
 import PromptDialog from "@/shared/PromptDialog.vue";
 import { basename } from "@/shared/fs";
 import { setupAutoSave } from "@/features/editor/autoSave";
+import { checkForAppUpdate } from "@/shared/appUpdate";
 import { readBootFolder } from "@/shared/openWorkspace";
 import { useEditorStore } from "@/stores/editor";
 import { useSearchStore } from "@/stores/search";
@@ -152,6 +153,15 @@ onMounted(async () => {
     void workspace.openFolder(bootFolder, { quiet: true });
   } else {
     void workspace.restoreLastFolder();
+  }
+
+  // 启动数秒后再查更新，避免抢首屏交互；失败静默
+  if (settings.settings.autoCheckUpdates) {
+    window.setTimeout(() => {
+      void checkForAppUpdate("auto", (message, ms) =>
+        workspace.showNotice(message, ms),
+      );
+    }, 4000);
   }
 });
 

@@ -1,21 +1,42 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { Check, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { THEME_LABELS } from "@/features/editor/theme";
+import { checkForAppUpdate, getAppVersion } from "@/shared/appUpdate";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { formatShortcut } from "@/shared/platform";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
+import { useWorkspaceStore } from "@/stores/workspace";
 import type { ThemeId, ThemeMeta } from "@/shared/types";
 
 const settings = useSettingsStore();
 const ui = useUiStore();
+const workspace = useWorkspaceStore();
 const { theme, editor, locale } = storeToRefs(settings);
 
 type NavId = "editor" | "shortcuts" | "system";
 
 const activeNav = ref<NavId>("editor");
+const appVersion = ref("…");
+const checkingUpdate = ref(false);
+
+onMounted(async () => {
+  appVersion.value = await getAppVersion();
+});
+
+async function onCheckUpdate() {
+  if (checkingUpdate.value) return;
+  checkingUpdate.value = true;
+  try {
+    await checkForAppUpdate("manual", (message, ms) =>
+      workspace.showNotice(message, ms),
+    );
+  } finally {
+    checkingUpdate.value = false;
+  }
+}
 
 const themes: ThemeMeta[] = [
   { id: "miro-dark", name: "Miro Dark", available: true, preview: "dark" },
@@ -239,8 +260,37 @@ function onOverlayClick(event: MouseEvent) {
             <div class="ui-card section">
               <h3>关于 Miro Code</h3>
               <p class="desc">米罗编辑器 · 轻量、丝滑、美观的桌面代码编辑器</p>
-              <p class="desc">版本 0.1.0 · Tauri + Vue 3 + CodeMirror 6</p>
+              <p class="desc">版本 {{ appVersion }} · Tauri + Vue 3 + CodeMirror 6</p>
               <p class="desc muted">专注本地编辑体验，不含 AI Agent / 模型配置。</p>
+            </div>
+            <div class="ui-card section">
+              <h3>软件更新</h3>
+              <div class="save-row">
+                <div class="save-copy">
+                  <span class="field-label">启动时自动检查</span>
+                  <p class="desc">
+                    启动约 4 秒后静默检查 GitHub Release；仅有新版本时提示，确认后下载安装并重启。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="ui-toggle"
+                  role="switch"
+                  :aria-checked="settings.settings.autoCheckUpdates"
+                  :data-on="settings.settings.autoCheckUpdates"
+                  @click="settings.setAutoCheckUpdates(!settings.settings.autoCheckUpdates)"
+                />
+              </div>
+              <div class="update-actions">
+                <button
+                  type="button"
+                  class="check-update-btn"
+                  :disabled="checkingUpdate"
+                  @click="onCheckUpdate"
+                >
+                  {{ checkingUpdate ? "检查中…" : "检查更新" }}
+                </button>
+              </div>
             </div>
             <div class="ui-card section">
               <h3>开源许可</h3>
@@ -553,6 +603,30 @@ function onOverlayClick(event: MouseEvent) {
 .delay-field {
   margin-top: 14px;
   max-width: 200px;
+}
+
+.update-actions {
+  margin-top: 14px;
+}
+
+.check-update-btn {
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.check-update-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.check-update-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .row-between {

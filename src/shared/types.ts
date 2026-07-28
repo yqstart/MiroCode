@@ -24,6 +24,8 @@ export interface AppSettings {
   locale: "zh-CN" | "en-US";
   editor: EditorPreferences;
   layout: LayoutState;
+  /** 启动时自动检查 GitHub Release 更新 */
+  autoCheckUpdates: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -42,6 +44,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     sidebarWidth: 260,
     activePanel: "explorer",
   },
+  autoCheckUpdates: true,
 };
 
 export interface ThemeMeta {

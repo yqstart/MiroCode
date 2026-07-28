@@ -25,6 +25,8 @@
         { "path": "/private/tmp/**" }
       ]
     },
-    "pty:default"
+    "pty:default",
+    "updater:default",
+    "process:default"
   ]
 }

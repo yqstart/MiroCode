@@ -54,6 +54,7 @@ function loadSettings(): AppSettings {
       locale: parsed.locale ?? DEFAULT_SETTINGS.locale,
       editor: { ...DEFAULT_SETTINGS.editor, ...parsed.editor },
       layout,
+      autoCheckUpdates: parsed.autoCheckUpdates ?? DEFAULT_SETTINGS.autoCheckUpdates,
     };
   } catch {
     return structuredClone(DEFAULT_SETTINGS);
@@ -149,6 +150,10 @@ export const useSettingsStore = defineStore("settings", () => {
     settings.locale = next;
   }
 
+  function setAutoCheckUpdates(next: boolean) {
+    settings.autoCheckUpdates = next;
+  }
+
   return {
     settings,
     theme,
@@ -163,5 +168,6 @@ export const useSettingsStore = defineStore("settings", () => {
     setActivePanel,
     toggleSidebar,
     setLocale,
+    setAutoCheckUpdates,
   };
 });

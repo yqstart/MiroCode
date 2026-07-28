@@ -10,6 +10,7 @@
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 - 多平台发版工作流（`.github/workflows/release.yml`）：macOS / Windows / Linux 云端打包并上传 Release
 - Intel macOS 使用 `macos-15-intel` 原生构建，避免 ARM 交叉编译 OpenSSL 失败
+- 应用内自动检查更新（`tauri-plugin-updater`）：启动静默检查 + 设置页手动检查；依赖 GitHub Release `latest.json`
 
 ## [0.1.0] - 2026-07-27
 
