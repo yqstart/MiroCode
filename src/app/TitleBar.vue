@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, computed } from "vue";
+import { onMounted, onUnmounted, computed, ref } from "vue";
 import { PanelLeft, PanelLeftClose } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { formatShortcut, isMacOS } from "@/shared/platform";
@@ -17,6 +17,9 @@ const tip = computed(() => {
   return `${action}（${formatShortcut("mod", "B")}）`;
 });
 
+/** 全屏时原生红绿灯隐藏，折叠按钮应贴左 */
+const isFullscreen = ref(false);
+
 async function syncTrafficLights() {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
@@ -26,24 +29,55 @@ async function syncTrafficLights() {
   }
 }
 
+async function refreshFullscreen() {
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    isFullscreen.value = await getCurrentWindow().isFullscreen();
+  } catch {
+    isFullscreen.value = false;
+  }
+}
+
+let unlistenResize: (() => void) | undefined;
+const timers: number[] = [];
+
 onMounted(() => {
   if (!visible) return;
-  // 首帧布局后再对齐；AppKit 偶发重置，延迟补一次
+
+  void refreshFullscreen();
   void syncTrafficLights();
-  window.setTimeout(() => void syncTrafficLights(), 50);
-  window.setTimeout(() => void syncTrafficLights(), 300);
-  window.addEventListener("resize", syncTrafficLights);
+  // 首屏主题 / WebView 布局会重置原生按钮，分几次补齐
+  for (const ms of [80, 300, 900]) {
+    timers.push(window.setTimeout(() => void syncTrafficLights(), ms));
+  }
+
+  void (async () => {
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      unlistenResize = await getCurrentWindow().onResized(() => {
+        void refreshFullscreen();
+        void syncTrafficLights();
+      });
+    } catch {
+      // 非桌面壳
+    }
+  })();
 });
 
 onUnmounted(() => {
-  window.removeEventListener("resize", syncTrafficLights);
+  unlistenResize?.();
+  for (const id of timers) window.clearTimeout(id);
 });
 </script>
 
 <template>
   <header v-if="visible" class="titlebar" aria-label="标题栏">
-    <!-- 为原生红绿灯预留空间；不可点击区域可拖拽 -->
-    <div class="traffic-spacer" data-tauri-drag-region />
+    <!-- 为原生红绿灯预留空间；全屏时收起，折叠按钮贴左 -->
+    <div
+      class="traffic-spacer"
+      :class="{ fullscreen: isFullscreen }"
+      data-tauri-drag-region
+    />
     <button
       type="button"
       class="sidebar-btn"
@@ -73,6 +107,11 @@ onUnmounted(() => {
   width: var(--traffic-light-pad);
   height: 100%;
   flex-shrink: 0;
+  transition: width var(--transition-fast);
+}
+
+.traffic-spacer.fullscreen {
+  width: var(--space-2);
 }
 
 .sidebar-btn {

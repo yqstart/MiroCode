@@ -12,7 +12,7 @@
   --space-6: 24px;
   --activity-bar-width: 48px;
   --status-bar-height: 28px;
-  /* macOS Overlay 标题栏：高度须与 Rust TITLEBAR_HEIGHT 一致；红绿灯由原生垂直居中 */
+  /* macOS Overlay 标题栏：高度须与 Rust TITLEBAR_HEIGHT 一致；红绿灯由原生按 trafficLightPosition 垂直居中 */
   --titlebar-height: 38px;
   --traffic-light-pad: 78px;
   --font-ui: ui-sans-serif, system-ui, "PingFang SC", "Segoe UI", sans-serif;

@@ -72,21 +72,13 @@ pub fn run() {
                 }
             });
 
-            // macOS：Overlay 标题栏底色 + 红绿灯垂直居中（前端切换主题时会再同步底色）
+            // macOS：Overlay 标题栏底色 + 红绿灯同步（主题切换时前端会再同步底色）
             #[cfg(target_os = "macos")]
             if let Some(window) = app.get_webview_window("main") {
-                let _ = commands::window_chrome::apply_titlebar_background(&window, 232.0, 234.0, 239.0);
-                let _ = commands::window_chrome::apply_traffic_lights(&window);
-                let win = window.clone();
-                window.on_window_event(move |event| {
-                    use tauri::WindowEvent;
-                    if matches!(
-                        event,
-                        WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. }
-                    ) {
-                        let _ = commands::window_chrome::apply_traffic_lights(&win);
-                    }
-                });
+                let _ = commands::window_chrome::apply_titlebar_background(
+                    &window, 232.0, 234.0, 239.0,
+                );
+                commands::window_chrome::install_traffic_light_hooks(&window);
             }
 
             Ok(())

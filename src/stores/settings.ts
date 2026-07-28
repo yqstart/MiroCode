@@ -76,11 +76,12 @@ async function syncNativeWindowTheme(theme: ThemeId) {
   } catch {
     // 同上
   }
-  // macOS Overlay 标题栏：只给最顶系统栏上色
+  // macOS Overlay 标题栏：只给最顶系统栏上色，并补齐红绿灯（setTheme 会重置位置）
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     const [r, g, b] = TITLEBAR_RGB[theme];
     await invoke("set_titlebar_background", { r, g, b });
+    await invoke("sync_traffic_lights");
   } catch {
     // 非桌面壳或命令未就绪
   }

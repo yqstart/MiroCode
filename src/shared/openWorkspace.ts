@@ -27,7 +27,7 @@ export async function openFolderInNewWindow(folder: string): Promise<void> {
     focus: true,
     titleBarStyle: "overlay",
     hiddenTitle: true,
-    trafficLightPosition: new LogicalPosition(14, 14),
+    trafficLightPosition: new LogicalPosition(14, 12),
   });
 
   await new Promise<void>((resolve, reject) => {
