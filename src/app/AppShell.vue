@@ -7,16 +7,22 @@ import SideBar from "@/app/SideBar.vue";
 import TitleBar from "@/app/TitleBar.vue";
 import EditorArea from "@/app/EditorArea.vue";
 import StatusBar from "@/app/StatusBar.vue";
+import GitLogToolWindow from "@/features/git/GitLogToolWindow.vue";
 import FindInFilesDialog from "@/features/search/FindInFilesDialog.vue";
 import QuickOpen from "@/features/search/QuickOpen.vue";
 import SettingsModal from "@/features/settings/SettingsModal.vue";
 import ChoiceDialog from "@/shared/ChoiceDialog.vue";
+import GitAuthDialog from "@/shared/GitAuthDialog.vue";
 import PromptDialog from "@/shared/PromptDialog.vue";
+import PushDialog from "@/features/git/PushDialog.vue";
+import UpdateProjectDialog from "@/features/git/UpdateProjectDialog.vue";
+import InteractiveRebaseDialog from "@/features/git/InteractiveRebaseDialog.vue";
 import { basename } from "@/shared/fs";
 import { setupAutoSave } from "@/features/editor/autoSave";
 import { checkForAppUpdate } from "@/shared/appUpdate";
 import { readBootFolder } from "@/shared/openWorkspace";
 import { useEditorStore } from "@/stores/editor";
+import { useGitStore } from "@/stores/git";
 import { useSearchStore } from "@/stores/search";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
@@ -29,6 +35,7 @@ const editor = useEditorStore();
 const search = useSearchStore();
 const sessions = useSessionsStore();
 const settings = useSettingsStore();
+const git = useGitStore();
 const { settingsOpen } = storeToRefs(ui);
 
 let unlistenMenu: (() => void) | undefined;
@@ -36,6 +43,7 @@ let teardownAutoSave: (() => void) | undefined;
 /** 菜单加速键与 window keydown 可能各触发一次，合并为单次切换 */
 let lastTerminalToggleAt = 0;
 let lastSidebarToggleAt = 0;
+let lastCommitToggleAt = 0;
 
 function toggleTerminal() {
   const now = Date.now();
@@ -49,6 +57,20 @@ function toggleSidebar() {
   if (now - lastSidebarToggleAt < 120) return;
   lastSidebarToggleAt = now;
   settings.toggleSidebar();
+}
+
+function toggleCommitPanel() {
+  const now = Date.now();
+  if (now - lastCommitToggleAt < 120) return;
+  lastCommitToggleAt = now;
+  settings.toggleCommitPanel();
+  if (
+    settings.layout.activePanel === "commit" &&
+    !settings.layout.sidebarCollapsed &&
+    workspace.rootPath
+  ) {
+    void git.refresh();
+  }
 }
 
 async function locateActiveInExplorer() {
@@ -71,6 +93,7 @@ function handleMenuAction(action: string) {
   if (action === "terminal") toggleTerminal();
   if (action === "toggle_sidebar") toggleSidebar();
   if (action === "reveal_in_explorer") void locateActiveInExplorer();
+  if (action === "git_commit") toggleCommitPanel();
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -108,6 +131,12 @@ function onKeydown(event: KeyboardEvent) {
   if (mod && event.key.toLowerCase() === "b") {
     event.preventDefault();
     toggleSidebar();
+    return;
+  }
+  // ⌘K：打开 / 隐藏左侧 Commit（WebStorm New UI）
+  if (mod && !event.shiftKey && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    toggleCommitPanel();
     return;
   }
   // Alt+F1：在资源管理器中定位当前文件（对齐 WebStorm）
@@ -155,7 +184,6 @@ onMounted(async () => {
     void workspace.restoreLastFolder();
   }
 
-  // 启动数秒后再查更新，避免抢首屏交互；失败静默
   if (settings.settings.autoCheckUpdates) {
     window.setTimeout(() => {
       void checkForAppUpdate("auto", (message, ms) =>
@@ -180,13 +208,20 @@ onUnmounted(() => {
     <div class="main">
       <ActivityBar />
       <SideBar />
-      <EditorArea />
+      <div class="center">
+        <EditorArea />
+        <GitLogToolWindow />
+      </div>
     </div>
     <StatusBar />
     <QuickOpen />
     <FindInFilesDialog />
     <PromptDialog />
     <ChoiceDialog />
+    <GitAuthDialog />
+    <PushDialog />
+    <UpdateProjectDialog />
+    <InteractiveRebaseDialog />
     <SettingsModal v-if="settingsOpen" />
   </div>
 </template>
@@ -205,5 +240,13 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   display: flex;
+}
+
+.center {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 </style>

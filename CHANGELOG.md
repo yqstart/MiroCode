@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+### 新增
+
+- Git Branches：Compare / Set Upstream / 删远程 / Interactive Rebase 入口；修复 Footer 误删
+- Git Log：完整 commit id、过滤、加载更多、真 Revert Commit、Interactive Rebase from Here、Checkout / New Branch / Diff
+- 交互式 Rebase 对话框（pick/reword/squash/fix/drop + 拖拽排序）；冲突 Continue / Skip / Abort
+- 冲突解决：填入 Base、冲突标记导航、批量接受、状态栏跳转；rebase 冲突进入同一解决流
+
+### 变更
+
+- Git 对标 WebStorm **New UI 完全体主路径**：左侧 Commit（Amend / Diff 预览）、Push 对话框、Update Project（Merge/Rebase）、Branches 弹层（本地/远程）、Fetch、Log、HTTPS 登录弹窗、交互 Rebase
+
+### 修复
+
+- 拉取/推送 HTTPS 认证：走系统 git credential helper；失败时弹出账号密码框（可记住），对齐 WebStorm
+- 「记住密码」改为写入 `~/.mirocode/git-credentials.json`（并尽力同步系统 helper）；此前仅依赖系统钥匙串，在 App 内常写不进去导致反复弹窗
+- Log 操作此前使用短 hash 可能导致 cherry-pick/reset 失败，改为完整 OID
+
 ## [0.1.1] - 2026-07-28
 
 ### 新增

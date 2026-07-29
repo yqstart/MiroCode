@@ -2,7 +2,7 @@
 import { storeToRefs } from "pinia";
 import { useSettingsStore } from "@/stores/settings";
 import ExplorerPanel from "@/features/explorer/ExplorerPanel.vue";
-import GitPanel from "@/features/git/GitPanel.vue";
+import CommitPanel from "@/features/git/CommitPanel.vue";
 
 const settings = useSettingsStore();
 const { layout } = storeToRefs(settings);
@@ -42,7 +42,7 @@ function onResizeStart(event: MouseEvent) {
     aria-label="侧边栏"
   >
     <ExplorerPanel v-show="layout.activePanel === 'explorer'" />
-    <GitPanel v-show="layout.activePanel === 'git'" />
+    <CommitPanel v-show="layout.activePanel === 'commit'" />
     <div class="resizer" title="拖拽调整宽度" @mousedown="onResizeStart" />
   </aside>
 </template>
@@ -54,8 +54,8 @@ function onResizeStart(event: MouseEvent) {
   flex-shrink: 0;
   background: var(--bg-panel);
   border-right: 1px solid var(--border-subtle);
-  min-width: 180px;
-  max-width: 480px;
+  min-width: 200px;
+  max-width: 520px;
 }
 
 .resizer {

@@ -71,8 +71,14 @@ export async function gitCommit(
   root: string,
   message: string,
   paths?: string[],
+  amend?: boolean,
 ): Promise<void> {
-  return invoke("git_commit", { root, message, paths });
+  return invoke("git_commit", {
+    root,
+    message,
+    paths,
+    amend: amend ?? false,
+  });
 }
 
 export async function gitBranches(root: string): Promise<GitBranchInfo[]> {
@@ -153,12 +159,30 @@ export async function gitConflictSides(
   return invoke("git_conflict_sides", { root, path });
 }
 
-export async function gitPull(root: string): Promise<string> {
-  return invoke("git_pull", { root });
+export async function gitPull(
+  root: string,
+  auth?: { username: string; password: string; remember?: boolean },
+): Promise<string> {
+  return invoke("git_pull", {
+    root,
+    username: auth?.username ?? null,
+    password: auth?.password ?? null,
+    remember: auth?.remember ?? null,
+  });
 }
 
-export async function gitPush(root: string, force?: boolean): Promise<string> {
-  return invoke("git_push", { root, force });
+export async function gitPush(
+  root: string,
+  force?: boolean,
+  auth?: { username: string; password: string; remember?: boolean },
+): Promise<string> {
+  return invoke("git_push", {
+    root,
+    force: force ?? false,
+    username: auth?.username ?? null,
+    password: auth?.password ?? null,
+    remember: auth?.remember ?? null,
+  });
 }
 
 export async function gitStash(
@@ -210,4 +234,198 @@ export async function gitResolveConflict(
   strategy: ConflictStrategy,
 ): Promise<void> {
   return invoke("git_resolve_conflict", { root, path, strategy });
+}
+
+export interface GitRemoteInfo {
+  name: string;
+  url: string | null;
+}
+
+export interface GitBlameLine {
+  line: number;
+  commitId: string;
+  author: string;
+  time: string;
+  summary: string;
+}
+
+export type GitAuthPayload = {
+  username: string;
+  password: string;
+  remember?: boolean;
+};
+
+/** 查 Miro Code 已记住的 HTTPS 用户名（按远程 host） */
+export async function gitStoredUsername(url: string): Promise<string | null> {
+  return invoke("git_stored_username", { url });
+}
+
+export async function gitFetch(
+  root: string,
+  remote?: string,
+  auth?: GitAuthPayload,
+): Promise<string> {
+  return invoke("git_fetch", {
+    root,
+    remote: remote ?? null,
+    username: auth?.username ?? null,
+    password: auth?.password ?? null,
+    remember: auth?.remember ?? null,
+  });
+}
+
+export async function gitUpdateProject(
+  root: string,
+  strategy: "merge" | "rebase",
+  auth?: GitAuthPayload,
+): Promise<string> {
+  return invoke("git_update_project", {
+    root,
+    strategy,
+    username: auth?.username ?? null,
+    password: auth?.password ?? null,
+    remember: auth?.remember ?? null,
+  });
+}
+
+export async function gitRebaseBranch(root: string, onto: string): Promise<string> {
+  return invoke("git_rebase_branch", { root, onto });
+}
+
+export interface GitRebaseStatus {
+  inProgress: boolean;
+  kind: string;
+  headName: string | null;
+  onto: string | null;
+  conflicted: boolean;
+}
+
+export type GitRebaseAction = "pick" | "reword" | "squash" | "fix" | "drop";
+
+export interface GitRebaseStep {
+  action: GitRebaseAction | string;
+  commitId: string;
+  message?: string | null;
+}
+
+export async function gitRebaseStatus(root: string): Promise<GitRebaseStatus> {
+  return invoke("git_rebase_status", { root });
+}
+
+export async function gitRebaseContinue(root: string): Promise<string> {
+  return invoke("git_rebase_continue", { root });
+}
+
+export async function gitRebaseAbort(root: string): Promise<string> {
+  return invoke("git_rebase_abort", { root });
+}
+
+export async function gitRebaseSkip(root: string): Promise<string> {
+  return invoke("git_rebase_skip", { root });
+}
+
+export async function gitRebasePlan(
+  root: string,
+  onto: string,
+): Promise<GitCommitInfo[]> {
+  return invoke("git_rebase_plan", { root, onto });
+}
+
+export async function gitRebaseInteractive(
+  root: string,
+  onto: string,
+  steps: GitRebaseStep[],
+): Promise<string> {
+  return invoke("git_rebase_interactive", { root, onto, steps });
+}
+
+export async function gitCherryPick(root: string, commitId: string): Promise<string> {
+  return invoke("git_cherry_pick", { root, commitId });
+}
+
+export async function gitReset(
+  root: string,
+  commitId: string,
+  mode: "soft" | "mixed" | "hard",
+): Promise<string> {
+  return invoke("git_reset", { root, commitId, mode });
+}
+
+export async function gitBlame(root: string, path: string): Promise<GitBlameLine[]> {
+  return invoke("git_blame", { root, path });
+}
+
+export async function gitRemotes(root: string): Promise<GitRemoteInfo[]> {
+  return invoke("git_remotes", { root });
+}
+
+export async function gitUnpushedCommits(
+  root: string,
+  limit?: number,
+): Promise<GitCommitInfo[]> {
+  return invoke("git_unpushed_commits", { root, limit });
+}
+
+export async function gitSetUpstream(
+  root: string,
+  branch: string,
+  upstream: string,
+): Promise<void> {
+  return invoke("git_set_upstream", { root, branch, upstream });
+}
+
+export async function gitCheckoutRemote(
+  root: string,
+  remoteRef: string,
+  localName?: string,
+): Promise<string> {
+  return invoke("git_checkout_remote", {
+    root,
+    remoteRef,
+    localName: localName ?? null,
+  });
+}
+
+export async function gitRevertCommit(
+  root: string,
+  commitId: string,
+): Promise<string> {
+  return invoke("git_revert_commit", { root, commitId });
+}
+
+export async function gitCreateBranchAt(
+  root: string,
+  name: string,
+  commitId: string,
+  checkout: boolean,
+): Promise<void> {
+  return invoke("git_create_branch_at", { root, name, commitId, checkout });
+}
+
+export async function gitCheckoutCommit(
+  root: string,
+  commitId: string,
+): Promise<string> {
+  return invoke("git_checkout_commit", { root, commitId });
+}
+
+export async function gitDeleteRemoteBranch(
+  root: string,
+  remoteRef: string,
+): Promise<string> {
+  return invoke("git_delete_remote_branch", { root, remoteRef });
+}
+
+export async function gitBranchSides(
+  root: string,
+  leftRef: string,
+  rightRef: string,
+  path?: string,
+): Promise<GitFileSides> {
+  return invoke("git_branch_sides", {
+    root,
+    leftRef,
+    rightRef,
+    path: path ?? null,
+  });
 }

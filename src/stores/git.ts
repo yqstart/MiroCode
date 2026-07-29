@@ -1,32 +1,54 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import {
+  gitBlame,
+  gitBranchSides,
   gitBranches,
   gitCheckout,
+  gitCheckoutCommit,
+  gitCheckoutRemote,
+  gitCherryPick,
   gitCommit,
   gitConflictFiles,
   gitCreateBranch,
+  gitCreateBranchAt,
   gitDeleteBranch,
+  gitDeleteRemoteBranch,
   gitDiff,
   gitDiscardPaths,
+  gitFetch,
   gitInit,
   gitLog,
   gitMergeBranch,
   gitPull,
   gitPush,
+  gitRebaseAbort,
+  gitRebaseBranch,
+  gitRebaseContinue,
+  gitRebaseInteractive,
+  gitRebasePlan,
+  gitRebaseSkip,
+  gitRebaseStatus,
   gitRenameBranch,
+  gitReset,
   gitResetHard,
   gitResolveConflict,
+  gitRevertCommit,
   gitRevertTo,
+  gitSetUpstream,
   gitStage,
   gitStash,
   gitStashPop,
   gitStatus,
   gitUndoCommit,
   gitUnstage,
+  gitUpdateProject,
+  type GitAuthPayload,
   type GitBranchInfo,
   type GitCommitInfo,
   type GitDiffResult,
+  type GitRebaseStatus,
+  type GitRebaseStep,
   type GitStatusEntry,
   type GitStatusSnapshot,
 } from "@/shared/gitApi";
@@ -42,16 +64,27 @@ const EMPTY: GitStatusSnapshot = {
   conflictCount: 0,
 };
 
+const EMPTY_REBASE: GitRebaseStatus = {
+  inProgress: false,
+  kind: "none",
+  headName: null,
+  onto: null,
+  conflicted: false,
+};
+
 export const useGitStore = defineStore("git", () => {
   const snapshot = ref<GitStatusSnapshot>({ ...EMPTY });
   const branches = ref<GitBranchInfo[]>([]);
   const log = ref<GitCommitInfo[]>([]);
+  const logLimit = ref(80);
   const conflictFiles = ref<string[]>([]);
+  const rebaseStatus = ref<GitRebaseStatus>({ ...EMPTY_REBASE });
   const diffResults = ref<GitDiffResult[]>([]);
   const diffTitle = ref("");
   const diffVisible = ref(false);
   const loading = ref(false);
   const commitMessage = ref("");
+  const amendCommit = ref(false);
   let refreshSeq = 0;
   let refreshAgain = false;
 
@@ -75,8 +108,62 @@ export const useGitStore = defineStore("git", () => {
     snapshot.value.entries.filter((e) => e.conflicted),
   );
 
+  /** 可勾选提交的变更（非冲突） */
+  const changelistEntries = computed(() =>
+    snapshot.value.entries.filter((e) => !e.conflicted),
+  );
+
   /** 有变更的文件数（含暂存/未暂存/冲突） */
   const changedFileCount = computed(() => snapshot.value.entries.length);
+
+  /** WebStorm 勾选态：path → 是否纳入本次提交；新文件默认勾选 */
+  const checkedMap = ref<Record<string, boolean>>({});
+  const selectedPath = ref<string | null>(null);
+
+  const checkedPaths = computed(() =>
+    changelistEntries.value
+      .filter((e) => checkedMap.value[e.path] !== false)
+      .map((e) => e.path),
+  );
+
+  const checkedCount = computed(() => checkedPaths.value.length);
+
+  const allChecked = computed(
+    () =>
+      changelistEntries.value.length > 0 &&
+      changelistEntries.value.every((e) => checkedMap.value[e.path] !== false),
+  );
+
+  function syncCheckedPaths() {
+    const prev = checkedMap.value;
+    const next: Record<string, boolean> = {};
+    for (const e of changelistEntries.value) {
+      next[e.path] = prev[e.path] ?? true;
+    }
+    checkedMap.value = next;
+    if (
+      selectedPath.value &&
+      !snapshot.value.entries.some((e) => e.path === selectedPath.value)
+    ) {
+      selectedPath.value = null;
+    }
+  }
+
+  function setPathChecked(path: string, checked: boolean) {
+    checkedMap.value = { ...checkedMap.value, [path]: checked };
+  }
+
+  function setAllChecked(checked: boolean) {
+    const next: Record<string, boolean> = {};
+    for (const e of changelistEntries.value) {
+      next[e.path] = checked;
+    }
+    checkedMap.value = next;
+  }
+
+  function selectChange(path: string | null) {
+    selectedPath.value = path;
+  }
 
   async function refresh() {
     const workspace = useWorkspaceStore();
@@ -84,6 +171,8 @@ export const useGitStore = defineStore("git", () => {
       snapshot.value = { ...EMPTY };
       branches.value = [];
       conflictFiles.value = [];
+      checkedMap.value = {};
+      selectedPath.value = null;
       return;
     }
     // 合并并发刷新：进行中再触发则结束后补刷一次
@@ -102,6 +191,12 @@ export const useGitStore = defineStore("git", () => {
         if (snapshot.value.initialized) {
           branches.value = await gitBranches(workspace.rootPath);
           if (seq !== refreshSeq) return;
+          try {
+            rebaseStatus.value = await gitRebaseStatus(workspace.rootPath);
+          } catch {
+            rebaseStatus.value = { ...EMPTY_REBASE };
+          }
+          if (seq !== refreshSeq) return;
           if (snapshot.value.conflictCount > 0) {
             conflictFiles.value = await gitConflictFiles(workspace.rootPath);
           } else {
@@ -110,7 +205,9 @@ export const useGitStore = defineStore("git", () => {
         } else {
           branches.value = [];
           conflictFiles.value = [];
+          rebaseStatus.value = { ...EMPTY_REBASE };
         }
+        if (seq === refreshSeq) syncCheckedPaths();
       } while (refreshAgain && seq === refreshSeq);
     } catch (error) {
       if (seq === refreshSeq) {
@@ -167,25 +264,45 @@ export const useGitStore = defineStore("git", () => {
     }
   }
 
-  async function commit(message?: string) {
+  async function commit(message?: string, paths?: string[]) {
     const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    if (!workspace.rootPath) return false;
     const msg = (message ?? commitMessage.value).trim();
     if (!msg) {
       workspace.showNotice("请输入提交说明");
-      return;
+      return false;
+    }
+    const selected = paths ?? checkedPaths.value;
+    if (!amendCommit.value && !selected.length) {
+      workspace.showNotice("请至少勾选一个文件再提交");
+      return false;
     }
     try {
-      await gitCommit(workspace.rootPath, msg);
+      await gitCommit(
+        workspace.rootPath,
+        msg,
+        amendCommit.value ? undefined : selected,
+        amendCommit.value,
+      );
       commitMessage.value = "";
+      amendCommit.value = false;
       workspace.showNotice("提交成功");
       await refresh();
+      return true;
     } catch (error) {
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
       );
+      return false;
     }
+  }
+
+  /** Commit and Push（WebStorm） */
+  async function commitAndPush(message?: string) {
+    const ok = await commit(message);
+    if (!ok) return;
+    await pushWithDialog();
   }
 
   async function checkout(name: string) {
@@ -319,34 +436,119 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function pull() {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
-    try {
-      const msg = await gitPull(workspace.rootPath);
-      workspace.showNotice(msg || "拉取完成");
-      await refresh();
-    } catch (error) {
-      workspace.showNotice(
-        error instanceof Error ? error.message : String(error),
-        3200,
-      );
-    }
+    await runRemoteWithAuth("pull");
   }
 
   async function push(force = false) {
+    if (force && !window.confirm("确定强制推送？此操作可能覆盖远程历史。")) {
+      return;
+    }
+    await runRemoteWithAuth("push", force);
+  }
+
+  /** WebStorm Push 对话框 */
+  async function pushWithDialog() {
+    const { openPushDialog } = await import("@/shared/gitDialogs");
+    const result = await openPushDialog();
+    if (!result) return;
+    await runRemoteWithAuth("push", result.force);
+  }
+
+  /** WebStorm Update Project */
+  async function updateProject() {
+    const { openUpdateProjectDialog } = await import("@/shared/gitDialogs");
+    const strategy = await openUpdateProjectDialog();
+    if (!strategy) return;
+    await runRemoteWithAuth("update", false, strategy);
+  }
+
+  async function fetchRemote() {
+    await runRemoteWithAuth("fetch");
+  }
+
+  /** 认证失败时弹出账号密码框并重试（对齐 WebStorm） */
+  async function runRemoteWithAuth(
+    kind: "pull" | "push" | "fetch" | "update",
+    force = false,
+    updateStrategy: "merge" | "rebase" = "merge",
+  ) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
-    if (force && !window.confirm("确定强制推送？此操作可能覆盖远程历史。")) return;
-    try {
-      const msg = await gitPush(workspace.rootPath, force);
-      workspace.showNotice(msg || "推送完成");
-      await refresh();
-    } catch (error) {
-      workspace.showNotice(
-        error instanceof Error ? error.message : String(error),
-        3200,
-      );
+    const root = workspace.rootPath;
+    let auth: GitAuthPayload | undefined;
+    let lastUser = "";
+
+    for (;;) {
+      try {
+        let msg = "";
+        if (kind === "pull") msg = await gitPull(root, auth);
+        else if (kind === "push") msg = await gitPush(root, force, auth);
+        else if (kind === "fetch") msg = await gitFetch(root, "origin", auth);
+        else msg = await gitUpdateProject(root, updateStrategy, auth);
+        const remembered = auth?.remember === true;
+        workspace.showNotice(
+          remembered ? `${msg || "完成"}（已记住登录）` : msg || "完成",
+        );
+        await refresh();
+        return;
+      } catch (error) {
+        const raw = error instanceof Error ? error.message : String(error);
+        const parsed = parseGitAuthError(raw);
+        if (!parsed) {
+          workspace.showNotice(raw, 4800);
+          return;
+        }
+        const { promptGitAuth } = await import("@/shared/gitAuthDialog");
+        const titles: Record<typeof kind, string> = {
+          pull: "拉取需要登录",
+          push: "推送需要登录",
+          fetch: "Fetch 需要登录",
+          update: "更新需要登录",
+        };
+        let defaultUsername = lastUser || guessUsernameFromUrl(parsed.url);
+        if (!defaultUsername && parsed.url) {
+          try {
+            const { gitStoredUsername } = await import("@/shared/gitApi");
+            defaultUsername = (await gitStoredUsername(parsed.url)) ?? "";
+          } catch {
+            /* 忽略预填失败 */
+          }
+        }
+        const next = await promptGitAuth({
+          title: titles[kind],
+          remoteUrl: parsed.url,
+          message: auth
+            ? "账号或密码不正确，请重试"
+            : "远程需要认证，请输入账号与密码",
+          defaultUsername,
+        });
+        if (!next) return;
+        lastUser = next.username;
+        auth = {
+          username: next.username,
+          password: next.password,
+          remember: next.remember,
+        };
+      }
     }
+  }
+
+  function parseGitAuthError(raw: string): { url: string; detail: string } | null {
+    const idx = raw.indexOf("GIT_AUTH_REQUIRED|||");
+    if (idx < 0) return null;
+    const body = raw.slice(idx);
+    const parts = body.split("|||");
+    if (parts[0] !== "GIT_AUTH_REQUIRED") return null;
+    return {
+      url: parts[1] ?? "",
+      detail: parts.slice(2).join("|||"),
+    };
+  }
+
+  function guessUsernameFromUrl(url: string): string {
+    // https://user@host/... 
+    const m = url.match(/^https?:\/\/([^/@]+)@/i);
+    return m?.[1] ?? "";
   }
 
   async function stash(message?: string) {
@@ -405,17 +607,41 @@ export const useGitStore = defineStore("git", () => {
     await discard(paths);
   }
 
-  async function loadLog(limit = 50) {
+  async function loadLog(limit?: number) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath || !snapshot.value.initialized) return;
+    const nextLimit = limit ?? logLimit.value;
+    logLimit.value = nextLimit;
     try {
-      log.value = await gitLog(workspace.rootPath, limit);
+      log.value = await gitLog(workspace.rootPath, nextLimit);
     } catch (error) {
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
       );
     }
+  }
+
+  async function loadMoreLog() {
+    await loadLog(logLimit.value + 80);
+  }
+
+  function noticeRebaseConflict(raw: string) {
+    const workspace = useWorkspaceStore();
+    const idx = raw.indexOf("GIT_REBASE_CONFLICT|||");
+    const msg =
+      idx >= 0
+        ? raw.slice(idx + "GIT_REBASE_CONFLICT|||".length).trim()
+        : raw;
+    workspace.showNotice(msg || "Rebase 产生冲突，请解决后 Continue", 5200);
+    void useSettingsStoreOpenCommit();
+  }
+
+  async function useSettingsStoreOpenCommit() {
+    const { useSettingsStore } = await import("@/stores/settings");
+    const settings = useSettingsStore();
+    settings.setActivePanel("commit");
+    settings.setSidebarCollapsed(false);
   }
 
   async function showDiff(path?: string, staged?: boolean) {
@@ -451,8 +677,13 @@ export const useGitStore = defineStore("git", () => {
     snapshot.value = { ...EMPTY };
     branches.value = [];
     log.value = [];
+    logLimit.value = 80;
     conflictFiles.value = [];
+    rebaseStatus.value = { ...EMPTY_REBASE };
     commitMessage.value = "";
+    amendCommit.value = false;
+    checkedMap.value = {};
+    selectedPath.value = null;
     closeDiff();
     refreshSeq += 1;
     refreshAgain = false;
@@ -545,6 +776,334 @@ export const useGitStore = defineStore("git", () => {
     }
   }
 
+  async function rebaseBranch(onto: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    try {
+      const msg = await gitRebaseBranch(workspace.rootPath, onto);
+      workspace.showNotice(msg || `已 rebase 到 ${onto}`);
+      await refresh();
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error);
+      if (raw.includes("GIT_REBASE_CONFLICT|||")) noticeRebaseConflict(raw);
+      else workspace.showNotice(raw, 4800);
+      await refresh();
+    }
+  }
+
+  async function rebaseContinue() {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    try {
+      const msg = await gitRebaseContinue(workspace.rootPath);
+      workspace.showNotice(msg || "Rebase 已继续");
+      await refresh();
+      await loadLog();
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error);
+      if (raw.includes("GIT_REBASE_CONFLICT|||")) noticeRebaseConflict(raw);
+      else workspace.showNotice(raw, 4800);
+      await refresh();
+    }
+  }
+
+  async function rebaseAbort() {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    if (!window.confirm("确定中止 Rebase？工作区将恢复到 rebase 开始前。")) {
+      return;
+    }
+    try {
+      const msg = await gitRebaseAbort(workspace.rootPath);
+      workspace.showNotice(msg || "已中止 Rebase");
+      await refresh();
+      await loadLog();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function rebaseSkip() {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    try {
+      const msg = await gitRebaseSkip(workspace.rootPath);
+      workspace.showNotice(msg || "已跳过");
+      await refresh();
+      await loadLog();
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error);
+      if (raw.includes("GIT_REBASE_CONFLICT|||")) noticeRebaseConflict(raw);
+      else workspace.showNotice(raw, 4800);
+      await refresh();
+    }
+  }
+
+  async function startInteractiveRebase(onto: string, steps: GitRebaseStep[]) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    try {
+      const msg = await gitRebaseInteractive(workspace.rootPath, onto, steps);
+      workspace.showNotice(msg || "交互 Rebase 完成");
+      await refresh();
+      await loadLog();
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error);
+      if (raw.includes("GIT_REBASE_CONFLICT|||")) noticeRebaseConflict(raw);
+      else workspace.showNotice(raw, 4800);
+      await refresh();
+      await loadLog();
+    }
+  }
+
+  async function loadRebasePlan(onto: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return [];
+    try {
+      return await gitRebasePlan(workspace.rootPath, onto);
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+      return [];
+    }
+  }
+
+  async function setUpstream(branch: string, upstream: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    try {
+      await gitSetUpstream(workspace.rootPath, branch, upstream);
+      workspace.showNotice(`已设置上游 ${upstream}`);
+      await refresh();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function deleteRemoteBranch(remoteRef: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    if (
+      !window.confirm(
+        `确定删除远程分支 ${remoteRef}？此操作不可轻易撤销。`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const msg = await gitDeleteRemoteBranch(workspace.rootPath, remoteRef);
+      workspace.showNotice(msg);
+      await refresh();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        4800,
+      );
+    }
+  }
+
+  async function compareBranchWithCurrent(other: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath || !snapshot.value.branch) return;
+    try {
+      const sides = await gitBranchSides(
+        workspace.rootPath,
+        snapshot.value.branch,
+        other,
+      );
+      const { useCompareStore } = await import("@/stores/compare");
+      const compare = useCompareStore();
+      const id = `branch-diff-${Date.now()}`;
+      compare.tabs.push({
+        id,
+        kind: "diff",
+        path: sides.path,
+        title: `${sides.path} · 分支对比`,
+        leftLabel: sides.leftLabel,
+        rightLabel: sides.rightLabel,
+        left: sides.left,
+        right: sides.right,
+        editableRight: false,
+      });
+      compare.activate(id);
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function createBranchAt(
+    name: string,
+    commitId: string,
+    checkout: boolean,
+  ) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    try {
+      await gitCreateBranchAt(workspace.rootPath, name, commitId, checkout);
+      workspace.showNotice(
+        checkout ? `已创建并切换到 ${name}` : `已创建分支 ${name}`,
+      );
+      await refresh();
+      await loadLog();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function checkoutCommit(commitId: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    if (
+      !window.confirm(
+        `确定检出提交 ${commitId.slice(0, 7)}？（分离 HEAD）`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const msg = await gitCheckoutCommit(workspace.rootPath, commitId);
+      workspace.showNotice(msg);
+      await refresh();
+      await loadLog();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function revertCommit(commitId: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    try {
+      const msg = await gitRevertCommit(workspace.rootPath, commitId);
+      workspace.showNotice(msg);
+      await refresh();
+      await loadLog();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        4800,
+      );
+      await refresh();
+    }
+  }
+
+  async function resolveAllConflicts(strategy: "ours" | "theirs") {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    const paths = conflictEntries.value.map((e) => e.path);
+    if (!paths.length) return;
+    try {
+      for (const path of paths) {
+        await gitResolveConflict(workspace.rootPath, path, strategy);
+      }
+      workspace.showNotice(
+        strategy === "ours" ? "已全部接受本地版本" : "已全部接受远程版本",
+      );
+      await refresh();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+      await refresh();
+    }
+  }
+
+  async function openFirstConflict() {
+    await useSettingsStoreOpenCommit();
+    const path = conflictEntries.value[0]?.path;
+    if (path) await openConflictCompare(path);
+  }
+
+  async function checkoutRemote(remoteRef: string, localName?: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    try {
+      const msg = await gitCheckoutRemote(
+        workspace.rootPath,
+        remoteRef,
+        localName,
+      );
+      workspace.showNotice(msg);
+      await refresh();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function cherryPick(commitId: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    try {
+      const msg = await gitCherryPick(workspace.rootPath, commitId);
+      workspace.showNotice(msg);
+      await refresh();
+      await loadLog();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        4800,
+      );
+      await refresh();
+    }
+  }
+
+  async function resetTo(
+    commitId: string,
+    mode: "soft" | "mixed" | "hard",
+  ) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    const label =
+      mode === "hard" ? "硬重置（丢弃工作区）" : mode === "soft" ? "软重置" : "混合重置";
+    if (!window.confirm(`确定对 ${commitId.slice(0, 7)} 执行${label}？`)) return;
+    try {
+      const msg = await gitReset(workspace.rootPath, commitId, mode);
+      workspace.showNotice(msg);
+      await refresh();
+      await loadLog();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function blameFile(path: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return [];
+    try {
+      return await gitBlame(workspace.rootPath, path);
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+      return [];
+    }
+  }
+
   async function resolveConflict(
     path: string,
     strategy: "ours" | "theirs" | "manual",
@@ -579,42 +1138,77 @@ export const useGitStore = defineStore("git", () => {
     snapshot,
     branches,
     log,
+    logLimit,
     conflictFiles,
+    rebaseStatus,
     diffResults,
     diffTitle,
     diffVisible,
     loading,
     commitMessage,
+    amendCommit,
     statusMap,
     stagedEntries,
     unstagedEntries,
     conflictEntries,
+    changelistEntries,
     changedFileCount,
+    checkedMap,
+    checkedPaths,
+    checkedCount,
+    allChecked,
+    selectedPath,
+    setPathChecked,
+    setAllChecked,
+    selectChange,
     refresh,
     initRepo,
     stage,
     unstage,
     commit,
+    commitAndPush,
     checkout,
     createBranch,
     deleteBranch,
     renameBranch,
     pull,
     push,
+    pushWithDialog,
+    updateProject,
+    fetchRemote,
     stash,
     stashPop,
     discard,
     discardAll,
     loadLog,
+    loadMoreLog,
     showDiff,
     closeDiff,
     clearForWorkspaceSwitch,
     openConflictCompare,
+    openFirstConflict,
     resetHard,
     undoCommit,
     revertTo,
+    revertCommit,
     mergeBranch,
+    rebaseBranch,
+    rebaseContinue,
+    rebaseAbort,
+    rebaseSkip,
+    startInteractiveRebase,
+    loadRebasePlan,
+    setUpstream,
+    deleteRemoteBranch,
+    compareBranchWithCurrent,
+    createBranchAt,
+    checkoutCommit,
+    checkoutRemote,
+    cherryPick,
+    resetTo,
+    blameFile,
     resolveConflict,
+    resolveAllConflicts,
     statusColor,
   };
 });

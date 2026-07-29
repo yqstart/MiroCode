@@ -3,7 +3,7 @@ use git2::{
     build::CheckoutBuilder, BranchType, Cred, DiffOptions, PushOptions, RemoteCallbacks,
     Repository, ResetType, Signature, StashFlags, StatusOptions,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 fn open_repo(root: &str) -> Result<Repository, String> {
@@ -51,7 +51,7 @@ pub struct GitCommitInfo {
     pub author: String,
     pub time: String,
     pub files: Vec<String>,
-    /// 父提交短 id（用于绘制提交图）
+    /// 父提交完整 id
     pub parents: Vec<String>,
     /// 指向该提交的本地/远程 refs（短名）
     pub refs: Vec<String>,
@@ -288,15 +288,34 @@ pub fn git_unstage(root: String, paths: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn git_commit(root: String, message: String, paths: Option<Vec<String>>) -> Result<String, String> {
+pub fn git_commit(
+    root: String,
+    message: String,
+    paths: Option<Vec<String>>,
+    amend: Option<bool>,
+) -> Result<String, String> {
     let repo = open_repo(&root)?;
     if message.trim().is_empty() {
         return Err("提交说明不能为空".into());
     }
-    if let Some(paths) = paths {
-        if !paths.is_empty() {
-            index_add(&repo, &paths)?;
+    // 勾选路径提交（WebStorm Changelist）：仅纳入选中文件，先重置索引再 add
+    if let Some(ref paths) = paths {
+        if paths.is_empty() {
+            return Err("请至少勾选一个文件再提交".into());
         }
+        match repo.head() {
+            Ok(head) => {
+                let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+                repo.reset(commit.as_object(), ResetType::Mixed, None)
+                    .map_err(|e| e.to_string())?;
+            }
+            Err(_) => {
+                let mut index = repo.index().map_err(|e| e.to_string())?;
+                index.clear().map_err(|e| e.to_string())?;
+                index.write().map_err(|e| e.to_string())?;
+            }
+        }
+        index_add(&repo, paths)?;
     }
 
     let mut index = repo.index().map_err(|e| e.to_string())?;
@@ -308,8 +327,24 @@ pub fn git_commit(root: String, message: String, paths: Option<Vec<String>>) -> 
         .map_err(|e| e.to_string())?;
 
     let parents = match repo.head() {
-        Ok(head) => vec![head.peel_to_commit().map_err(|e| e.to_string())?],
-        Err(_) => vec![],
+        Ok(head) => {
+            let head_commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+            if amend.unwrap_or(false) {
+                let mut ps = Vec::new();
+                for i in 0..head_commit.parent_count() {
+                    ps.push(head_commit.parent(i).map_err(|e| e.to_string())?);
+                }
+                ps
+            } else {
+                vec![head_commit]
+            }
+        }
+        Err(_) => {
+            if amend.unwrap_or(false) {
+                return Err("没有可修订的提交".into());
+            }
+            vec![]
+        }
     };
     let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
 
@@ -428,7 +463,7 @@ pub fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>,
         .map_err(|e| e.to_string())?;
     let limit = limit.unwrap_or(50);
 
-    // 收集 ref → commit 短 id 映射
+    // 收集 ref → commit 完整 id 映射
     let mut ref_map: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     if let Ok(refs) = repo.references() {
@@ -440,9 +475,10 @@ pub fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>,
                 continue;
             }
             if let Some(oid) = reference.target() {
-                let id = oid.to_string();
-                let short = id[..7.min(id.len())].to_string();
-                ref_map.entry(short).or_default().push(name.to_string());
+                ref_map
+                    .entry(oid.to_string())
+                    .or_default()
+                    .push(name.to_string());
             }
         }
     }
@@ -461,8 +497,7 @@ pub fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>,
                                 let _ = walk.push(local);
                                 let _ = walk.hide(remote);
                                 for oid in walk.flatten() {
-                                    let id = oid.to_string();
-                                    unpushed_ids.insert(id[..7.min(id.len())].to_string());
+                                    unpushed_ids.insert(oid.to_string());
                                 }
                             }
                         }
@@ -474,8 +509,7 @@ pub fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>,
                                 break;
                             }
                             if let Ok(oid) = oid {
-                                let id = oid.to_string();
-                                unpushed_ids.insert(id[..7.min(id.len())].to_string());
+                                unpushed_ids.insert(oid.to_string());
                             }
                         }
                     }
@@ -519,19 +553,15 @@ pub fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>,
         }
 
         let id = oid.to_string();
-        let short = id[..7.min(id.len())].to_string();
         let parents: Vec<String> = (0..commit.parent_count())
             .filter_map(|i| commit.parent_id(i).ok())
-            .map(|pid| {
-                let s = pid.to_string();
-                s[..7.min(s.len())].to_string()
-            })
+            .map(|pid| pid.to_string())
             .collect();
-        let refs = ref_map.get(&short).cloned().unwrap_or_default();
-        let unpushed = unpushed_ids.contains(&short);
+        let refs = ref_map.get(&id).cloned().unwrap_or_default();
+        let unpushed = unpushed_ids.contains(&id);
 
         commits.push(GitCommitInfo {
-            id: short,
+            id,
             summary: commit
                 .summary()
                 .ok()
@@ -802,31 +832,250 @@ pub fn git_conflict_sides(root: String, path: String) -> Result<GitConflictSides
     })
 }
 
-fn make_callbacks() -> RemoteCallbacks<'static> {
+const AUTH_REQUIRED_PREFIX: &str = "GIT_AUTH_REQUIRED";
+const AUTH_SEP: &str = "|||";
+
+fn is_auth_error(e: &git2::Error) -> bool {
+    e.code() == git2::ErrorCode::Auth
+        || e.message().to_ascii_lowercase().contains("auth")
+        || e.message().contains("authentication required")
+        || e.message().contains("未找到远程凭据")
+}
+
+fn format_remote_error(op: &str, e: git2::Error, remote_url: &str) -> String {
+    let msg = e.message().to_string();
+    if is_auth_error(&e) {
+        // 前端据此弹出账号密码框
+        return format!("{AUTH_REQUIRED_PREFIX}{AUTH_SEP}{remote_url}{AUTH_SEP}{msg}");
+    }
+    format!("{op}失败: {msg}")
+}
+
+fn default_ssh_key_paths() -> Vec<std::path::PathBuf> {
+    let mut keys = Vec::new();
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    let Some(home) = home else {
+        return keys;
+    };
+    let ssh = std::path::PathBuf::from(home).join(".ssh");
+    for name in ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"] {
+        let p = ssh.join(name);
+        if p.is_file() {
+            keys.push(p);
+        }
+    }
+    keys
+}
+
+/// 解析 https://host/path 或 http://host/path → (protocol, host)
+fn parse_http_remote(url: &str) -> Option<(String, String)> {
+    let url = url.trim();
+    let (protocol, rest) = if let Some(r) = url.strip_prefix("https://") {
+        ("https", r)
+    } else if let Some(r) = url.strip_prefix("http://") {
+        ("http", r)
+    } else {
+        return None;
+    };
+    let host = rest.split('/').next().unwrap_or("").split('@').next_back()?;
+    if host.is_empty() {
+        return None;
+    }
+    let host = host.split('@').next_back().unwrap_or(host);
+    Some((protocol.to_string(), host.to_string()))
+}
+
+fn cred_host_key(url: &str) -> Option<String> {
+    let (protocol, host) = parse_http_remote(url)?;
+    Some(format!("{protocol}://{host}"))
+}
+
+fn miro_cred_store_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(PathBuf::from(home).join(".mirocode").join("git-credentials.json"))
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct StoredGitCred {
+    username: String,
+    password: String,
+}
+
+fn load_miro_cred(url: &str) -> Option<(String, String)> {
+    let key = cred_host_key(url)?;
+    let path = miro_cred_store_path()?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    let map: std::collections::HashMap<String, StoredGitCred> =
+        serde_json::from_str(&raw).ok()?;
+    let c = map.get(&key)?;
+    if c.username.is_empty() || c.password.is_empty() {
+        return None;
+    }
+    Some((c.username.clone(), c.password.clone()))
+}
+
+fn save_miro_cred(url: &str, username: &str, password: &str) {
+    let Some(key) = cred_host_key(url) else {
+        return;
+    };
+    let Some(path) = miro_cred_store_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut map: std::collections::HashMap<String, StoredGitCred> =
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+    map.insert(
+        key,
+        StoredGitCred {
+            username: username.to_string(),
+            password: password.to_string(),
+        },
+    );
+    if let Ok(raw) = serde_json::to_string_pretty(&map) {
+        let _ = std::fs::write(&path, raw);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+}
+
+/// 写入系统 git credential（尽力而为）+ Miro Code 本地凭据（可靠记住）
+fn save_git_credential(url: &str, username: &str, password: &str) {
+    // 1. 应用内凭据：下次拉推可直接命中（不依赖钥匙串）
+    save_miro_cred(url, username, password);
+
+    // 2. 系统 helper（osxkeychain 等），失败不影响应用内记住
+    let Some((protocol, host)) = parse_http_remote(url) else {
+        return;
+    };
+    let payload = format!(
+        "protocol={protocol}\nhost={host}\nusername={username}\npassword={password}\n\n"
+    );
+    let mut child = match std::process::Command::new("git")
+        .args(["credential", "approve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = stdin.write_all(payload.as_bytes());
+    }
+    let _ = child.wait();
+}
+
+/// 供登录弹窗预填：按远程 URL 查 Miro Code 已存用户名
+#[tauri::command]
+pub fn git_stored_username(url: String) -> Option<String> {
+    load_miro_cred(&url).map(|(u, _)| u)
+}
+
+/// 远程凭据：显式账号密码 → Miro 已存凭据 → SSH → git credential helper
+fn make_callbacks(
+    username: Option<String>,
+    password: Option<String>,
+) -> RemoteCallbacks<'static> {
     let mut cb = RemoteCallbacks::new();
-    cb.credentials(|_url, username_from_url, allowed| {
+    cb.credentials(move |url, username_from_url, allowed| {
+        let explicit_user = username.as_deref();
+        let explicit_pass = password.as_deref();
+        let stored = load_miro_cred(url);
+
+        if allowed.contains(git2::CredentialType::USERNAME) {
+            let user = explicit_user
+                .or(stored.as_ref().map(|(u, _)| u.as_str()))
+                .or(username_from_url)
+                .unwrap_or("git");
+            return Cred::username(user);
+        }
+
+        // 用户在弹窗中填写的 HTTPS 账号密码优先
+        if let (Some(u), Some(p)) = (explicit_user, explicit_pass) {
+            if allowed.contains(git2::CredentialType::USER_PASS_PLAINTEXT)
+                || allowed.contains(git2::CredentialType::DEFAULT)
+            {
+                return Cred::userpass_plaintext(u, p);
+            }
+        }
+
+        // 应用内已记住的凭据
+        if let Some((u, p)) = stored {
+            if allowed.contains(git2::CredentialType::USER_PASS_PLAINTEXT)
+                || allowed.contains(git2::CredentialType::DEFAULT)
+            {
+                return Cred::userpass_plaintext(&u, &p);
+            }
+        }
+
         if allowed.contains(git2::CredentialType::SSH_KEY) {
             let user = username_from_url.unwrap_or("git");
-            return Cred::ssh_key_from_agent(user);
+            if let Ok(cred) = Cred::ssh_key_from_agent(user) {
+                return Ok(cred);
+            }
+            for key in default_ssh_key_paths() {
+                if let Ok(cred) = Cred::ssh_key(user, None, &key, None) {
+                    return Ok(cred);
+                }
+            }
         }
-        Cred::default()
+
+        if allowed.contains(git2::CredentialType::USER_PASS_PLAINTEXT)
+            || allowed.contains(git2::CredentialType::DEFAULT)
+        {
+            if let Ok(cfg) = git2::Config::open_default() {
+                if let Ok(cred) = Cred::credential_helper(&cfg, url, username_from_url) {
+                    return Ok(cred);
+                }
+            }
+        }
+
+        Err(git2::Error::from_str(
+            "未找到远程凭据（SSH 密钥或 HTTPS credential helper）",
+        ))
     });
     cb
 }
 
+fn remote_url(remote: &git2::Remote<'_>) -> String {
+    remote.url().unwrap_or("").to_string()
+}
+
 #[tauri::command]
-pub fn git_pull(root: String) -> Result<String, String> {
+pub fn git_pull(
+    root: String,
+    username: Option<String>,
+    password: Option<String>,
+    remember: Option<bool>,
+) -> Result<String, String> {
     let repo = open_repo(&root)?;
     let head = repo.head().map_err(|e| e.to_string())?;
     let branch = head.shorthand().map_err(|e| e.to_string())?.to_string();
     let mut remote = repo
         .find_remote("origin")
         .map_err(|e| format!("缺少 origin 远程: {e}"))?;
+    let url = remote_url(&remote);
     let mut opts = git2::FetchOptions::new();
-    opts.remote_callbacks(make_callbacks());
+    opts.remote_callbacks(make_callbacks(username.clone(), password.clone()));
     remote
         .fetch(&[branch.as_str()], Some(&mut opts), None)
-        .map_err(|e| format!("拉取失败: {e}"))?;
+        .map_err(|e| format_remote_error("拉取", e, &url))?;
+
+    if remember.unwrap_or(false) {
+        if let (Some(u), Some(p)) = (username.as_deref(), password.as_deref()) {
+            save_git_credential(&url, u, p);
+        }
+    }
 
     let fetch_head = repo.find_reference("FETCH_HEAD").map_err(|e| e.to_string())?;
     let fetch_commit = repo
@@ -857,20 +1106,27 @@ pub fn git_pull(root: String) -> Result<String, String> {
         return Err("拉取后存在冲突，请在 Git 面板解决".into());
     }
     let msg = format!("Merge remote-tracking branch 'origin/{branch}'");
-    git_commit(root, msg, None)?;
+    git_commit(root, msg, None, None)?;
     Ok("合并拉取完成".into())
 }
 
 #[tauri::command]
-pub fn git_push(root: String, force: Option<bool>) -> Result<String, String> {
+pub fn git_push(
+    root: String,
+    force: Option<bool>,
+    username: Option<String>,
+    password: Option<String>,
+    remember: Option<bool>,
+) -> Result<String, String> {
     let repo = open_repo(&root)?;
     let head = repo.head().map_err(|e| e.to_string())?;
     let branch = head.shorthand().map_err(|e| e.to_string())?.to_string();
     let mut remote = repo
         .find_remote("origin")
         .map_err(|e| format!("缺少 origin 远程: {e}"))?;
+    let url = remote_url(&remote);
     let mut push_opts = PushOptions::new();
-    push_opts.remote_callbacks(make_callbacks());
+    push_opts.remote_callbacks(make_callbacks(username.clone(), password.clone()));
     let refspec = if force.unwrap_or(false) {
         format!("+refs/heads/{branch}:refs/heads/{branch}")
     } else {
@@ -878,7 +1134,13 @@ pub fn git_push(root: String, force: Option<bool>) -> Result<String, String> {
     };
     remote
         .push(&[refspec.as_str()], Some(&mut push_opts))
-        .map_err(|e| format!("推送失败: {e}"))?;
+        .map_err(|e| format_remote_error("推送", e, &url))?;
+
+    if remember.unwrap_or(false) {
+        if let (Some(u), Some(p)) = (username.as_deref(), password.as_deref()) {
+            save_git_credential(&url, u, p);
+        }
+    }
     Ok("推送成功".into())
 }
 
@@ -939,7 +1201,7 @@ pub fn git_undo_commit(root: String) -> Result<(), String> {
 #[tauri::command]
 pub fn git_revert_to(root: String, commit_id: String) -> Result<(), String> {
     let repo = open_repo(&root)?;
-    let oid = git2::Oid::from_str(&commit_id).map_err(|e| e.to_string())?;
+    let oid = resolve_commit_oid(&repo, &commit_id)?;
     let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
     repo.reset(commit.as_object(), ResetType::Hard, None)
         .map_err(|e| e.to_string())
@@ -978,7 +1240,7 @@ pub fn git_merge_branch(root: String, name: String) -> Result<String, String> {
     if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
         return Err("合并产生冲突，请在冲突面板解决".into());
     }
-    git_commit(root, format!("Merge branch '{name}'"), None)?;
+    git_commit(root, format!("Merge branch '{name}'"), None, None)?;
     Ok("合并完成".into())
 }
 
@@ -1031,3 +1293,962 @@ pub fn git_resolve_conflict(root: String, path: String, strategy: String) -> Res
     index.write().map_err(|e| e.to_string())?;
     Ok(())
 }
+
+// ==================== 完全体：Fetch / Update / Rebase / Cherry-pick / Reset / Blame ====================
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRemoteInfo {
+    pub name: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBlameLine {
+    pub line: usize,
+    pub commit_id: String,
+    pub author: String,
+    pub time: String,
+    pub summary: String,
+}
+
+#[tauri::command]
+pub fn git_remotes(root: String) -> Result<Vec<GitRemoteInfo>, String> {
+    let repo = open_repo(&root)?;
+    let names = repo.remotes().map_err(|e| e.to_string())?;
+    let mut list = Vec::new();
+    for i in 0..names.len() {
+        let Ok(Some(name)) = names.get(i) else {
+            continue;
+        };
+        let remote = repo.find_remote(name).ok();
+        list.push(GitRemoteInfo {
+            name: name.to_string(),
+            url: remote
+                .as_ref()
+                .and_then(|r| r.url().ok().map(str::to_string)),
+        });
+    }
+    Ok(list)
+}
+
+#[tauri::command]
+pub fn git_unpushed_commits(
+    root: String,
+    limit: Option<usize>,
+) -> Result<Vec<GitCommitInfo>, String> {
+    let repo = open_repo(&root)?;
+    let max = limit.unwrap_or(50).min(200);
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return Ok(vec![]),
+    };
+    if !head.is_branch() {
+        return Ok(vec![]);
+    }
+    let branch_name = head.shorthand().map_err(|e| e.to_string())?.to_string();
+    let branch = repo
+        .find_branch(&branch_name, BranchType::Local)
+        .map_err(|e| e.to_string())?;
+    let upstream = match branch.upstream() {
+        Ok(u) => u,
+        Err(_) => return git_log(root, Some(max.min(20))),
+    };
+    let local_oid = head.peel_to_commit().map_err(|e| e.to_string())?.id();
+    let remote_oid = upstream
+        .get()
+        .peel_to_commit()
+        .map_err(|e| e.to_string())?
+        .id();
+
+    let mut walk = repo.revwalk().map_err(|e| e.to_string())?;
+    walk.push(local_oid).map_err(|e| e.to_string())?;
+    let _ = walk.hide(remote_oid);
+
+    let mut commits = Vec::new();
+    for oid in walk.take(max) {
+        let oid = oid.map_err(|e| e.to_string())?;
+        let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+        let id_str = oid.to_string();
+        let time = Local
+            .timestamp_opt(commit.time().seconds(), 0)
+            .single()
+            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_default();
+        let parents: Vec<String> = (0..commit.parent_count())
+            .filter_map(|i| commit.parent_id(i).ok())
+            .map(|id| id.to_string())
+            .collect();
+        commits.push(GitCommitInfo {
+            id: id_str,
+            summary: commit
+                .summary()
+                .ok()
+                .flatten()
+                .unwrap_or("")
+                .to_string(),
+            author: commit.author().name().unwrap_or("").to_string(),
+            time,
+            files: vec![],
+            parents,
+            refs: vec![],
+            unpushed: true,
+        });
+    }
+    Ok(commits)
+}
+
+#[tauri::command]
+pub fn git_fetch(
+    root: String,
+    remote: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+    remember: Option<bool>,
+) -> Result<String, String> {
+    let repo = open_repo(&root)?;
+    let remote_name = remote.unwrap_or_else(|| "origin".into());
+    let mut remote = repo
+        .find_remote(&remote_name)
+        .map_err(|e| format!("缺少远程 {remote_name}: {e}"))?;
+    let url = remote_url(&remote);
+    let mut opts = git2::FetchOptions::new();
+    opts.remote_callbacks(make_callbacks(username.clone(), password.clone()));
+    remote
+        .fetch(&[] as &[&str], Some(&mut opts), None)
+        .map_err(|e| format_remote_error("Fetch", e, &url))?;
+    if remember.unwrap_or(false) {
+        if let (Some(u), Some(p)) = (username.as_deref(), password.as_deref()) {
+            save_git_credential(&url, u, p);
+        }
+    }
+    Ok(format!("已从 {remote_name} 获取更新"))
+}
+
+#[tauri::command]
+pub fn git_update_project(
+    root: String,
+    strategy: String,
+    username: Option<String>,
+    password: Option<String>,
+    remember: Option<bool>,
+) -> Result<String, String> {
+    git_fetch(
+        root.clone(),
+        Some("origin".into()),
+        username.clone(),
+        password.clone(),
+        remember,
+    )?;
+
+    let repo = open_repo(&root)?;
+    let head = repo.head().map_err(|e| e.to_string())?;
+    let branch = head.shorthand().map_err(|e| e.to_string())?.to_string();
+    let local_branch = repo
+        .find_branch(&branch, BranchType::Local)
+        .map_err(|e| e.to_string())?;
+    let upstream = local_branch
+        .upstream()
+        .map_err(|_| "当前分支没有上游，请先设置 upstream 或 Push".to_string())?;
+    let upstream_name = upstream
+        .name()
+        .map_err(|e| e.to_string())?
+        .unwrap_or("")
+        .to_string();
+
+    match strategy.as_str() {
+        "rebase" => git_rebase_onto(root, upstream_name),
+        _ => {
+            let commit = upstream.get().peel_to_commit().map_err(|e| e.to_string())?;
+            let annotated = repo
+                .find_annotated_commit(commit.id())
+                .map_err(|e| e.to_string())?;
+            let (analysis, _) = repo
+                .merge_analysis(&[&annotated])
+                .map_err(|e| e.to_string())?;
+            if analysis.is_up_to_date() {
+                return Ok("已是最新".into());
+            }
+            if analysis.is_fast_forward() {
+                let refname = format!("refs/heads/{branch}");
+                let mut reference = repo.find_reference(&refname).map_err(|e| e.to_string())?;
+                reference
+                    .set_target(annotated.id(), "update fast-forward")
+                    .map_err(|e| e.to_string())?;
+                repo.set_head(&refname).map_err(|e| e.to_string())?;
+                repo.checkout_head(Some(CheckoutBuilder::default().force()))
+                    .map_err(|e| e.to_string())?;
+                return Ok("快进更新完成".into());
+            }
+            repo.merge(&[&annotated], None, None)
+                .map_err(|e| format!("合并失败: {e}"))?;
+            if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
+                return Err("更新后存在冲突，请在 Commit 面板解决".into());
+            }
+            git_commit(
+                root,
+                format!("Merge remote-tracking branch '{upstream_name}'"),
+                None,
+                None,
+            )?;
+            Ok("合并更新完成".into())
+        }
+    }
+}
+
+fn resolve_branch_commit<'a>(
+    repo: &'a Repository,
+    name: &str,
+) -> Result<git2::Commit<'a>, String> {
+    repo.find_branch(name, BranchType::Local)
+        .or_else(|_| {
+            let n = if name.contains('/') {
+                name.to_string()
+            } else {
+                format!("origin/{name}")
+            };
+            repo.find_branch(&n, BranchType::Remote)
+        })
+        .map_err(|e| format!("未找到分支 {name}: {e}"))?
+        .get()
+        .peel_to_commit()
+        .map_err(|e| e.to_string())
+}
+
+fn git_rebase_onto(root: String, onto_name: String) -> Result<String, String> {
+    // 使用系统 git，冲突时保留 rebase 状态供 Continue/Abort
+    let output = std::process::Command::new("git")
+        .args(["rebase", &onto_name])
+        .current_dir(&root)
+        .output()
+        .map_err(|e| format!("无法执行 git rebase: {e}"))?;
+    if output.status.success() {
+        return Ok(format!("已 rebase 到 {onto_name}"));
+    }
+    let err = String::from_utf8_lossy(&output.stderr);
+    let out = String::from_utf8_lossy(&output.stdout);
+    let combined = format!("{err}\n{out}");
+    if is_rebase_in_progress(&root) {
+        return Err(format!(
+            "GIT_REBASE_CONFLICT|||Rebase 产生冲突，请在 Commit 面板解决后 Continue\n{combined}"
+        ));
+    }
+    Err(format!("Rebase 失败: {}", combined.trim()))
+}
+
+#[tauri::command]
+pub fn git_rebase_branch(root: String, onto: String) -> Result<String, String> {
+    git_rebase_onto(root, onto)
+}
+
+#[tauri::command]
+pub fn git_cherry_pick(root: String, commit_id: String) -> Result<String, String> {
+    let repo = open_repo(&root)?;
+    let oid = resolve_commit_oid(&repo, &commit_id)?;
+    let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+    repo.cherrypick(&commit, None)
+        .map_err(|e| format!("Cherry-pick 失败: {e}"))?;
+    if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
+        return Err("Cherry-pick 产生冲突，请在 Commit 面板解决".into());
+    }
+    let msg = commit.message().unwrap_or("Cherry-pick").to_string();
+    git_commit(root, msg, None, None)?;
+    Ok("Cherry-pick 完成".into())
+}
+
+#[tauri::command]
+pub fn git_reset(root: String, commit_id: String, mode: String) -> Result<String, String> {
+    let repo = open_repo(&root)?;
+    let oid = resolve_commit_oid(&repo, &commit_id)?;
+    let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+    let reset_type = match mode.as_str() {
+        "soft" => ResetType::Soft,
+        "hard" => ResetType::Hard,
+        _ => ResetType::Mixed,
+    };
+    repo.reset(commit.as_object(), reset_type, None)
+        .map_err(|e| e.to_string())?;
+    Ok(format!(
+        "已 {} 重置到 {}",
+        mode,
+        &commit_id[..7.min(commit_id.len())]
+    ))
+}
+
+#[tauri::command]
+pub fn git_blame(root: String, path: String) -> Result<Vec<GitBlameLine>, String> {
+    let repo = open_repo(&root)?;
+    let blame = repo
+        .blame_file(Path::new(&path), None)
+        .map_err(|e| format!("Blame 失败: {e}"))?;
+    let mut lines = Vec::new();
+    for i in 0..blame.len() {
+        let hunk = blame.get_index(i).ok_or_else(|| "blame hunk".to_string())?;
+        let oid = hunk.final_commit_id();
+        let id_str = oid.to_string();
+        let short = id_str[..7.min(id_str.len())].to_string();
+        let commit = repo.find_commit(oid).ok();
+        let time = commit
+            .as_ref()
+            .and_then(|c| {
+                Local
+                    .timestamp_opt(c.time().seconds(), 0)
+                    .single()
+                    .map(|t| t.format("%Y-%m-%d").to_string())
+            })
+            .unwrap_or_default();
+        let author_name = commit
+            .as_ref()
+            .map(|c| {
+                let sig = c.author();
+                match sig.name() {
+                    Ok(n) => n.to_string(),
+                    Err(_) => String::new(),
+                }
+            })
+            .unwrap_or_default();
+        let summary_text = commit
+            .as_ref()
+            .map(|c| {
+                c.summary()
+                    .ok()
+                    .flatten()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .unwrap_or_default();
+        let start = hunk.final_start_line();
+        let lines_in_hunk = hunk.lines_in_hunk();
+        for offset in 0..lines_in_hunk {
+            lines.push(GitBlameLine {
+                line: start + offset,
+                commit_id: short.clone(),
+                author: author_name.clone(),
+                time: time.clone(),
+                summary: summary_text.clone(),
+            });
+        }
+    }
+    Ok(lines)
+}
+
+#[tauri::command]
+pub fn git_set_upstream(root: String, branch: String, upstream: String) -> Result<(), String> {
+    let repo = open_repo(&root)?;
+    let mut b = repo
+        .find_branch(&branch, BranchType::Local)
+        .map_err(|e| e.to_string())?;
+    b.set_upstream(Some(&upstream)).map_err(|e| e.to_string())
+}
+
+/// 从远程分支检出为本地分支（并设置 upstream）
+#[tauri::command]
+pub fn git_checkout_remote(
+    root: String,
+    remote_ref: String,
+    local_name: Option<String>,
+) -> Result<String, String> {
+    let repo = open_repo(&root)?;
+    let commit = resolve_branch_commit(&repo, &remote_ref)?;
+    let local = local_name.unwrap_or_else(|| {
+        remote_ref
+            .rsplit('/')
+            .next()
+            .unwrap_or(&remote_ref)
+            .to_string()
+    });
+    if repo.find_branch(&local, BranchType::Local).is_ok() {
+        git_checkout(root, local.clone(), Some(false))?;
+        return Ok(format!("已切换到已有分支 {local}"));
+    }
+    repo.branch(&local, &commit, false)
+        .map_err(|e| e.to_string())?;
+    if let Ok(mut b) = repo.find_branch(&local, BranchType::Local) {
+        let _ = b.set_upstream(Some(&remote_ref));
+    }
+    git_checkout(root, local.clone(), Some(false))?;
+    Ok(format!("已从 {remote_ref} 创建并切换到 {local}"))
+}
+
+// ==================== Rebase 状态 / 交互 / 扩展 ====================
+
+fn git_dir(root: &str) -> Result<PathBuf, String> {
+    let repo = open_repo(root)?;
+    Ok(repo.path().to_path_buf())
+}
+
+fn is_rebase_in_progress(root: &str) -> bool {
+    let Ok(dir) = git_dir(root) else {
+        return false;
+    };
+    dir.join("rebase-merge").is_dir() || dir.join("rebase-apply").is_dir()
+}
+
+fn is_miro_rebase_in_progress(root: &str) -> bool {
+    git_dir(root)
+        .map(|d| d.join("miro-rebase.json").is_file())
+        .unwrap_or(false)
+}
+
+fn run_git(root: &str, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("无法执行 git {}: {e}", args.join(" ")))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if output.status.success() {
+        Ok(if stdout.is_empty() {
+            stderr
+        } else {
+            stdout
+        })
+    } else {
+        let msg = if stderr.is_empty() { stdout } else { stderr };
+        Err(msg)
+    }
+}
+
+fn resolve_commit_oid(repo: &Repository, id: &str) -> Result<git2::Oid, String> {
+    let obj = repo
+        .revparse_single(id)
+        .map_err(|e| format!("无效提交 {id}: {e}"))?;
+    let commit = obj
+        .peel_to_commit()
+        .map_err(|e| format!("不是提交 {id}: {e}"))?;
+    Ok(commit.id())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRebaseStatus {
+    pub in_progress: bool,
+    pub kind: String,
+    pub head_name: Option<String>,
+    pub onto: Option<String>,
+    pub conflicted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRebaseStep {
+    pub action: String,
+    pub commit_id: String,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MiroRebaseState {
+    onto: String,
+    branch: String,
+    /// rebase 开始前的 HEAD，供 Abort 恢复
+    original_head: String,
+    remaining: Vec<GitRebaseStep>,
+    squash_msgs: Vec<String>,
+}
+
+fn miro_rebase_path(root: &str) -> Result<PathBuf, String> {
+    Ok(git_dir(root)?.join("miro-rebase.json"))
+}
+
+fn load_miro_rebase(root: &str) -> Result<MiroRebaseState, String> {
+    let path = miro_rebase_path(root)?;
+    let raw = std::fs::read_to_string(&path).map_err(|e| format!("读取 rebase 状态失败: {e}"))?;
+    serde_json::from_str(&raw).map_err(|e| format!("解析 rebase 状态失败: {e}"))
+}
+
+fn save_miro_rebase(root: &str, state: &MiroRebaseState) -> Result<(), String> {
+    let path = miro_rebase_path(root)?;
+    let raw = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
+    std::fs::write(&path, raw).map_err(|e| e.to_string())
+}
+
+fn clear_miro_rebase(root: &str) {
+    if let Ok(path) = miro_rebase_path(root) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn commit_info_from_oid(repo: &Repository, oid: git2::Oid) -> Result<GitCommitInfo, String> {
+    let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+    let time = Local
+        .timestamp_opt(commit.time().seconds(), 0)
+        .single()
+        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_default();
+    let parents: Vec<String> = (0..commit.parent_count())
+        .filter_map(|i| commit.parent_id(i).ok())
+        .map(|id| id.to_string())
+        .collect();
+    let author = commit.author().name().unwrap_or("").to_string();
+    let summary = commit
+        .summary()
+        .ok()
+        .flatten()
+        .unwrap_or("")
+        .to_string();
+    Ok(GitCommitInfo {
+        id: oid.to_string(),
+        summary,
+        author,
+        time,
+        files: vec![],
+        parents,
+        refs: vec![],
+        unpushed: false,
+    })
+}
+
+#[tauri::command]
+pub fn git_rebase_status(root: String) -> Result<GitRebaseStatus, String> {
+    let repo = open_repo(&root)?;
+    let conflicted = repo.index().map(|i| i.has_conflicts()).unwrap_or(false);
+    let miro = is_miro_rebase_in_progress(&root);
+    let native = is_rebase_in_progress(&root);
+    let in_progress = miro || native;
+    let kind = if miro {
+        "miro".into()
+    } else if native {
+        "git".into()
+    } else {
+        "none".into()
+    };
+    let mut head_name = None;
+    let mut onto = None;
+    if let Ok(dir) = git_dir(&root) {
+        let head_file = dir.join("rebase-merge").join("head-name");
+        if let Ok(s) = std::fs::read_to_string(head_file) {
+            head_name = Some(s.trim().trim_start_matches("refs/heads/").to_string());
+        }
+        let onto_file = dir.join("rebase-merge").join("onto");
+        if let Ok(s) = std::fs::read_to_string(onto_file) {
+            onto = Some(s.trim().chars().take(7).collect());
+        }
+        if miro {
+            if let Ok(state) = load_miro_rebase(&root) {
+                head_name = Some(state.branch);
+                onto = Some(state.onto.chars().take(7).collect());
+            }
+        }
+    }
+    Ok(GitRebaseStatus {
+        in_progress,
+        kind,
+        head_name,
+        onto,
+        conflicted,
+    })
+}
+
+#[tauri::command]
+pub fn git_rebase_continue(root: String) -> Result<String, String> {
+    if is_miro_rebase_in_progress(&root) {
+        // 先提交当前冲突解决结果（若仍有未暂存冲突则失败）
+        let repo = open_repo(&root)?;
+        if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
+            return Err("仍有未解决冲突，请先在 Commit 面板解决".into());
+        }
+        // 若处于 cherry-pick 中间态
+        if repo.path().join("CHERRY_PICK_HEAD").is_file() {
+            let _ = run_git(&root, &["-c", "core.editor=true", "cherry-pick", "--continue"]);
+        } else if !repo
+            .statuses(None)
+            .map(|s| s.is_empty())
+            .unwrap_or(true)
+        {
+            // 有已暂存变更则提交
+            let msg = "Miro Code rebase continue";
+            let _ = git_commit(root.clone(), msg.into(), None, None);
+        }
+        return replay_miro_rebase(root);
+    }
+    match run_git(
+        &root,
+        &["-c", "core.editor=true", "rebase", "--continue"],
+    ) {
+        Ok(msg) => Ok(if msg.is_empty() {
+            "Rebase 已继续".into()
+        } else {
+            msg
+        }),
+        Err(e) => {
+            if is_rebase_in_progress(&root) {
+                Err(format!(
+                    "GIT_REBASE_CONFLICT|||继续 Rebase 仍有冲突\n{e}"
+                ))
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub fn git_rebase_abort(root: String) -> Result<String, String> {
+    if is_miro_rebase_in_progress(&root) {
+        let state = load_miro_rebase(&root)?;
+        let _ = run_git(&root, &["cherry-pick", "--abort"]);
+        let _ = run_git(&root, &["checkout", &state.branch]);
+        let _ = run_git(&root, &["reset", "--hard", &state.original_head]);
+        clear_miro_rebase(&root);
+        return Ok("已中止交互 Rebase".into());
+    }
+    run_git(&root, &["rebase", "--abort"])?;
+    Ok("已中止 Rebase".into())
+}
+
+#[tauri::command]
+pub fn git_rebase_skip(root: String) -> Result<String, String> {
+    if is_miro_rebase_in_progress(&root) {
+        let _ = run_git(&root, &["cherry-pick", "--abort"]);
+        let mut state = load_miro_rebase(&root)?;
+        if !state.remaining.is_empty() {
+            state.remaining.remove(0);
+            save_miro_rebase(&root, &state)?;
+        }
+        return replay_miro_rebase(root);
+    }
+    match run_git(&root, &["rebase", "--skip"]) {
+        Ok(msg) => Ok(if msg.is_empty() {
+            "已跳过当前提交".into()
+        } else {
+            msg
+        }),
+        Err(e) => {
+            if is_rebase_in_progress(&root) {
+                Err(format!("GIT_REBASE_CONFLICT|||Skip 后仍有冲突\n{e}"))
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+/// onto..HEAD 的提交列表（旧→新，供交互 Rebase）
+#[tauri::command]
+pub fn git_rebase_plan(root: String, onto: String) -> Result<Vec<GitCommitInfo>, String> {
+    let repo = open_repo(&root)?;
+    let onto_oid = resolve_commit_oid(&repo, &onto)?;
+    let head_oid = repo
+        .head()
+        .map_err(|e| e.to_string())?
+        .peel_to_commit()
+        .map_err(|e| e.to_string())?
+        .id();
+    let mut walk = repo.revwalk().map_err(|e| e.to_string())?;
+    walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)
+        .map_err(|e| e.to_string())?;
+    walk.push(head_oid).map_err(|e| e.to_string())?;
+    walk.hide(onto_oid).map_err(|e| e.to_string())?;
+    let mut commits = Vec::new();
+    for oid in walk {
+        let oid = oid.map_err(|e| e.to_string())?;
+        commits.push(commit_info_from_oid(&repo, oid)?);
+    }
+    Ok(commits)
+}
+
+fn replay_miro_rebase(root: String) -> Result<String, String> {
+    let mut state = load_miro_rebase(&root)?;
+    let repo = open_repo(&root)?;
+
+    while let Some(step) = state.remaining.first().cloned() {
+        let action = step.action.to_lowercase();
+        if action == "drop" {
+            state.remaining.remove(0);
+            save_miro_rebase(&root, &state)?;
+            continue;
+        }
+
+        let oid = resolve_commit_oid(&repo, &step.commit_id)?;
+        let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+        let default_msg = commit.message().unwrap_or("").to_string();
+
+        match action.as_str() {
+            "pick" | "reword" => {
+                let out = std::process::Command::new("git")
+                    .args(["cherry-pick", &step.commit_id])
+                    .current_dir(&root)
+                    .output()
+                    .map_err(|e| e.to_string())?;
+                if !out.status.success() {
+                    save_miro_rebase(&root, &state)?;
+                    if open_repo(&root)
+                        .ok()
+                        .and_then(|r| r.index().ok())
+                        .map(|i| i.has_conflicts())
+                        .unwrap_or(false)
+                    {
+                        return Err(
+                            "GIT_REBASE_CONFLICT|||交互 Rebase 冲突，请解决后 Continue".into(),
+                        );
+                    }
+                    return Err(format!(
+                        "Cherry-pick 失败: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    ));
+                }
+                if action == "reword" {
+                    let msg = step.message.unwrap_or(default_msg);
+                    git_commit(root.clone(), msg, None, Some(true))?;
+                }
+                state.squash_msgs.clear();
+            }
+            "fix" => {
+                let out = std::process::Command::new("git")
+                    .args(["cherry-pick", "-n", &step.commit_id])
+                    .current_dir(&root)
+                    .output()
+                    .map_err(|e| e.to_string())?;
+                if !out.status.success() {
+                    save_miro_rebase(&root, &state)?;
+                    if open_repo(&root)
+                        .ok()
+                        .and_then(|r| r.index().ok())
+                        .map(|i| i.has_conflicts())
+                        .unwrap_or(false)
+                    {
+                        return Err(
+                            "GIT_REBASE_CONFLICT|||交互 Rebase 冲突，请解决后 Continue".into(),
+                        );
+                    }
+                    return Err(format!(
+                        "Fixup 失败: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    ));
+                }
+                // amend 保留原信息
+                let _ = run_git(
+                    &root,
+                    &["commit", "--amend", "--no-edit", "--allow-empty"],
+                );
+            }
+            "squash" => {
+                let out = std::process::Command::new("git")
+                    .args(["cherry-pick", "-n", &step.commit_id])
+                    .current_dir(&root)
+                    .output()
+                    .map_err(|e| e.to_string())?;
+                if !out.status.success() {
+                    save_miro_rebase(&root, &state)?;
+                    if open_repo(&root)
+                        .ok()
+                        .and_then(|r| r.index().ok())
+                        .map(|i| i.has_conflicts())
+                        .unwrap_or(false)
+                    {
+                        return Err(
+                            "GIT_REBASE_CONFLICT|||交互 Rebase 冲突，请解决后 Continue".into(),
+                        );
+                    }
+                    return Err(format!(
+                        "Squash 失败: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    ));
+                }
+                let msg = step.message.unwrap_or(default_msg);
+                state.squash_msgs.push(msg.clone());
+                let head_msg = {
+                    let repo2 = open_repo(&root)?;
+                    repo2
+                        .head()
+                        .ok()
+                        .and_then(|h| h.peel_to_commit().ok())
+                        .and_then(|c| c.message().ok().map(|m| m.to_string()))
+                        .unwrap_or_default()
+                };
+                let combined = format!("{}\n\n{}", head_msg.trim(), msg.trim());
+                git_commit(root.clone(), combined, None, Some(true))?;
+            }
+            _ => {
+                return Err(format!("未知 rebase 动作: {action}"));
+            }
+        }
+
+        state.remaining.remove(0);
+        save_miro_rebase(&root, &state)?;
+    }
+
+    clear_miro_rebase(&root);
+    Ok("交互 Rebase 完成".into())
+}
+
+#[tauri::command]
+pub fn git_rebase_interactive(
+    root: String,
+    onto: String,
+    steps: Vec<GitRebaseStep>,
+) -> Result<String, String> {
+    if steps.is_empty() {
+        return Err("没有可重放的提交".into());
+    }
+    if is_rebase_in_progress(&root) || is_miro_rebase_in_progress(&root) {
+        return Err("已有 Rebase 进行中，请先 Continue 或 Abort".into());
+    }
+    let repo = open_repo(&root)?;
+    let branch = repo
+        .head()
+        .ok()
+        .and_then(|h| {
+            if h.is_branch() {
+                h.shorthand().ok().map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| "请在本地分支上执行交互 Rebase".to_string())?;
+
+    let onto_oid = resolve_commit_oid(&repo, &onto)?;
+    let original_head = repo
+        .head()
+        .map_err(|e| e.to_string())?
+        .peel_to_commit()
+        .map_err(|e| e.to_string())?
+        .id()
+        .to_string();
+    // 硬重置到 onto，再按步骤重放
+    let onto_commit = repo.find_commit(onto_oid).map_err(|e| e.to_string())?;
+    repo.reset(onto_commit.as_object(), ResetType::Hard, None)
+        .map_err(|e| format!("重置到 onto 失败: {e}"))?;
+
+    let state = MiroRebaseState {
+        onto: onto_oid.to_string(),
+        branch,
+        original_head,
+        remaining: steps,
+        squash_msgs: vec![],
+    };
+    save_miro_rebase(&root, &state)?;
+    replay_miro_rebase(root)
+}
+
+/// 真正的 git revert（生成反向提交）
+#[tauri::command]
+pub fn git_revert_commit(root: String, commit_id: String) -> Result<String, String> {
+    match run_git(
+        &root,
+        &["-c", "core.editor=true", "revert", "--no-edit", &commit_id],
+    ) {
+        Ok(_) => Ok(format!("已 revert {}", &commit_id[..7.min(commit_id.len())])),
+        Err(e) => {
+            let repo = open_repo(&root)?;
+            if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
+                Err(format!(
+                    "Revert 产生冲突，请在 Commit 面板解决\n{e}"
+                ))
+            } else {
+                Err(format!("Revert 失败: {e}"))
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub fn git_create_branch_at(
+    root: String,
+    name: String,
+    commit_id: String,
+    checkout: bool,
+) -> Result<(), String> {
+    let repo = open_repo(&root)?;
+    let oid = resolve_commit_oid(&repo, &commit_id)?;
+    let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+    repo.branch(&name, &commit, false)
+        .map_err(|e| e.to_string())?;
+    if checkout {
+        git_checkout(root, name, Some(false))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn git_checkout_commit(root: String, commit_id: String) -> Result<String, String> {
+    let repo = open_repo(&root)?;
+    let oid = resolve_commit_oid(&repo, &commit_id)?;
+    let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+    repo.set_head_detached(commit.id())
+        .map_err(|e| e.to_string())?;
+    repo.checkout_head(Some(CheckoutBuilder::default().force()))
+        .map_err(|e| e.to_string())?;
+    Ok(format!(
+        "已检出分离头指针 {}",
+        &commit_id[..7.min(commit_id.len())]
+    ))
+}
+
+#[tauri::command]
+pub fn git_delete_remote_branch(root: String, remote_ref: String) -> Result<String, String> {
+    // remote_ref 形如 origin/feature
+    let (remote, branch) = remote_ref
+        .split_once('/')
+        .ok_or_else(|| "远程分支名无效，期望 remote/branch".to_string())?;
+    run_git(&root, &["push", remote, "--delete", branch])?;
+    let _ = run_git(&root, &["fetch", "--prune", remote]);
+    Ok(format!("已删除远程分支 {remote_ref}"))
+}
+
+/// 对比两分支 tip 的文件树差异摘要（打开第一个差异文件的分栏用）
+#[tauri::command]
+pub fn git_branch_sides(
+    root: String,
+    left_ref: String,
+    right_ref: String,
+    path: Option<String>,
+) -> Result<GitFileSides, String> {
+    let repo = open_repo(&root)?;
+    let left_oid = resolve_commit_oid(&repo, &left_ref)?;
+    let right_oid = resolve_commit_oid(&repo, &right_ref)?;
+    let left_commit = repo.find_commit(left_oid).map_err(|e| e.to_string())?;
+    let right_commit = repo.find_commit(right_oid).map_err(|e| e.to_string())?;
+    let left_tree = left_commit.tree().map_err(|e| e.to_string())?;
+    let right_tree = right_commit.tree().map_err(|e| e.to_string())?;
+
+    let rel = if let Some(p) = path.filter(|s| !s.is_empty()) {
+        p
+    } else {
+        let mut first = None;
+        if let Ok(diff) = repo.diff_tree_to_tree(Some(&left_tree), Some(&right_tree), None) {
+            let _ = diff.foreach(
+                &mut |delta, _| {
+                    if first.is_none() {
+                        if let Some(path) =
+                            delta.new_file().path().or_else(|| delta.old_file().path())
+                        {
+                            first = Some(path.to_string_lossy().to_string());
+                        }
+                    }
+                    true
+                },
+                None,
+                None,
+                None,
+            );
+        }
+        first.ok_or_else(|| "两个分支 tip 无文件差异".to_string())?
+    };
+
+    let blob_text = |tree: &git2::Tree, path: &str| -> String {
+        let Ok(entry) = tree.get_path(Path::new(path)) else {
+            return String::new();
+        };
+        let Ok(obj) = entry.to_object(&repo) else {
+            return String::new();
+        };
+        let Ok(blob) = obj.peel_to_blob() else {
+            return String::new();
+        };
+        String::from_utf8_lossy(blob.content()).to_string()
+    };
+
+    Ok(GitFileSides {
+        path: rel.clone(),
+        left: blob_text(&left_tree, &rel),
+        right: blob_text(&right_tree, &rel),
+        left_label: left_ref,
+        right_label: right_ref,
+    })
+}
+

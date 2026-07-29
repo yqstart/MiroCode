@@ -128,21 +128,23 @@ MiroCode/
 ### 5.1 布局壳（对标 VSCode）
 
 ```
-┌────────┬──────────────────┬──────────────────────────────┐
-│Activity│     SideBar      │         EditorArea           │
-│ Bar    │ Explorer | Git   │  Tabs + CodeMirror + MD预览  │
-│        │                  │                              │
-├────────┴──────────────────┴──────────────────────────────┤
+┌────────┬──────────┬──────────────────────────────────────┐
+│Activity│ SideBar  │           EditorArea                 │
+│ Bar    │ Project  │  Tabs + CodeMirror + MD预览          │
+│        │ /Commit  ├──────────────────────────────────────┤
+│        │          │  Git Log（底栏工具窗口，可隐藏）      │
+├────────┴──────────┴──────────────────────────────────────┤
 │                     StatusBar                            │
 └──────────────────────────────────────────────────────────┘
 ```
 
 | 区域 | 一期范围 | 说明 |
 |---|---|---|
-| Activity Bar | 仅「资源管理器」「Git」两项 | 需求明确，不做多余入口 |
-| SideBar | 可折叠、可调宽、状态记忆 | 与 Activity 联动 |
-| EditorArea | 多标签、分屏（二期）、Markdown 预览 | 一期先做标签 + 单编辑器 |
-| StatusBar | 文件类型、编码、行列、分支、诊断摘要 | 只读展示为主 |
+| Activity Bar | Project、Commit；底区 Git Log / 终端 / 设置 | 对标 WebStorm New UI 工具窗口条 |
+| SideBar | 切换 Project（资源管理器）与 Commit | Commit 为竖向工具窗口 |
+| EditorArea | 多标签、Markdown 预览 | 标签 + 单编辑器 |
+| Git Log | 底部独立工具窗口 | 与左侧 Commit 分离 |
+| StatusBar | 文件类型、编码、行列、分支、诊断摘要 | 分支菜单含新建/合并等 |
 | 顶部菜单 | 系统菜单最低集 | **快捷按钮自定义第一期不做** |
 | Settings | 模态设置（对齐 theme 截图结构） | 侧栏分类 + 右侧卡片分组 |
 
@@ -153,7 +155,7 @@ MiroCode/
 | Explorer | 树渲染、右键菜单、过滤 UI | 目录枚举、CRUD、gitignore/忽略规则 |
 | Editor | CM6 实例、标签、预览、主题绑定 | 文件读写、变更监听 |
 | Search | 文件查找 / 内容搜索 UI、历史 | 遍历、匹配、替换落盘 |
-| Git | 变更列表、提交表单、分支 UI | status / stage / commit / branch / pull / push |
+| Git | 左侧 Commit 工具窗口、底栏 Git Log、勾选提交、Diff 预览 | status / stage / commit / branch / pull / push |
 | Settings | 主题、字号、Tab、换行等 | 配置持久化 |
 | Theme | CSS 变量切换、编辑器主题同步 | 无 |
 
@@ -198,13 +200,19 @@ Vue SFC：一期实现 `template/script/style` 分区高亮与基础组件路径
 |---|---|---|
 | L1 | init、status、stage/unstage、commit、分支查看/切换/新建 | 核心期必达 |
 | L2 | log、diff、stash、pull/push、关联远程 | 紧随 L1 |
-| L3 | merge、冲突可视化三路合并、强制推送、重置/回滚 | 专业增强期 |
-| L4 | rebase 交互、子模块、LFS | 不在当前需求强制范围，可后置 |
+| L3 | merge、冲突可视化、强制推送、重置/回滚、rebase continue | 专业增强期 |
+| L4 | **交互式 rebase（已实现主路径）**、子模块、LFS | 子模块/LFS 可后置 |
 
-### 7.2 交互对标
+### 7.2 交互对标（WebStorm New UI 完全体主路径）
 
-- 变更列表交互对标 WebStorm：按状态分组、支持多选暂存  
-- 冲突：提供左右/三路对比视图，支持「保留本地 / 保留远程 / 手动合并」
+- **Commit**：左侧工具窗口；勾选 Changelist、Amend、Diff 预览、Commit / Commit and Push；⌘K；Rebase 进行中 Continue/Skip/Abort
+- **Push 对话框**：未推送提交列表 + Force push
+- **Update Project**：Fetch 后 Merge 或 Rebase（冲突可 Continue）
+- **Branches 弹层**：本地/远程、Checkout、Merge、Rebase / Interactive Rebase、Compare、Set Upstream、Rename、Delete（含远程）
+- **Git Log**：过滤、加载更多、Cherry-pick、Revert Commit、Reset、Interactive Rebase from Here、New Branch from Here
+- **交互 Rebase**：对话框编辑 pick/reword/squash/fix/drop + 排序；系统 git / 应用内重放
+- **认证**：HTTPS 登录弹窗 + 记住凭据（`~/.mirocode/git-credentials.json`）；SSH agent / 默认密钥
+- **冲突**：编辑区分栏合并（Base/导航/批量接受）；状态栏可跳转
 
 ### 7.3 安全约束
 

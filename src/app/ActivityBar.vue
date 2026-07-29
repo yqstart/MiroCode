@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-import { Files, GitBranch, Package, Settings, TerminalSquare } from "lucide-vue-next";
+import {
+  Files,
+  GitCommitHorizontal,
+  History,
+  Package,
+  Settings,
+  TerminalSquare,
+} from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import PackageScriptsMenu from "@/features/sessions/PackageScriptsMenu.vue";
 import { useGitStore } from "@/stores/git";
@@ -32,6 +39,13 @@ const gitBadge = computed(() => {
   return n > 99 ? "99+" : String(n);
 });
 
+const commitActive = computed(
+  () =>
+    layout.value.activePanel === "commit" && !layout.value.sidebarCollapsed,
+);
+
+const logActive = computed(() => layout.value.gitLogWindow.open);
+
 function selectPanel(panel: SidePanelId) {
   scriptsOpen.value = false;
   if (layout.value.activePanel === panel && !layout.value.sidebarCollapsed) {
@@ -39,7 +53,15 @@ function selectPanel(panel: SidePanelId) {
     return;
   }
   settings.setActivePanel(panel);
-  if (panel === "git" && workspace.rootPath) {
+  if (panel === "commit" && workspace.rootPath) {
+    void git.refresh();
+  }
+}
+
+function toggleLog() {
+  scriptsOpen.value = false;
+  settings.toggleGitLogWindow();
+  if (settings.layout.gitLogWindow.open && workspace.rootPath) {
     void git.refresh();
   }
 }
@@ -102,8 +124,11 @@ onBeforeUnmount(() => {
       <button
         class="item"
         type="button"
-        title="资源管理器"
-        :class="{ active: layout.activePanel === 'explorer' && !layout.sidebarCollapsed }"
+        title="项目（资源管理器）"
+        :class="{
+          active:
+            layout.activePanel === 'explorer' && !layout.sidebarCollapsed,
+        }"
         @click="selectPanel('explorer')"
       >
         <Files :size="20" :stroke-width="1.75" />
@@ -111,16 +136,29 @@ onBeforeUnmount(() => {
       <button
         class="item"
         type="button"
-        :title="gitBadge ? `Git · ${changedFileCount} 个变更文件` : 'Git'"
-        :class="{ active: layout.activePanel === 'git' && !layout.sidebarCollapsed }"
-        @click="selectPanel('git')"
+        :title="
+          gitBadge
+            ? `Commit · ${changedFileCount} 个变更（⌘K）`
+            : 'Commit（⌘K）'
+        "
+        :class="{ active: commitActive }"
+        @click="selectPanel('commit')"
       >
-        <GitBranch :size="20" :stroke-width="1.75" />
+        <GitCommitHorizontal :size="20" :stroke-width="1.75" />
         <span v-if="gitBadge" class="badge">{{ gitBadge }}</span>
       </button>
     </div>
 
     <div class="group">
+      <button
+        class="item"
+        type="button"
+        title="Git Log"
+        :class="{ active: logActive }"
+        @click="toggleLog"
+      >
+        <History :size="18" :stroke-width="1.75" />
+      </button>
       <button
         ref="scriptsBtn"
         class="item"

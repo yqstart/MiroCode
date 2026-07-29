@@ -302,8 +302,8 @@ function onTabsWheel(event: WheelEvent) {
 <style scoped>
 .editor-area {
   flex: 1;
+  min-height: 0;
   min-width: 0;
-  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg-app);

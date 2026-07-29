@@ -218,6 +218,60 @@ function useTheirsInResult() {
   rebuild();
 }
 
+function useBaseInResult() {
+  compare.applySideToResult(props.tabId, "base");
+  rebuild();
+}
+
+function conflictMarkerPositions(): number[] {
+  const text =
+    mergeView?.b.state.doc.toString() ??
+    tab.value?.right ??
+    tab.value?.conflict?.working ??
+    "";
+  const positions: number[] = [];
+  const re = /^<<<<<<< /gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    positions.push(m.index);
+  }
+  // 无标记时按变更块大致跳转：按 diff 行
+  if (!positions.length) {
+    const lines = text.split("\n");
+    let offset = 0;
+    for (const line of lines) {
+      if (line.startsWith("=======") || line.startsWith(">>>>>>>")) {
+        positions.push(offset);
+      }
+      offset += line.length + 1;
+    }
+  }
+  return positions;
+}
+
+function jumpConflict(dir: 1 | -1) {
+  const view = mergeView?.b;
+  if (!view) return;
+  const positions = conflictMarkerPositions();
+  if (!positions.length) {
+    workspace.showNotice("未找到冲突标记（<<<<<<<）");
+    return;
+  }
+  const cursor = view.state.selection.main.head;
+  let target = positions[0]!;
+  if (dir > 0) {
+    target = positions.find((p) => p > cursor) ?? positions[0]!;
+  } else {
+    const before = [...positions].reverse().find((p) => p < cursor);
+    target = before ?? positions[positions.length - 1]!;
+  }
+  view.dispatch({
+    selection: { anchor: target },
+    scrollIntoView: true,
+  });
+  view.focus();
+}
+
 function toggleCompareMode() {
   const current = tab.value;
   if (!current?.conflict) return;
@@ -295,11 +349,18 @@ watch(theme, () => {
         <span class="path">{{ tab.path }}</span>
       </div>
       <div v-if="tab.kind === 'merge'" class="actions">
+        <button type="button" class="btn" title="上一个冲突" @click="jumpConflict(-1)">
+          ↑冲突
+        </button>
+        <button type="button" class="btn" title="下一个冲突" @click="jumpConflict(1)">
+          ↓冲突
+        </button>
         <button type="button" class="btn" @click="toggleCompareMode">
           {{ tab.editableRight ? "查看双方" : "编辑结果" }}
         </button>
         <button type="button" class="btn" @click="useOursInResult">填入本地</button>
         <button type="button" class="btn" @click="useTheirsInResult">填入远程</button>
+        <button type="button" class="btn" @click="useBaseInResult">填入 Base</button>
         <button type="button" class="btn danger" @click="acceptOurs">保留本地</button>
         <button type="button" class="btn danger" @click="acceptTheirs">保留远程</button>
         <button

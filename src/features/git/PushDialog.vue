@@ -1,0 +1,230 @@
+<script setup lang="ts">
+import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { storeToRefs } from "pinia";
+import { gitUnpushedCommits, type GitCommitInfo } from "@/shared/gitApi";
+import { registerPushDialogHandler } from "@/shared/gitDialogs";
+import { useGitStore } from "@/stores/git";
+import { useWorkspaceStore } from "@/stores/workspace";
+
+const visible = ref(false);
+const force = ref(false);
+const loading = ref(false);
+const commits = ref<GitCommitInfo[]>([]);
+const workspace = useWorkspaceStore();
+const git = useGitStore();
+const { snapshot } = storeToRefs(git);
+
+let resolveFn: ((r: { force: boolean } | null) => void) | null = null;
+
+async function open(): Promise<{ force: boolean } | null> {
+  if (resolveFn) {
+    resolveFn(null);
+    resolveFn = null;
+  }
+  force.value = false;
+  commits.value = [];
+  visible.value = true;
+  loading.value = true;
+  await nextTick();
+  try {
+    if (workspace.rootPath) {
+      commits.value = await gitUnpushedCommits(workspace.rootPath, 40);
+    }
+  } catch {
+    commits.value = [];
+  } finally {
+    loading.value = false;
+  }
+  return new Promise((resolve) => {
+    resolveFn = resolve;
+  });
+}
+
+function finish(result: { force: boolean } | null) {
+  visible.value = false;
+  const fn = resolveFn;
+  resolveFn = null;
+  fn?.(result);
+}
+
+function onConfirm() {
+  if (force.value && !window.confirm("强制推送可能覆盖远程历史，确定继续？")) {
+    return;
+  }
+  finish({ force: force.value });
+}
+
+function onCancel() {
+  finish(null);
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (!visible.value) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    onCancel();
+  }
+}
+
+onMounted(() => {
+  registerPushDialogHandler(open);
+  window.addEventListener("keydown", onKeydown);
+});
+
+onBeforeUnmount(() => {
+  registerPushDialogHandler(null);
+  window.removeEventListener("keydown", onKeydown);
+  if (resolveFn) finish(null);
+});
+</script>
+
+<template>
+  <div v-if="visible" class="overlay" @mousedown.self="onCancel">
+    <div class="dialog" role="dialog" aria-modal="true" aria-label="Push">
+      <h3 class="title">Push Commits</h3>
+      <p class="meta">
+        {{ snapshot.branch ?? "—" }}
+        <template v-if="snapshot.upstream"> → {{ snapshot.upstream }}</template>
+        <span v-if="snapshot.ahead" class="ahead">↑{{ snapshot.ahead }}</span>
+      </p>
+
+      <div class="list">
+        <div v-if="loading" class="empty">加载未推送提交…</div>
+        <div v-else-if="!commits.length" class="empty">没有待推送的提交</div>
+        <div v-for="c in commits" :key="c.id" class="row">
+          <span class="id">{{ c.id }}</span>
+          <span class="summary">{{ c.summary }}</span>
+          <span class="author">{{ c.author }}</span>
+        </div>
+      </div>
+
+      <label class="check">
+        <input v-model="force" type="checkbox" />
+        Force push（--force）
+      </label>
+
+      <div class="actions">
+        <button type="button" class="btn ghost" @click="onCancel">取消</button>
+        <button
+          type="button"
+          class="btn primary"
+          :disabled="!commits.length && !force"
+          @click="onConfirm"
+        >
+          Push
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: var(--bg-overlay);
+  backdrop-filter: blur(4px);
+  padding: 24px;
+}
+.dialog {
+  width: min(520px, 100%);
+  max-height: min(70vh, 640px);
+  padding: 18px;
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.ahead {
+  margin-left: 8px;
+  color: var(--accent);
+  font-weight: 600;
+}
+.list {
+  flex: 1;
+  min-height: 120px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-app);
+}
+.empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.row {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.id {
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+.summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.author {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--danger);
+  cursor: pointer;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.btn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.btn.ghost {
+  color: var(--text-secondary);
+}
+.btn.ghost:hover {
+  background: var(--accent-soft);
+}
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.btn.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+</style>

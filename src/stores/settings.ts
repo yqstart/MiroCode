@@ -35,26 +35,79 @@ function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return structuredClone(DEFAULT_SETTINGS);
-    const parsed = JSON.parse(raw) as Partial<AppSettings> & { ai?: unknown };
-    const layout = { ...DEFAULT_SETTINGS.layout, ...parsed.layout };
-    // 全局搜索已改为 WebStorm 弹层，旧配置中的 search 面板回退到资源管理器
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & {
+      ai?: unknown;
+      layout?: Partial<AppSettings["layout"]> & {
+        gitToolWindow?: {
+          open?: boolean;
+          height?: number;
+          tab?: string;
+          changesWidth?: number;
+        };
+        activePanel?: string;
+      };
+    };
+
+    const oldTw = parsed.layout?.gitToolWindow;
+    const layout: AppSettings["layout"] = {
+      ...DEFAULT_SETTINGS.layout,
+      ...parsed.layout,
+      gitLogWindow: {
+        ...DEFAULT_SETTINGS.layout.gitLogWindow,
+        ...(parsed.layout?.gitLogWindow ?? {}),
+      },
+    };
+
+    // 丢掉旧字段
+    delete (layout as { gitToolWindow?: unknown }).gitToolWindow;
+
+    // 全局搜索已改为 WebStorm 弹层
     if ((layout.activePanel as string) === "search") {
       layout.activePanel = "explorer";
     }
+
+    // 旧侧栏 git / 底部 Commit 工具窗 → New UI 左侧 Commit
+    if (
+      (layout.activePanel as string) === "git" ||
+      (oldTw?.open && oldTw.tab === "commit")
+    ) {
+      layout.activePanel = "commit";
+    }
+
+    // 旧底部 Log 标签 → 底部 Git Log 窗口
+    if (oldTw?.open && oldTw.tab === "log") {
+      layout.gitLogWindow = {
+        open: true,
+        height: oldTw.height ?? DEFAULT_SETTINGS.layout.gitLogWindow.height,
+      };
+      if (layout.activePanel !== "commit") {
+        layout.activePanel = "explorer";
+      }
+    }
+
+    if ((layout.activePanel as string) !== "explorer" && (layout.activePanel as string) !== "commit") {
+      layout.activePanel = "explorer";
+    }
+
     const rawTheme = parsed.theme as string | undefined;
     const theme =
       (rawTheme && THEME_MIGRATION[rawTheme]) ||
       (rawTheme as ThemeId | undefined) ||
       DEFAULT_SETTINGS.theme;
-    // 丢弃历史 AI/Agent/MCP 占位字段，不再持久化
+
     return {
-      theme: theme === "dawn" || theme === "miro-dark" || theme === "midnight" || theme === "cyberpunk"
-        ? theme
-        : DEFAULT_SETTINGS.theme,
+      theme:
+        theme === "dawn" ||
+        theme === "miro-dark" ||
+        theme === "midnight" ||
+        theme === "cyberpunk"
+          ? theme
+          : DEFAULT_SETTINGS.theme,
       locale: parsed.locale ?? DEFAULT_SETTINGS.locale,
       editor: { ...DEFAULT_SETTINGS.editor, ...parsed.editor },
       layout,
-      autoCheckUpdates: parsed.autoCheckUpdates ?? DEFAULT_SETTINGS.autoCheckUpdates,
+      autoCheckUpdates:
+        parsed.autoCheckUpdates ?? DEFAULT_SETTINGS.autoCheckUpdates,
     };
   } catch {
     return structuredClone(DEFAULT_SETTINGS);
@@ -65,7 +118,6 @@ function loadSettings(): AppSettings {
 async function syncNativeWindowTheme(theme: ThemeId) {
   const mode = isDarkTheme(theme) ? "dark" : "light";
   try {
-    // macOS / Linux：应用级主题，直接影响标题栏控件外观
     const { setTheme } = await import("@tauri-apps/api/app");
     await setTheme(mode);
   } catch {
@@ -77,7 +129,6 @@ async function syncNativeWindowTheme(theme: ThemeId) {
   } catch {
     // 同上
   }
-  // macOS Overlay 标题栏：只给最顶系统栏上色，并补齐红绿灯（setTheme 会重置位置）
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     const [r, g, b] = TITLEBAR_RGB[theme];
@@ -132,7 +183,7 @@ export const useSettingsStore = defineStore("settings", () => {
   }
 
   function setSidebarWidth(width: number) {
-    settings.layout.sidebarWidth = Math.min(480, Math.max(180, width));
+    settings.layout.sidebarWidth = Math.min(520, Math.max(200, width));
   }
 
   function setActivePanel(panel: SidePanelId) {
@@ -144,6 +195,49 @@ export const useSettingsStore = defineStore("settings", () => {
 
   function toggleSidebar() {
     settings.layout.sidebarCollapsed = !settings.layout.sidebarCollapsed;
+  }
+
+  /** 打开左侧 Commit 工具窗口（WebStorm New UI ⌘K） */
+  function openCommitPanel() {
+    settings.layout.activePanel = "commit";
+    settings.layout.sidebarCollapsed = false;
+  }
+
+  function toggleCommitPanel() {
+    if (
+      settings.layout.activePanel === "commit" &&
+      !settings.layout.sidebarCollapsed
+    ) {
+      settings.layout.sidebarCollapsed = true;
+      return;
+    }
+    openCommitPanel();
+  }
+
+  function setGitLogWindowOpen(open: boolean) {
+    settings.layout.gitLogWindow.open = open;
+  }
+
+  function toggleGitLogWindow() {
+    settings.layout.gitLogWindow.open = !settings.layout.gitLogWindow.open;
+  }
+
+  function setGitLogWindowHeight(height: number) {
+    settings.layout.gitLogWindow.height = Math.min(
+      640,
+      Math.max(160, Math.round(height)),
+    );
+  }
+
+  function setCommitDiffPreview(on: boolean) {
+    settings.layout.commitDiffPreview = on;
+  }
+
+  function setCommitDiffPreviewHeight(height: number) {
+    settings.layout.commitDiffPreviewHeight = Math.min(
+      420,
+      Math.max(100, Math.round(height)),
+    );
   }
 
   function setLocale(next: AppSettings["locale"]) {
@@ -167,6 +261,13 @@ export const useSettingsStore = defineStore("settings", () => {
     setSidebarWidth,
     setActivePanel,
     toggleSidebar,
+    openCommitPanel,
+    toggleCommitPanel,
+    setGitLogWindowOpen,
+    toggleGitLogWindow,
+    setGitLogWindowHeight,
+    setCommitDiffPreview,
+    setCommitDiffPreviewHeight,
     setLocale,
     setAutoCheckUpdates,
   };

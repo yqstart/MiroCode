@@ -1,6 +1,7 @@
 export type ThemeId = "miro-dark" | "dawn" | "midnight" | "cyberpunk";
 
-export type SidePanelId = "explorer" | "git";
+/** 左侧工具窗口：资源管理器 | Commit（WebStorm New UI） */
+export type SidePanelId = "explorer" | "commit";
 
 export interface EditorPreferences {
   fontSize: number;
@@ -13,10 +14,21 @@ export interface EditorPreferences {
   autoSaveDelayMs: number;
 }
 
+/** 底部 Git Log 工具窗口（WebStorm New UI：Log 独立于左侧 Commit） */
+export interface GitLogWindowState {
+  open: boolean;
+  height: number;
+}
+
 export interface LayoutState {
   sidebarCollapsed: boolean;
   sidebarWidth: number;
   activePanel: SidePanelId;
+  gitLogWindow: GitLogWindowState;
+  /** Commit 工具窗口内是否显示 Diff 预览 */
+  commitDiffPreview: boolean;
+  /** Diff 预览区高度（预览开启时） */
+  commitDiffPreviewHeight: number;
 }
 
 export interface AppSettings {
@@ -41,8 +53,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   layout: {
     sidebarCollapsed: false,
-    sidebarWidth: 260,
+    sidebarWidth: 300,
     activePanel: "explorer",
+    gitLogWindow: {
+      open: false,
+      height: 280,
+    },
+    commitDiffPreview: true,
+    commitDiffPreviewHeight: 180,
   },
   autoCheckUpdates: true,
 };
