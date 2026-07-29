@@ -25,10 +25,6 @@ export interface LayoutState {
   sidebarWidth: number;
   activePanel: SidePanelId;
   gitLogWindow: GitLogWindowState;
-  /** Commit 工具窗口内是否显示 Diff 预览 */
-  commitDiffPreview: boolean;
-  /** Diff 预览区高度（预览开启时） */
-  commitDiffPreviewHeight: number;
 }
 
 export interface AppSettings {
@@ -59,8 +55,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
       open: false,
       height: 280,
     },
-    commitDiffPreview: true,
-    commitDiffPreviewHeight: 180,
   },
   autoCheckUpdates: true,
 };

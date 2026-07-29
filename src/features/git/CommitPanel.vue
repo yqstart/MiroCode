@@ -8,13 +8,12 @@ import {
   Check,
   ChevronDown,
   CloudDownload,
-  Columns2,
   FolderSync,
   History,
   RefreshCw,
 } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
-import DiffPreviewPane from "@/features/git/DiffPreviewPane.vue";
+import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { basename, joinPath } from "@/shared/fs";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { useEditorStore } from "@/stores/editor";
@@ -40,7 +39,6 @@ const {
   amendCommit,
   rebaseStatus,
 } = storeToRefs(git);
-const { layout } = storeToRefs(settings);
 
 const contextMenu = ref<{ x: number; y: number; path: string } | null>(null);
 const commitMenuOpen = ref(false);
@@ -51,8 +49,6 @@ const canCommit = computed(
     !conflictEntries.value.length &&
     (amendCommit.value || checkedCount.value > 0),
 );
-
-const previewOn = computed(() => layout.value.commitDiffPreview);
 
 onMounted(() => {
   if (rootPath.value) void git.refresh();
@@ -94,10 +90,7 @@ function toggleAll(event: Event) {
 function onRowClick(path: string) {
   git.selectChange(path);
   contextMenu.value = null;
-  // New UI：无内嵌预览时，选中即在编辑区打开 Diff
-  if (!previewOn.value) {
-    void git.showDiff(path, false);
-  }
+  void git.showDiff(path, false);
 }
 
 async function openFile(path: string) {
@@ -136,30 +129,8 @@ async function onDiscardChecked() {
   await git.discard(paths);
 }
 
-function togglePreview() {
-  settings.setCommitDiffPreview(!previewOn.value);
-}
-
 function openLog() {
   settings.setGitLogWindowOpen(true);
-}
-
-function onPreviewResizeStart(event: MouseEvent) {
-  const startY = event.clientY;
-  const startH = layout.value.commitDiffPreviewHeight;
-  const onMove = (e: MouseEvent) => {
-    settings.setCommitDiffPreviewHeight(startH + (e.clientY - startY));
-  };
-  const onUp = () => {
-    window.removeEventListener("mousemove", onMove);
-    window.removeEventListener("mouseup", onUp);
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-  };
-  document.body.style.cursor = "row-resize";
-  document.body.style.userSelect = "none";
-  window.addEventListener("mousemove", onMove);
-  window.addEventListener("mouseup", onUp);
 }
 
 async function doCommit() {
@@ -192,15 +163,6 @@ function onCommitKeydown(event: KeyboardEvent) {
           @click="git.refresh()"
         >
           <RefreshCw :size="14" :class="{ spin: loading }" />
-        </button>
-        <button
-          type="button"
-          class="icon-btn"
-          :class="{ on: previewOn }"
-          title="Diff 预览"
-          @click="togglePreview"
-        >
-          <Columns2 :size="14" />
         </button>
         <button
           type="button"
@@ -332,6 +294,7 @@ function onCommitKeydown(event: KeyboardEvent) {
             :class="{ selected: selectedPath === entry.path }"
             @click="onRowClick(entry.path)"
           >
+            <FileTypeIcon :path="entry.path" :size="14" />
             <span class="status st-conflict">C</span>
             <span class="name" :title="entry.path">{{
               basename(entry.path)
@@ -395,6 +358,7 @@ function onCommitKeydown(event: KeyboardEvent) {
               @click.stop
               @change="toggleCheck(entry.path, $event)"
             />
+            <FileTypeIcon :path="entry.path" :size="14" />
             <span class="status" :class="statusClass(entry.status)">{{
               statusLabel(entry.status)
             }}</span>
@@ -409,20 +373,6 @@ function onCommitKeydown(event: KeyboardEvent) {
           </div>
         </div>
       </div>
-
-      <template v-if="previewOn">
-        <div
-          class="preview-resizer"
-          title="拖拽调整 Diff 预览高度"
-          @mousedown="onPreviewResizeStart"
-        />
-        <div
-          class="preview"
-          :style="{ height: `${layout.commitDiffPreviewHeight}px` }"
-        >
-          <DiffPreviewPane :path="selectedPath" />
-        </div>
-      </template>
 
       <div class="commit-footer">
         <textarea
@@ -551,8 +501,7 @@ function onCommitKeydown(event: KeyboardEvent) {
   color: var(--text-muted);
 }
 
-.icon-btn:hover,
-.icon-btn.on {
+.icon-btn:hover {
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -823,24 +772,6 @@ function onCommitKeydown(event: KeyboardEvent) {
 
 .link:hover {
   text-decoration: underline;
-}
-
-.preview-resizer {
-  flex-shrink: 0;
-  height: 4px;
-  cursor: row-resize;
-  background: var(--border-subtle);
-}
-
-.preview-resizer:hover {
-  background: var(--accent);
-}
-
-.preview {
-  flex-shrink: 0;
-  min-height: 100px;
-  border-top: 1px solid var(--border-subtle);
-  overflow: hidden;
 }
 
 .commit-footer {

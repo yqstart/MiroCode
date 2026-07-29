@@ -5,9 +5,7 @@ import {
   ChevronRight,
   ChevronsDownUp,
   Crosshair,
-  File,
   FilePlus,
-  Folder,
   FolderOpen,
   FolderPlus,
   FolderInput,
@@ -16,6 +14,7 @@ import {
 import { open } from "@tauri-apps/plugin-dialog";
 import { storeToRefs } from "pinia";
 import { writeClipboard } from "@/shared/clipboard";
+import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { basename, dirname, relativeToRoot } from "@/shared/fs";
 import { openFolderInNewWindow } from "@/shared/openWorkspace";
 import { formatShortcut } from "@/shared/platform";
@@ -464,9 +463,12 @@ defineExpose({ locateActiveFile });
                 <ChevronRight v-else :size="14" />
               </template>
             </span>
-            <Folder v-if="node.isDir && !node.expanded" :size="14" class="file-icon folder" />
-            <FolderOpen v-else-if="node.isDir" :size="14" class="file-icon folder" />
-            <File v-else :size="14" class="file-icon" />
+            <FileTypeIcon
+              :path="node.path"
+              :is-dir="node.isDir"
+              :expanded="node.expanded"
+              :size="14"
+            />
             <span class="label">{{ node.name }}</span>
             <span
               v-if="!node.isDir && git.statusColor(node.path)"
@@ -862,16 +864,6 @@ defineExpose({ locateActiveFile });
   place-items: center;
   color: var(--text-muted);
   flex-shrink: 0;
-}
-
-.file-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.file-icon.folder {
-  color: var(--accent);
-  opacity: 0.85;
 }
 
 .label {

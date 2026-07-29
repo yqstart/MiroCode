@@ -13,7 +13,8 @@
 
 ### 变更
 
-- Git 对标 WebStorm **New UI 完全体主路径**：左侧 Commit（Amend / Diff 预览）、Push 对话框、Update Project（Merge/Rebase）、Branches 弹层（本地/远程）、Fetch、Log、HTTPS 登录弹窗、交互 Rebase
+- Git 对标 WebStorm **New UI 完全体主路径**：左侧 Commit（Amend）、Push 对话框、Update Project（Merge/Rebase）、Branches 弹层（本地/远程）、Fetch、Log、HTTPS 登录弹窗、交互 Rebase
+- Commit 侧栏去掉内嵌 Diff 预览；点选变更文件一律在编辑区打开 Diff
 
 ### 修复
 

@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowUp,
-  File,
   Folder,
   RefreshCw,
   Upload,
@@ -16,6 +15,7 @@ import {
   type SftpEntry,
   type SshConnectConfig,
 } from "@/shared/sshApi";
+import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { basename } from "@/shared/fs";
 
 const props = defineProps<{
@@ -183,8 +183,11 @@ onBeforeUnmount(() => {
         @click="openEntry(entry)"
         @dblclick="openEntry(entry)"
       >
-        <Folder v-if="entry.isDir" :size="14" class="folder" />
-        <File v-else :size="14" class="file" />
+        <FileTypeIcon
+          :path="entry.path"
+          :is-dir="entry.isDir"
+          :size="14"
+        />
         <span class="name">{{ entry.name }}</span>
         <span class="meta">{{ formatSize(entry.size, entry.isDir) }}</span>
       </button>
@@ -320,10 +323,6 @@ onBeforeUnmount(() => {
 
 .folder {
   color: var(--accent);
-}
-
-.file {
-  color: var(--text-muted);
 }
 
 .name {

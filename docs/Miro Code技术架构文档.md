@@ -155,7 +155,7 @@ MiroCode/
 | Explorer | 树渲染、右键菜单、过滤 UI | 目录枚举、CRUD、gitignore/忽略规则 |
 | Editor | CM6 实例、标签、预览、主题绑定 | 文件读写、变更监听 |
 | Search | 文件查找 / 内容搜索 UI、历史 | 遍历、匹配、替换落盘 |
-| Git | 左侧 Commit 工具窗口、底栏 Git Log、勾选提交、Diff 预览 | status / stage / commit / branch / pull / push |
+| Git | 左侧 Commit 工具窗口、底栏 Git Log、勾选提交、编辑区 Diff | status / stage / commit / branch / pull / push |
 | Settings | 主题、字号、Tab、换行等 | 配置持久化 |
 | Theme | CSS 变量切换、编辑器主题同步 | 无 |
 
@@ -205,7 +205,7 @@ Vue SFC：一期实现 `template/script/style` 分区高亮与基础组件路径
 
 ### 7.2 交互对标（WebStorm New UI 完全体主路径）
 
-- **Commit**：左侧工具窗口；勾选 Changelist、Amend、Diff 预览、Commit / Commit and Push；⌘K；Rebase 进行中 Continue/Skip/Abort
+- **Commit**：左侧工具窗口；勾选 Changelist、Amend、点选打开编辑区 Diff、Commit / Commit and Push；⌘K；Rebase 进行中 Continue/Skip/Abort
 - **Push 对话框**：未推送提交列表 + Force push
 - **Update Project**：Fetch 后 Merge 或 Rebase（冲突可 Continue）
 - **Branches 弹层**：本地/远程、Checkout、Merge、Rebase / Interactive Rebase、Compare、Set Upstream、Rename、Delete（含远程）

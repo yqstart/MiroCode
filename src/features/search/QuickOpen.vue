@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { File, Search } from "lucide-vue-next";
+import { Search } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
+import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { useEditorStore } from "@/stores/editor";
 import { useSearchStore } from "@/stores/search";
@@ -106,7 +107,7 @@ onMounted(() => {
           @click="openHit(index)"
           @mouseenter="activeIndex = index"
         >
-          <File :size="14" />
+          <FileTypeIcon :path="hit.path" :size="14" />
           <span class="name">{{ hit.name }}</span>
           <span class="relative">{{ hit.relative }}</span>
         </button>

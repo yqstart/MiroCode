@@ -60,6 +60,8 @@ function loadSettings(): AppSettings {
 
     // 丢掉旧字段
     delete (layout as { gitToolWindow?: unknown }).gitToolWindow;
+    delete (layout as { commitDiffPreview?: unknown }).commitDiffPreview;
+    delete (layout as { commitDiffPreviewHeight?: unknown }).commitDiffPreviewHeight;
 
     // 全局搜索已改为 WebStorm 弹层
     if ((layout.activePanel as string) === "search") {
@@ -229,17 +231,6 @@ export const useSettingsStore = defineStore("settings", () => {
     );
   }
 
-  function setCommitDiffPreview(on: boolean) {
-    settings.layout.commitDiffPreview = on;
-  }
-
-  function setCommitDiffPreviewHeight(height: number) {
-    settings.layout.commitDiffPreviewHeight = Math.min(
-      420,
-      Math.max(100, Math.round(height)),
-    );
-  }
-
   function setLocale(next: AppSettings["locale"]) {
     settings.locale = next;
   }
@@ -266,8 +257,6 @@ export const useSettingsStore = defineStore("settings", () => {
     setGitLogWindowOpen,
     toggleGitLogWindow,
     setGitLogWindowHeight,
-    setCommitDiffPreview,
-    setCommitDiffPreviewHeight,
     setLocale,
     setAutoCheckUpdates,
   };

@@ -45,7 +45,7 @@ src-tauri/             # Tauri 后端、Git/搜索命令、PTY 插件
 .github/               # CI、Issue / PR 模板
 ```
 
-Git（`features/git`）对标 **WebStorm New UI**：左侧 Commit（勾选 Changelist + Diff 预览 + Rebase Continue/Abort）；底栏 Git Log（过滤/Revert/交互 Rebase）；Branches 弹层（Compare/Upstream/删远程）；冲突分栏（Base/导航）；⌘K 打开 Commit；活动栏 Project / Commit / History。
+Git（`features/git`）对标 **WebStorm New UI**：左侧 Commit（勾选 Changelist + 点选打开编辑区 Diff + Rebase Continue/Abort）；底栏 Git Log（过滤/Revert/交互 Rebase）；Branches 弹层（Compare/Upstream/删远程）；冲突分栏（Base/导航）；⌘K 打开 Commit；活动栏 Project / Commit / History。
 
 会话视图（`features/sessions`）以编辑区标签打开：本地终端 / SSH（主机卡片列表 + 终端/SFTP）。
 - 本地终端：随工作区切换重建（cwd = 项目根），并强制切回「本地终端」子视图
