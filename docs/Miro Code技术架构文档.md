@@ -130,9 +130,8 @@ MiroCode/
 ```
 ┌────────┬──────────┬──────────────────────────────────────┐
 │Activity│ SideBar  │           EditorArea                 │
-│ Bar    │ Project  │  Tabs + CodeMirror + MD预览          │
-│        │ /Commit  ├──────────────────────────────────────┤
-│        │          │  Git Log（底栏工具窗口，可隐藏）      │
+│ Bar    │ Project  │  Tabs：文件 / Diff / 终端 / Git Log  │
+│        │ /Commit  │  CodeMirror + MD预览 / Git Graph     │
 ├────────┴──────────┴──────────────────────────────────────┤
 │                     StatusBar                            │
 └──────────────────────────────────────────────────────────┘
@@ -140,10 +139,10 @@ MiroCode/
 
 | 区域 | 一期范围 | 说明 |
 |---|---|---|
-| Activity Bar | Project、Commit；底区 Git Log / 终端 / 设置 | 对标 WebStorm New UI 工具窗口条 |
-| SideBar | 切换 Project（资源管理器）与 Commit | Commit 为竖向工具窗口 |
-| EditorArea | 多标签、Markdown 预览 | 标签 + 单编辑器 |
-| Git Log | 底部独立工具窗口 | 与左侧 Commit 分离 |
+| Activity Bar | Project、Commit；底区 Git Log / 终端 / 设置 | History 打开编辑区 Git Log 标签 |
+| SideBar | 切换 Project（资源管理器）与 Commit | Commit：暂存的更改 / 更改 |
+| EditorArea | 多标签、Markdown 预览、终端、Git Log | 标签 + 画布互斥焦点 |
+| Git Log | 编辑区标签（类 VS Code Git Graph） | 与左侧 Commit 分离 |
 | StatusBar | 文件类型、编码、行列、分支、诊断摘要 | 分支菜单含新建/合并等 |
 | 顶部菜单 | 系统菜单最低集 | **快捷按钮自定义第一期不做** |
 | Settings | 模态设置（对齐 theme 截图结构） | 侧栏分类 + 右侧卡片分组 |
@@ -155,7 +154,7 @@ MiroCode/
 | Explorer | 树渲染、右键菜单、过滤 UI | 目录枚举、CRUD、gitignore/忽略规则 |
 | Editor | CM6 实例、标签、预览、主题绑定 | 文件读写、变更监听 |
 | Search | 文件查找 / 内容搜索 UI、历史 | 遍历、匹配、替换落盘 |
-| Git | 左侧 Commit、底栏 Git Log、勾选提交、编辑区 Diff、回滚同步缓冲区 | status / stage / commit / branch / pull / push / rebase / discard |
+| Git | 左侧 Commit（暂存/更改）、编辑区 Git Log、编辑区 Diff、回滚同步缓冲区 | status / stage / commit / branch / pull / push / rebase / discard |
 | Settings | 主题、字号、Tab、换行等 | 配置持久化 |
 | Theme | CSS 变量切换、编辑器主题同步 | 无 |
 
@@ -203,13 +202,13 @@ Vue SFC：一期实现 `template/script/style` 分区高亮与基础组件路径
 | L3 | merge、冲突可视化、强制推送、重置/回滚、rebase continue | 专业增强期 |
 | L4 | **交互式 rebase（已实现主路径）**、子模块、LFS | 子模块/LFS 可后置 |
 
-### 7.2 交互对标（WebStorm New UI 完全体主路径）
+### 7.2 交互对标（VS Code Source Control + Git Graph）
 
-- **Commit**：左侧工具窗口；勾选 Changelist、Amend、点选打开编辑区 Diff、Commit / Commit and Push；⌘K；Rebase 进行中 Continue/Skip/Abort
+- **Commit**：左侧工具窗口；暂存的更改 / 更改分组、行内暂存·回滚、Amend、点选打开编辑区 Diff、Commit / Commit and Push；⌘K；Rebase 进行中 Continue/Skip/Abort
 - **Push 对话框**：未推送提交列表 + Force push
 - **Update Project**：Fetch 后 Merge 或 Rebase（冲突可 Continue）
 - **Branches 弹层**：本地/远程、Checkout、Merge、Rebase / Interactive Rebase、Compare、Set Upstream、Rename、Delete（含远程）
-- **Git Log**：过滤、加载更多、Cherry-pick、Revert Commit、Reset、Interactive Rebase from Here、New Branch from Here
+- **Git Log**：编辑区标签；过滤、详情侧栏、Cherry-pick、Revert Commit、Reset、Interactive Rebase from Here、New Branch from Here
 - **交互 Rebase**：对话框编辑 pick/reword/squash/fix/drop + 排序；系统 git / 应用内重放
 - **认证**：HTTPS 登录弹窗 + 记住凭据（`~/.mirocode/git-credentials.json`）；SSH agent / 默认密钥
 - **冲突**：编辑区分栏合并（Base/导航/批量接受）；状态栏可跳转

@@ -272,16 +272,17 @@ export const useGitStore = defineStore("git", () => {
       workspace.showNotice("请输入提交说明");
       return false;
     }
-    const selected = paths ?? checkedPaths.value;
-    if (!amendCommit.value && !selected.length) {
-      workspace.showNotice("请至少勾选一个文件再提交");
+    // 显式 paths：先 stage 再提交；否则提交当前 index（已暂存）
+    const explicit = paths?.length ? paths : undefined;
+    if (!amendCommit.value && !explicit && !stagedEntries.value.length) {
+      workspace.showNotice("请先暂存要提交的文件");
       return false;
     }
     try {
       await gitCommit(
         workspace.rootPath,
         msg,
-        amendCommit.value ? undefined : selected,
+        amendCommit.value ? undefined : explicit,
         amendCommit.value,
       );
       commitMessage.value = "";

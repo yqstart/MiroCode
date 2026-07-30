@@ -81,6 +81,9 @@ export const useEditorStore = defineStore("editor", () => {
     if (!workspace.rootPath) return;
     useSessionsStore().blurSessions();
     useCompareStore().blurCompare();
+    void import("@/stores/gitLog").then(({ useGitLogStore }) => {
+      useGitLogStore().blurLog();
+    });
 
     const existing = tabs.value.find((t) => t.path === path);
     if (existing) {
@@ -259,6 +262,9 @@ export const useEditorStore = defineStore("editor", () => {
   function activate(path: string) {
     useSessionsStore().blurSessions();
     useCompareStore().blurCompare();
+    void import("@/stores/gitLog").then(({ useGitLogStore }) => {
+      useGitLogStore().blurLog();
+    });
     activePath.value = path;
     const workspace = useWorkspaceStore();
     workspace.selectPath(path);

@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Columns2, Eye, FileCode, TerminalSquare, X } from "lucide-vue-next";
+import { Columns2, Eye, FileCode, GitCommitHorizontal, TerminalSquare, X } from "lucide-vue-next";
 import { marked } from "marked";
 import { storeToRefs } from "pinia";
 import CodeMirrorEditor from "@/features/editor/CodeMirrorEditor.vue";
 import ImagePreview from "@/features/editor/ImagePreview.vue";
 import CompareView from "@/features/git/CompareView.vue";
+import GitLogPanel from "@/features/git/GitLogPanel.vue";
 import SessionsView from "@/features/sessions/SessionsView.vue";
 import { basename, relativeToRoot } from "@/shared/fs";
 import { isRasterImagePath, isSvgPath } from "@/shared/media";
 import { formatShortcut } from "@/shared/platform";
 import { useCompareStore } from "@/stores/compare";
 import { useEditorStore } from "@/stores/editor";
+import { useGitLogStore } from "@/stores/gitLog";
 import { useGitStore } from "@/stores/git";
 import { useSessionsStore } from "@/stores/sessions";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -21,6 +23,7 @@ const welcomeShortcutHint = `或使用 ${formatShortcut("mod", "O")} · ${format
 const editor = useEditorStore();
 const sessions = useSessionsStore();
 const compare = useCompareStore();
+const gitLog = useGitLogStore();
 const workspace = useWorkspaceStore();
 const git = useGitStore();
 const { tabs, activePath, activeTab } = storeToRefs(editor);
@@ -36,6 +39,11 @@ const {
   activeId: compareActiveId,
   isFocused: compareFocused,
 } = storeToRefs(compare);
+const {
+  open: gitLogOpen,
+  isFocused: gitLogFocused,
+  tabId: gitLogTabId,
+} = storeToRefs(gitLog);
 
 const markdownPreview = ref(false);
 const svgPreview = ref(true);
@@ -54,7 +62,11 @@ const isRaster = computed(() =>
 );
 
 const showFileEditor = computed(
-  () => !sessionsFocused.value && !compareFocused.value && Boolean(activeTab.value),
+  () =>
+    !sessionsFocused.value &&
+    !compareFocused.value &&
+    !gitLogFocused.value &&
+    Boolean(activeTab.value),
 );
 
 const showImagePreview = computed(
@@ -102,7 +114,8 @@ const previewHtml = computed(() => {
     !markdownPreview.value ||
     !isMarkdown.value ||
     sessionsFocused.value ||
-    compareFocused.value
+    compareFocused.value ||
+    gitLogFocused.value
   ) {
     return "";
   }
@@ -113,7 +126,8 @@ const hasAnyTab = computed(
   () =>
     tabs.value.length > 0 ||
     sessionsOpen.value ||
-    compareTabs.value.length > 0,
+    compareTabs.value.length > 0 ||
+    gitLogOpen.value,
 );
 
 watch(
@@ -138,21 +152,45 @@ function togglePreview() {
 function activateFile(path: string) {
   sessions.blurSessions();
   compare.blurCompare();
+  gitLog.blurLog();
   editor.activate(path);
 }
 
 function activateSessions() {
   compare.blurCompare();
+  gitLog.blurLog();
   sessions.focusSessions();
 }
 
 function activateCompare(id: string) {
   sessions.blurSessions();
+  gitLog.blurLog();
   compare.activate(id);
+}
+
+function activateGitLog() {
+  sessions.blurSessions();
+  compare.blurCompare();
+  gitLog.focusLog();
 }
 
 function closeSessionsTab() {
   sessions.closeSessions();
+  if (gitLogOpen.value && !editor.activePath && !compareTabs.value.length) {
+    gitLog.focusLog();
+    return;
+  }
+  if (compareTabs.value.length && !editor.activePath) {
+    compare.focusCompare();
+    return;
+  }
+  if (!editor.activePath && editor.tabs.length) {
+    editor.activate(editor.tabs[0].path);
+  }
+}
+
+function closeGitLogTab() {
+  gitLog.closeLog();
   if (compareTabs.value.length && !editor.activePath) {
     compare.focusCompare();
     return;
@@ -164,7 +202,12 @@ function closeSessionsTab() {
 
 function closeCompareTab(id: string) {
   compare.closeTab(id);
-  if (!compare.tabs.length && !sessionsFocused.value && editor.activePath) {
+  if (
+    !compare.tabs.length &&
+    !sessionsFocused.value &&
+    !gitLogFocused.value &&
+    editor.activePath
+  ) {
     compare.blurCompare();
   }
 }
@@ -200,7 +243,7 @@ const canDiscardActive = computed(
 
 function onEditorContextMenu(event: MouseEvent) {
   if (!activeTab.value || !showFileEditor.value) return;
-  if (sessionsFocused.value || compareFocused.value) return;
+  if (sessionsFocused.value || compareFocused.value || gitLogFocused.value) return;
   if (!rootPath.value) return;
   const rel = relativeToRoot(rootPath.value, activeTab.value.path);
   const entry = git.statusMap.get(rel);
@@ -296,6 +339,22 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
             <X :size="12" />
           </span>
         </button>
+
+        <button
+          v-if="gitLogOpen"
+          type="button"
+          class="tab gitlog-tab"
+          :class="{ active: gitLogFocused }"
+          :data-id="gitLogTabId"
+          @click="activateGitLog"
+          @auxclick.middle.prevent="closeGitLogTab"
+        >
+          <GitCommitHorizontal :size="12" class="gitlog-icon" />
+          <span class="name">Git Log</span>
+          <span class="close" title="关闭 Git Log" @click.stop="closeGitLogTab">
+            <X :size="12" />
+          </span>
+        </button>
       </div>
 
       <button
@@ -313,6 +372,8 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
 
     <div class="canvas" @contextmenu="onEditorContextMenu">
       <SessionsView v-if="sessionsMounted" v-show="sessionsFocused" />
+
+      <GitLogPanel v-if="gitLogOpen" v-show="gitLogFocused" />
 
       <CompareView
         v-for="tab in compareTabs"
@@ -343,7 +404,7 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
       </template>
 
       <div
-        v-else-if="!sessionsFocused && !compareFocused && !activeTab"
+        v-else-if="!sessionsFocused && !compareFocused && !gitLogFocused && !activeTab"
         class="welcome"
       >
         <h1>Miro Code</h1>
@@ -442,7 +503,8 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
 }
 
 .session-tab .term-icon,
-.compare-tab .cmp-icon {
+.compare-tab .cmp-icon,
+.gitlog-tab .gitlog-icon {
   color: var(--accent);
   flex-shrink: 0;
 }
@@ -512,6 +574,11 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
   position: relative;
   height: 100%;
   overflow: hidden;
+}
+
+.canvas > :deep(.log-panel),
+.canvas > :deep(.sessions-view) {
+  height: 100%;
 }
 
 .md-preview {

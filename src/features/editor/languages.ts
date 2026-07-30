@@ -3,7 +3,6 @@ import { html } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
-import { vue } from "@codemirror/lang-vue";
 import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 import { StreamLanguage } from "@codemirror/language";
@@ -24,7 +23,13 @@ const envLanguage = StreamLanguage.define({
 
 export function languageExtensionForPath(path: string): Extension | null {
   const name = basename(path).toLowerCase();
-  if (name.endsWith(".vue")) return vue();
+  /**
+   * Vue SFC：`@codemirror/lang-vue` 的 wrap 会覆盖 html 对 `<style>`/`<script>` 的嵌套，
+   * 导致样式块无高亮。改用 html（自带 CSS/JS 嵌套），模板仍按 HTML/属性着色。
+   */
+  if (name.endsWith(".vue")) {
+    return html({ selfClosingTags: true });
+  }
   if (
     name.endsWith(".ts") ||
     name.endsWith(".tsx") ||
@@ -46,7 +51,12 @@ export function languageExtensionForPath(path: string): Extension | null {
   if (name.endsWith(".html") || name.endsWith(".htm")) {
     return html({ selfClosingTags: true });
   }
-  if (name.endsWith(".css") || name.endsWith(".scss") || name.endsWith(".sass")) {
+  if (
+    name.endsWith(".css") ||
+    name.endsWith(".scss") ||
+    name.endsWith(".sass") ||
+    name.endsWith(".less")
+  ) {
     return css();
   }
   if (name.endsWith(".yaml") || name.endsWith(".yml")) return yaml();

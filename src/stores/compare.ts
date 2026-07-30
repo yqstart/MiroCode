@@ -42,6 +42,9 @@ export const useCompareStore = defineStore("compare", () => {
     if (!tabs.value.length) return;
     focused.value = true;
     useSessionsStore().blurSessions();
+    void import("@/stores/gitLog").then(({ useGitLogStore }) => {
+      useGitLogStore().blurLog();
+    });
   }
 
   function blurCompare() {

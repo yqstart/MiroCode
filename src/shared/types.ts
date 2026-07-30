@@ -14,7 +14,7 @@ export interface EditorPreferences {
   autoSaveDelayMs: number;
 }
 
-/** 底部 Git Log 工具窗口（WebStorm New UI：Log 独立于左侧 Commit） */
+/** 历史兼容：曾用底栏 Git Log 高度；现 Git Log 为编辑区标签，open 不再驱动布局 */
 export interface GitLogWindowState {
   open: boolean;
   height: number;

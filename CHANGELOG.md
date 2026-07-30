@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 变更
+
+- Git Log 改为**编辑区标签**打开（对齐 VS Code Git Graph 入口）；右侧详情含 Cherry-pick / Checkout / Diff / Rebase 等
+- Commit 侧栏改为「暂存的更改 / 更改」分组，行内支持暂存、取消暂存、回滚（对齐图示）
+- Miro Dark 编辑器语法高亮提高饱和度；默认主题仍为 Miro Dark
+- Vue SFC / CSS 语法高亮修复（`<style>` 嵌套与 `.css` 等）
+
+### 修复
+
+- 终端 macOS 输入：退格无效、空格双写、方向键带出残字符、中英切换重复输入
+
 ## [0.2.0] - 2026-07-30
 
 ### 新增

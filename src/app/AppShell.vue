@@ -7,7 +7,6 @@ import SideBar from "@/app/SideBar.vue";
 import TitleBar from "@/app/TitleBar.vue";
 import EditorArea from "@/app/EditorArea.vue";
 import StatusBar from "@/app/StatusBar.vue";
-import GitLogToolWindow from "@/features/git/GitLogToolWindow.vue";
 import FindInFilesDialog from "@/features/search/FindInFilesDialog.vue";
 import QuickOpen from "@/features/search/QuickOpen.vue";
 import SettingsModal from "@/features/settings/SettingsModal.vue";
@@ -210,7 +209,6 @@ onUnmounted(() => {
       <SideBar />
       <div class="center">
         <EditorArea />
-        <GitLogToolWindow />
       </div>
     </div>
     <StatusBar />

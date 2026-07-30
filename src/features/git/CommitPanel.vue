@@ -10,29 +10,30 @@ import {
   CloudDownload,
   FolderSync,
   History,
+  Minus,
+  Plus,
   RefreshCw,
+  Undo2,
 } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { basename, joinPath } from "@/shared/fs";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { useEditorStore } from "@/stores/editor";
+import { useGitLogStore } from "@/stores/gitLog";
 import { useGitStore } from "@/stores/git";
-import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const workspace = useWorkspaceStore();
 const git = useGitStore();
 const editor = useEditorStore();
-const settings = useSettingsStore();
+const gitLog = useGitLogStore();
 const { rootPath } = storeToRefs(workspace);
 const {
   snapshot,
-  changelistEntries,
+  stagedEntries,
+  unstagedEntries,
   conflictEntries,
-  checkedMap,
-  checkedCount,
-  allChecked,
   selectedPath,
   loading,
   commitMessage,
@@ -40,14 +41,18 @@ const {
   rebaseStatus,
 } = storeToRefs(git);
 
-const contextMenu = ref<{ x: number; y: number; path: string } | null>(null);
+const contextMenu = ref<{ x: number; y: number; path: string; staged: boolean } | null>(
+  null,
+);
 const commitMenuOpen = ref(false);
+const stagedOpen = ref(true);
+const changesOpen = ref(true);
 
 const canCommit = computed(
   () =>
     Boolean(commitMessage.value.trim()) &&
     !conflictEntries.value.length &&
-    (amendCommit.value || checkedCount.value > 0),
+    (amendCommit.value || stagedEntries.value.length > 0),
 );
 
 onMounted(() => {
@@ -57,7 +62,7 @@ onMounted(() => {
 function statusLabel(status: string) {
   const map: Record<string, string> = {
     modified: "M",
-    untracked: "N",
+    untracked: "U",
     deleted: "D",
     renamed: "R",
     conflict: "C",
@@ -69,7 +74,7 @@ function statusLabel(status: string) {
 function statusTitle(status: string) {
   const map: Record<string, string> = {
     modified: "已修改",
-    untracked: "未跟踪 · New（回滚将删除）",
+    untracked: "未跟踪（回滚将删除）",
     deleted: "已删除",
     renamed: "已重命名",
     conflict: "冲突",
@@ -85,24 +90,14 @@ function statusClass(status: string) {
   return "st-modified";
 }
 
-function isChecked(path: string) {
-  return checkedMap.value[path] !== false;
+function dirOf(path: string) {
+  return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
 }
 
-function toggleCheck(path: string, event: Event) {
-  const target = event.target as HTMLInputElement;
-  git.setPathChecked(path, target.checked);
-}
-
-function toggleAll(event: Event) {
-  const target = event.target as HTMLInputElement;
-  git.setAllChecked(target.checked);
-}
-
-function onRowClick(path: string) {
+function onRowClick(path: string, staged: boolean) {
   git.selectChange(path);
   contextMenu.value = null;
-  void git.showDiff(path, false);
+  void git.showDiff(path, staged);
 }
 
 async function openFile(path: string) {
@@ -114,10 +109,20 @@ async function openFile(path: string) {
   await editor.openFile(abs);
 }
 
-function onContextMenu(event: MouseEvent, path: string) {
+function onContextMenu(event: MouseEvent, path: string, staged: boolean) {
   event.preventDefault();
   git.selectChange(path);
-  contextMenu.value = { x: event.clientX, y: event.clientY, path };
+  contextMenu.value = { x: event.clientX, y: event.clientY, path, staged };
+}
+
+async function onStage(path: string) {
+  contextMenu.value = null;
+  await git.stage([path]);
+}
+
+async function onUnstage(path: string) {
+  contextMenu.value = null;
+  await git.unstage([path]);
 }
 
 async function onDiscard(path: string) {
@@ -131,18 +136,28 @@ async function onDiscard(path: string) {
   await git.discard([path]);
 }
 
-async function onDiscardChecked() {
-  const paths = git.checkedPaths;
+async function onStageAll() {
+  const paths = unstagedEntries.value.map((e) => e.path);
+  if (!paths.length) return;
+  await git.stage(paths);
+}
+
+async function onUnstageAll() {
+  const paths = stagedEntries.value.map((e) => e.path);
+  if (!paths.length) return;
+  await git.unstage(paths);
+}
+
+async function onDiscardAllChanges() {
+  const paths = unstagedEntries.value.map((e) => e.path);
   if (!paths.length) return;
   const hasUntracked = paths.some(
     (p) => git.statusMap.get(p)?.status === "untracked",
   );
-  const tip = hasUntracked
-    ? `（含未跟踪文件，将被删除）`
-    : "";
+  const tip = hasUntracked ? "（含未跟踪文件，将被删除）" : "";
   if (
     !confirm(
-      `确定回滚已勾选的 ${paths.length} 个文件的未提交变更${tip}？此操作不可撤销。`,
+      `确定回滚全部 ${paths.length} 个未暂存变更${tip}？此操作不可撤销。`,
     )
   ) {
     return;
@@ -151,7 +166,8 @@ async function onDiscardChecked() {
 }
 
 function openLog() {
-  settings.setGitLogWindowOpen(true);
+  gitLog.openLog();
+  if (rootPath.value) void git.loadLog(100);
 }
 
 async function doCommit() {
@@ -266,10 +282,7 @@ function onCommitKeydown(event: KeyboardEvent) {
         </button>
       </div>
 
-      <div
-        v-if="rebaseStatus.inProgress"
-        class="rebase-banner"
-      >
+      <div v-if="rebaseStatus.inProgress" class="rebase-banner">
         <span class="rebase-text">
           Rebase 进行中
           <template v-if="rebaseStatus.onto">（onto {{ rebaseStatus.onto }}）</template>
@@ -313,31 +326,32 @@ function onCommitKeydown(event: KeyboardEvent) {
             :key="`c-${entry.path}`"
             class="row conflict"
             :class="{ selected: selectedPath === entry.path }"
-            @click="onRowClick(entry.path)"
+            @click="onRowClick(entry.path, false)"
           >
             <FileTypeIcon :path="entry.path" :size="14" />
-            <span class="status st-conflict" title="冲突">C</span>
             <span class="name" :title="entry.path">{{
               basename(entry.path)
             }}</span>
-            <div class="row-actions" @click.stop>
+            <span class="dir" :title="entry.path">{{ dirOf(entry.path) }}</span>
+            <span class="status st-conflict" title="冲突">C</span>
+            <div class="row-actions always" @click.stop>
               <button
                 type="button"
-                class="link"
+                class="act"
                 @click="git.openConflictCompare(entry.path)"
               >
                 合并
               </button>
               <button
                 type="button"
-                class="link"
+                class="act"
                 @click="git.resolveConflict(entry.path, 'ours')"
               >
                 本地
               </button>
               <button
                 type="button"
-                class="link"
+                class="act"
                 @click="git.resolveConflict(entry.path, 'theirs')"
               >
                 远程
@@ -346,55 +360,139 @@ function onCommitKeydown(event: KeyboardEvent) {
           </div>
         </div>
 
-        <div class="group">
-          <div class="group-title">
-            <label class="check-all">
-              <input
-                type="checkbox"
-                :checked="allChecked"
-                :disabled="!changelistEntries.length"
-                @change="toggleAll"
+        <div v-if="stagedEntries.length" class="group">
+          <div class="group-title" @click="stagedOpen = !stagedOpen">
+            <span class="group-label">
+              <ChevronDown
+                :size="12"
+                class="chev"
+                :class="{ closed: !stagedOpen }"
               />
-              Default Changelist
-            </label>
-            <span class="count"
-              >{{ checkedCount }}/{{ changelistEntries.length }}</span
+              暂存的更改
+            </span>
+            <div class="group-actions" @click.stop>
+              <button
+                type="button"
+                class="act-icon"
+                title="全部取消暂存"
+                @click="onUnstageAll"
+              >
+                <Minus :size="14" />
+              </button>
+              <span class="count">{{ stagedEntries.length }}</span>
+            </div>
+          </div>
+          <template v-if="stagedOpen">
+            <div
+              v-for="entry in stagedEntries"
+              :key="`s-${entry.path}`"
+              class="row"
+              :class="{ selected: selectedPath === entry.path }"
+              @click="onRowClick(entry.path, true)"
+              @dblclick="openFile(entry.path)"
+              @contextmenu="onContextMenu($event, entry.path, true)"
             >
+              <FileTypeIcon :path="entry.path" :size="14" />
+              <span class="name" :title="entry.path">{{
+                basename(entry.path)
+              }}</span>
+              <span class="dir" :title="entry.path">{{ dirOf(entry.path) }}</span>
+              <span
+                class="status"
+                :class="statusClass(entry.status)"
+                :title="statusTitle(entry.status)"
+                >{{ statusLabel(entry.status) }}</span
+              >
+              <div class="row-actions" @click.stop>
+                <button
+                  type="button"
+                  class="act-icon"
+                  title="取消暂存"
+                  @click="onUnstage(entry.path)"
+                >
+                  <Minus :size="13" />
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div class="group">
+          <div class="group-title" @click="changesOpen = !changesOpen">
+            <span class="group-label">
+              <ChevronDown
+                :size="12"
+                class="chev"
+                :class="{ closed: !changesOpen }"
+              />
+              更改
+            </span>
+            <div class="group-actions" @click.stop>
+              <button
+                v-if="unstagedEntries.length"
+                type="button"
+                class="act-icon"
+                title="全部暂存"
+                @click="onStageAll"
+              >
+                <Plus :size="14" />
+              </button>
+              <button
+                v-if="unstagedEntries.length"
+                type="button"
+                class="act-icon"
+                title="全部回滚"
+                @click="onDiscardAllChanges"
+              >
+                <Undo2 :size="13" />
+              </button>
+              <span class="count">{{ unstagedEntries.length }}</span>
+            </div>
           </div>
-          <div v-if="!changelistEntries.length" class="muted">
-            默认变更列表为空
-          </div>
-          <div
-            v-for="entry in changelistEntries"
-            :key="entry.path"
-            class="row"
-            :class="{ selected: selectedPath === entry.path }"
-            @click="onRowClick(entry.path)"
-            @dblclick="openFile(entry.path)"
-            @contextmenu="onContextMenu($event, entry.path)"
-          >
-            <input
-              type="checkbox"
-              :checked="isChecked(entry.path)"
-              @click.stop
-              @change="toggleCheck(entry.path, $event)"
-            />
-            <FileTypeIcon :path="entry.path" :size="14" />
-            <span
-              class="status"
-              :class="statusClass(entry.status)"
-              :title="statusTitle(entry.status)"
-              >{{ statusLabel(entry.status) }}</span
+          <template v-if="changesOpen">
+            <div v-if="!unstagedEntries.length" class="muted">
+              没有未暂存的更改
+            </div>
+            <div
+              v-for="entry in unstagedEntries"
+              :key="`u-${entry.path}`"
+              class="row"
+              :class="{ selected: selectedPath === entry.path }"
+              @click="onRowClick(entry.path, false)"
+              @dblclick="openFile(entry.path)"
+              @contextmenu="onContextMenu($event, entry.path, false)"
             >
-            <span class="name" :title="entry.path">{{
-              basename(entry.path)
-            }}</span>
-            <span class="dir" :title="entry.path">{{
-              entry.path.includes("/")
-                ? entry.path.slice(0, entry.path.lastIndexOf("/"))
-                : ""
-            }}</span>
-          </div>
+              <FileTypeIcon :path="entry.path" :size="14" />
+              <span class="name" :title="entry.path">{{
+                basename(entry.path)
+              }}</span>
+              <span class="dir" :title="entry.path">{{ dirOf(entry.path) }}</span>
+              <span
+                class="status"
+                :class="statusClass(entry.status)"
+                :title="statusTitle(entry.status)"
+                >{{ statusLabel(entry.status) }}</span
+              >
+              <div class="row-actions" @click.stop>
+                <button
+                  type="button"
+                  class="act-icon"
+                  title="暂存"
+                  @click="onStage(entry.path)"
+                >
+                  <Plus :size="13" />
+                </button>
+                <button
+                  type="button"
+                  class="act-icon"
+                  title="回滚"
+                  @click="onDiscard(entry.path)"
+                >
+                  <Undo2 :size="12" />
+                </button>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -405,7 +503,7 @@ function onCommitKeydown(event: KeyboardEvent) {
           class="message"
           rows="3"
           name="miro-commit-message"
-          placeholder="Commit Message（⌘⏎ 提交）"
+          placeholder="Commit Message（⌘⏎ 提交已暂存）"
           @keydown="onCommitKeydown"
         />
         <label class="amend">
@@ -441,14 +539,6 @@ function onCommitKeydown(event: KeyboardEvent) {
               </button>
             </div>
           </div>
-          <button
-            v-if="checkedCount"
-            type="button"
-            class="ghost danger"
-            @click="onDiscardChecked"
-          >
-            回滚勾选…
-          </button>
         </div>
       </div>
     </template>
@@ -468,11 +558,29 @@ function onCommitKeydown(event: KeyboardEvent) {
         </button>
         <button
           type="button"
-          @click="git.showDiff(contextMenu.path, false); contextMenu = null"
+          @click="
+            git.showDiff(contextMenu.path, contextMenu.staged);
+            contextMenu = null;
+          "
         >
           在编辑器中显示 Diff
         </button>
         <button
+          v-if="!contextMenu.staged"
+          type="button"
+          @click="onStage(contextMenu.path)"
+        >
+          暂存
+        </button>
+        <button
+          v-else
+          type="button"
+          @click="onUnstage(contextMenu.path)"
+        >
+          取消暂存
+        </button>
+        <button
+          v-if="!contextMenu.staged"
           type="button"
           class="danger-item"
           @click="onDiscard(contextMenu.path)"
@@ -695,21 +803,52 @@ function onCommitKeydown(event: KeyboardEvent) {
   align-items: center;
   justify-content: space-between;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+  border-radius: 4px;
+  margin: 0 4px;
 }
 
-.check-all {
+.group-title:hover {
+  background: var(--accent-soft);
+}
+
+.group-label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  cursor: pointer;
+  gap: 4px;
+}
+
+.chev {
+  transition: transform 0.12s ease;
+  color: var(--text-muted);
+}
+
+.chev.closed {
+  transform: rotate(-90deg);
+}
+
+.group-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .count {
-  font-weight: 500;
-  color: var(--text-muted);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
 }
 
 .muted {
@@ -722,7 +861,7 @@ function onCommitKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
+  padding: 3px 8px 3px 10px;
   font-size: 12px;
   cursor: default;
   min-width: 0;
@@ -753,7 +892,7 @@ function onCommitKeydown(event: KeyboardEvent) {
   color: var(--warning);
 }
 .st-untracked {
-  color: var(--success);
+  color: #3b82f6;
 }
 .st-deleted {
   color: var(--danger);
@@ -764,7 +903,7 @@ function onCommitKeydown(event: KeyboardEvent) {
 
 .name {
   flex-shrink: 0;
-  max-width: 48%;
+  max-width: 42%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -779,13 +918,43 @@ function onCommitKeydown(event: KeyboardEvent) {
   white-space: nowrap;
   color: var(--text-muted);
   font-size: 11px;
-  text-align: right;
 }
 
 .row-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 4px;
+  display: none;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.row:hover .row-actions,
+.row-actions.always {
+  display: inline-flex;
+}
+
+.act-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+.act-icon:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+}
+
+.act {
+  font-size: 11px;
+  color: var(--accent);
+  padding: 0 2px;
+}
+
+.act:hover {
+  text-decoration: underline;
 }
 
 .link {
@@ -889,22 +1058,6 @@ function onCommitKeydown(event: KeyboardEvent) {
 }
 
 .commit-dropdown button:hover:not(:disabled) {
-  background: var(--accent-soft);
-}
-
-.ghost {
-  height: 26px;
-  padding: 0 8px;
-  border-radius: 6px;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.ghost.danger {
-  color: var(--danger);
-}
-
-.ghost:hover {
   background: var(--accent-soft);
 }
 

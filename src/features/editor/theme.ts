@@ -16,35 +16,48 @@ interface ThemePalette {
   highlight: HighlightStyle;
 }
 
+/** Miro Dark：提高饱和度与明度，避免语法色偏灰发暗 */
 const darkHighlight = HighlightStyle.define([
-  { tag: t.keyword, color: "#c4b5fd" },
-  { tag: t.controlKeyword, color: "#d8b4fe" },
-  { tag: t.string, color: "#86efac" },
-  { tag: t.comment, color: "#6b7280", fontStyle: "italic" },
-  { tag: t.lineComment, color: "#6b7280", fontStyle: "italic" },
-  { tag: t.function(t.variableName), color: "#a5b4fc" },
-  { tag: t.definition(t.function(t.variableName)), color: "#c7d2fe" },
-  { tag: t.number, color: "#fbbf24" },
-  { tag: t.bool, color: "#fcd34d" },
-  { tag: t.null, color: "#fcd34d" },
-  { tag: t.propertyName, color: "#ddd6fe" },
-  { tag: t.definition(t.propertyName), color: "#e9d5ff" },
-  { tag: t.typeName, color: "#93c5fd" },
-  { tag: t.className, color: "#93c5fd" },
-  { tag: t.operator, color: "#e4e4e7" },
-  { tag: t.punctuation, color: "#a1a1aa" },
-  { tag: t.bracket, color: "#d4d4d8" },
-  { tag: t.tagName, color: "#c4b5fd" },
-  { tag: t.attributeName, color: "#7dd3fc" },
-  { tag: t.regexp, color: "#f9a8d4" },
-  { tag: t.variableName, color: "#e4e4e7" },
-  { tag: t.definition(t.variableName), color: "#f4f4f5" },
-  { tag: t.special(t.variableName), color: "#f0abfc" },
-  { tag: t.heading, color: "#c4b5fd", fontWeight: "bold" },
-  { tag: t.link, color: "#93c5fd", textDecoration: "underline" },
-  { tag: t.url, color: "#7dd3fc" },
-  { tag: t.meta, color: "#a1a1aa" },
-  { tag: t.invalid, color: "#f87171" },
+  { tag: t.keyword, color: "#c792ea" },
+  { tag: t.controlKeyword, color: "#c792ea" },
+  { tag: t.moduleKeyword, color: "#c792ea" },
+  { tag: t.operatorKeyword, color: "#89ddff" },
+  { tag: t.string, color: "#c3e88d" },
+  { tag: t.special(t.string), color: "#f07178" },
+  { tag: t.comment, color: "#7a8899", fontStyle: "italic" },
+  { tag: t.lineComment, color: "#7a8899", fontStyle: "italic" },
+  { tag: t.blockComment, color: "#7a8899", fontStyle: "italic" },
+  { tag: t.function(t.variableName), color: "#82aaff" },
+  { tag: t.definition(t.function(t.variableName)), color: "#82aaff" },
+  { tag: t.number, color: "#f78c6c" },
+  { tag: t.bool, color: "#f78c6c" },
+  { tag: t.null, color: "#f78c6c" },
+  { tag: t.propertyName, color: "#ffcb6b" },
+  { tag: t.definition(t.propertyName), color: "#ffcb6b" },
+  { tag: t.attributeName, color: "#ffcb6b" },
+  { tag: t.typeName, color: "#ffcb6b" },
+  { tag: t.className, color: "#ffcb6b" },
+  { tag: t.namespace, color: "#ffcb6b" },
+  { tag: t.operator, color: "#89ddff" },
+  { tag: t.punctuation, color: "#89ddff" },
+  { tag: t.bracket, color: "#89ddff" },
+  { tag: t.tagName, color: "#f07178" },
+  { tag: t.angleBracket, color: "#89ddff" },
+  { tag: t.regexp, color: "#89ddff" },
+  { tag: t.variableName, color: "#eeffff" },
+  { tag: t.definition(t.variableName), color: "#eeffff" },
+  { tag: t.special(t.variableName), color: "#f07178" },
+  { tag: t.literal, color: "#f78c6c" },
+  { tag: t.unit, color: "#f78c6c" },
+  { tag: t.color, color: "#f78c6c" },
+  { tag: t.modifier, color: "#c792ea" },
+  { tag: t.labelName, color: "#c792ea" },
+  { tag: t.heading, color: "#c792ea", fontWeight: "bold" },
+  { tag: t.link, color: "#82aaff", textDecoration: "underline" },
+  { tag: t.url, color: "#89ddff" },
+  { tag: t.meta, color: "#89ddff" },
+  { tag: t.processingInstruction, color: "#89ddff" },
+  { tag: t.invalid, color: "#ff5370" },
 ]);
 
 const lightHighlight = HighlightStyle.define([
@@ -71,6 +84,9 @@ const lightHighlight = HighlightStyle.define([
   { tag: t.variableName, color: "#1c1c21" },
   { tag: t.definition(t.variableName), color: "#111827" },
   { tag: t.special(t.variableName), color: "#7c3aed" },
+  { tag: t.unit, color: "#c2410c" },
+  { tag: t.color, color: "#c2410c" },
+  { tag: t.modifier, color: "#1d4ed8" },
   { tag: t.heading, color: "#1d4ed8", fontWeight: "bold" },
   { tag: t.link, color: "#2563eb", textDecoration: "underline" },
   { tag: t.url, color: "#0284c7" },
@@ -97,6 +113,8 @@ const midnightHighlight = HighlightStyle.define([
   { tag: t.attributeName, color: "#67e8f9" },
   { tag: t.regexp, color: "#f9a8d4" },
   { tag: t.variableName, color: "#e2e8f0" },
+  { tag: t.unit, color: "#fcd34d" },
+  { tag: t.color, color: "#fcd34d" },
   { tag: t.invalid, color: "#f87171" },
 ]);
 
@@ -119,13 +137,15 @@ const cyberHighlight = HighlightStyle.define([
   { tag: t.attributeName, color: "#a78bfa" },
   { tag: t.regexp, color: "#fb7185" },
   { tag: t.variableName, color: "#f5f3ff" },
+  { tag: t.unit, color: "#fbbf24" },
+  { tag: t.color, color: "#fbbf24" },
   { tag: t.invalid, color: "#fb7185" },
 ]);
 
 const PALETTES: Record<ThemeId, ThemePalette> = {
   "miro-dark": {
     bg: "#0f0f12",
-    fg: "#f4f4f5",
+    fg: "#eeffff",
     gutter: "#16161a",
     gutterFg: "#71717a",
     activeLine: "rgba(139,92,246,0.08)",
@@ -221,7 +241,10 @@ function uiTheme(palette: ThemePalette): Extension {
 
 export function editorThemeExtensions(theme: ThemeId): Extension[] {
   const palette = PALETTES[theme];
-  return [uiTheme(palette), syntaxHighlighting(palette.highlight)];
+  return [
+    uiTheme(palette),
+    syntaxHighlighting(palette.highlight, { fallback: true }),
+  ];
 }
 
 export const THEME_LABELS: Record<ThemeId, string> = {

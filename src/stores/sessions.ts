@@ -82,6 +82,12 @@ export const useSessionsStore = defineStore("sessions", () => {
       subView.value = "local";
     }
     ensureDefaultLocal(cwd);
+    void import("@/stores/compare").then(({ useCompareStore }) => {
+      useCompareStore().blurCompare();
+    });
+    void import("@/stores/gitLog").then(({ useGitLogStore }) => {
+      useGitLogStore().blurLog();
+    });
   }
 
   /** 隐藏终端标签但保留会话与 PTY（⌘/Ctrl+J） */
@@ -106,6 +112,9 @@ export const useSessionsStore = defineStore("sessions", () => {
     focused.value = true;
     void import("@/stores/compare").then(({ useCompareStore }) => {
       useCompareStore().blurCompare();
+    });
+    void import("@/stores/gitLog").then(({ useGitLogStore }) => {
+      useGitLogStore().blurLog();
     });
   }
 

@@ -10,6 +10,7 @@ import {
 } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import PackageScriptsMenu from "@/features/sessions/PackageScriptsMenu.vue";
+import { useGitLogStore } from "@/stores/gitLog";
 import { useGitStore } from "@/stores/git";
 import { usePackageScriptsStore } from "@/stores/packageScripts";
 import { useSessionsStore } from "@/stores/sessions";
@@ -23,9 +24,11 @@ const ui = useUiStore();
 const sessions = useSessionsStore();
 const workspace = useWorkspaceStore();
 const git = useGitStore();
+const gitLog = useGitLogStore();
 const pkg = usePackageScriptsStore();
 const { layout } = storeToRefs(settings);
 const { isFocused } = storeToRefs(sessions);
+const { isFocused: logFocused } = storeToRefs(gitLog);
 const { changedFileCount } = storeToRefs(git);
 const { available } = storeToRefs(pkg);
 
@@ -44,7 +47,7 @@ const commitActive = computed(
     layout.value.activePanel === "commit" && !layout.value.sidebarCollapsed,
 );
 
-const logActive = computed(() => layout.value.gitLogWindow.open);
+const logActive = computed(() => logFocused.value);
 
 function selectPanel(panel: SidePanelId) {
   scriptsOpen.value = false;
@@ -60,9 +63,10 @@ function selectPanel(panel: SidePanelId) {
 
 function toggleLog() {
   scriptsOpen.value = false;
-  settings.toggleGitLogWindow();
-  if (settings.layout.gitLogWindow.open && workspace.rootPath) {
+  gitLog.toggleLog();
+  if (gitLog.open && workspace.rootPath) {
     void git.refresh();
+    void git.loadLog(100);
   }
 }
 
@@ -153,7 +157,7 @@ onBeforeUnmount(() => {
       <button
         class="item"
         type="button"
-        title="Git Log"
+        title="Git Log（编辑区）"
         :class="{ active: logActive }"
         @click="toggleLog"
       >

@@ -1,16 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import {
+  Copy,
+  GitBranch,
+  GitCommitHorizontal,
+  RotateCcw,
+  Cherry,
+} from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
+import { useGitLogStore } from "@/stores/gitLog";
 import { useGitStore } from "@/stores/git";
-import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
+import type { GitCommitInfo } from "@/shared/gitApi";
 
 const git = useGitStore();
+const gitLog = useGitLogStore();
 const workspace = useWorkspaceStore();
-const settings = useSettingsStore();
 const { log, loading, snapshot } = storeToRefs(git);
-const { layout } = storeToRefs(settings);
+const { selectedId, open: logOpen } = storeToRefs(gitLog);
 
 const filter = ref("");
 const ctx = ref<{ x: number; y: number; id: string } | null>(null);
@@ -27,50 +35,77 @@ const filtered = computed(() => {
   );
 });
 
+const selected = computed<GitCommitInfo | null>(() => {
+  if (!selectedId.value) return filtered.value[0] ?? null;
+  return (
+    log.value.find((c) => c.id === selectedId.value) ??
+    filtered.value[0] ??
+    null
+  );
+});
+
 async function ensureLog() {
   if (!workspace.rootPath || !snapshot.value.initialized) return;
-  await git.loadLog(80);
+  await git.loadLog(100);
+  if (!selectedId.value && log.value[0]) {
+    gitLog.selectCommit(log.value[0].id);
+  }
 }
 
 onMounted(() => {
-  if (layout.value.gitLogWindow.open) void ensureLog();
+  if (logOpen.value) void ensureLog();
 });
 
-watch(
-  () => layout.value.gitLogWindow.open,
-  (open) => {
-    if (open) void ensureLog();
-  },
-);
+watch(logOpen, (open) => {
+  if (open) void ensureLog();
+});
+
+watch(filtered, (list) => {
+  if (!list.length) return;
+  if (!selectedId.value || !list.some((c) => c.id === selectedId.value)) {
+    gitLog.selectCommit(list[0].id);
+  }
+});
+
+function selectRow(id: string) {
+  gitLog.selectCommit(id);
+  ctx.value = null;
+}
 
 function onCtx(event: MouseEvent, id: string) {
   event.preventDefault();
+  gitLog.selectCommit(id);
   ctx.value = { x: event.clientX, y: event.clientY, id };
 }
 
 async function onCherryPick(id: string) {
   ctx.value = null;
   await git.cherryPick(id);
+  await ensureLog();
 }
 
 async function onReset(id: string, mode: "soft" | "mixed" | "hard") {
   ctx.value = null;
   await git.resetTo(id, mode);
+  await ensureLog();
 }
 
 async function onResetHardHere(id: string) {
   ctx.value = null;
   await git.resetTo(id, "hard");
+  await ensureLog();
 }
 
 async function onRevertCommit(id: string) {
   ctx.value = null;
   await git.revertCommit(id);
+  await ensureLog();
 }
 
 async function onCheckout(id: string) {
   ctx.value = null;
   await git.checkoutCommit(id);
+  await ensureLog();
 }
 
 async function onNewBranch(id: string) {
@@ -84,6 +119,7 @@ async function onNewBranch(id: string) {
   });
   if (!name?.trim()) return;
   await git.createBranchAt(name.trim(), id, true);
+  await ensureLog();
 }
 
 async function onCopy(id: string) {
@@ -96,15 +132,14 @@ async function onCopy(id: string) {
   }
 }
 
-async function onShowDiff(id: string) {
+async function onShowDiff(id: string, filePath?: string) {
   ctx.value = null;
   const item = log.value.find((c) => c.id === id);
-  const path = item?.files?.[0];
+  const path = filePath ?? item?.files?.[0];
   if (!path) {
     workspace.showNotice("该提交没有可预览的文件列表");
     return;
   }
-  // 用分支 tip 对比：当前 HEAD vs 该提交（取文件在提交侧）
   if (!snapshot.value.branch) return;
   try {
     const { gitBranchSides } = await import("@/shared/gitApi");
@@ -117,6 +152,7 @@ async function onShowDiff(id: string) {
     );
     const { useCompareStore } = await import("@/stores/compare");
     const compare = useCompareStore();
+    gitLog.blurLog();
     const tabId = `log-diff-${Date.now()}`;
     compare.tabs.push({
       id: tabId,
@@ -152,6 +188,12 @@ async function onInteractiveRebase(id: string) {
     title: `Interactive Rebase from ${id.slice(0, 7)}`,
   });
 }
+
+function refClass(name: string) {
+  if (name.startsWith("origin/") || name.includes("/")) return "ref remote";
+  if (name === "HEAD" || name.startsWith("HEAD")) return "ref head";
+  return "ref local";
+}
 </script>
 
 <template>
@@ -164,73 +206,140 @@ async function onInteractiveRebase(id: string) {
           v-bind="PLAIN_INPUT_ATTRS"
           class="filter"
           type="text"
-          placeholder="过滤消息 / 作者 / hash…"
+          placeholder="过滤消息 / 作者 / hash / 分支…"
         />
         <button type="button" class="link" @click="git.loadMoreLog()">
           加载更多
         </button>
+        <button type="button" class="link" @click="ensureLog()">刷新</button>
       </div>
 
       <div v-if="loading && !log.length" class="empty">加载提交历史…</div>
       <div v-else-if="!filtered.length" class="empty">暂无提交记录</div>
-      <div v-else class="log-list">
-        <div
-          v-for="(item, index) in filtered"
-          :key="item.id"
-          class="log-row"
-          :class="{ unpushed: item.unpushed }"
-          @contextmenu="onCtx($event, item.id)"
-        >
-          <div class="graph" aria-hidden="true">
-            <span
-              class="node"
-              :class="{
-                head: index === 0 && !filter,
-                merge: (item.parents?.length ?? 0) > 1,
-              }"
-            />
-            <span v-if="index < filtered.length - 1" class="line" />
-          </div>
-          <div class="body">
-            <div class="main">
-              <span class="id" :title="item.id">{{ item.id.slice(0, 7) }}</span>
+      <div v-else class="split">
+        <div class="log-list">
+          <div
+            v-for="(item, index) in filtered"
+            :key="item.id"
+            class="log-row"
+            :class="{
+              unpushed: item.unpushed,
+              active: selected?.id === item.id,
+            }"
+            @click="selectRow(item.id)"
+            @contextmenu="onCtx($event, item.id)"
+          >
+            <div class="graph" aria-hidden="true">
               <span
-                v-for="refName in item.refs"
-                :key="refName"
-                class="ref"
-                >{{ refName }}</span
-              >
-              <span v-if="item.unpushed" class="badge">未推送</span>
-              <span class="summary">{{ item.summary }}</span>
+                class="node"
+                :class="{
+                  head: index === 0 && !filter,
+                  merge: (item.parents?.length ?? 0) > 1,
+                }"
+              />
+              <span v-if="index < filtered.length - 1" class="line" />
             </div>
-            <div class="meta">
-              <span>{{ item.author }} · {{ item.time }}</span>
-              <span v-if="item.files?.length" class="files">
-                {{ item.files.length }} 个文件
-              </span>
-              <button type="button" class="link" @click="onCherryPick(item.id)">
-                Cherry-pick
-              </button>
-            </div>
-            <div v-if="item.files?.length" class="file-list">
-              <span v-for="f in item.files.slice(0, 8)" :key="f" class="file">{{
-                f
-              }}</span>
-              <span v-if="item.files.length > 8" class="file more">
-                +{{ item.files.length - 8 }}
-              </span>
+            <div class="body">
+              <div class="main">
+                <span
+                  v-for="refName in item.refs"
+                  :key="refName"
+                  :class="refClass(refName)"
+                  >{{ refName }}</span
+                >
+                <span v-if="item.unpushed" class="badge">未推送</span>
+                <span class="summary">{{ item.summary }}</span>
+              </div>
+              <div class="meta">
+                <span class="id" :title="item.id">{{ item.id.slice(0, 7) }}</span>
+                <span>{{ item.author }}</span>
+                <span>{{ item.time }}</span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <div class="danger-bar">
-        <button type="button" class="danger-btn" @click="git.undoCommit()">
-          撤销最近提交
-        </button>
-        <button type="button" class="danger-btn" @click="git.resetHard()">
-          硬重置 HEAD…
-        </button>
+        <aside v-if="selected" class="detail">
+          <div class="detail-head">
+            <GitCommitHorizontal :size="16" class="detail-icon" />
+            <div class="detail-title">
+              <div class="summary">{{ selected.summary }}</div>
+              <div class="meta">
+                <span class="id">{{ selected.id.slice(0, 10) }}</span>
+                <span>{{ selected.author }} · {{ selected.time }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="selected.refs.length" class="ref-row">
+            <span
+              v-for="refName in selected.refs"
+              :key="refName"
+              :class="refClass(refName)"
+              >{{ refName }}</span
+            >
+          </div>
+
+          <div class="actions">
+            <button type="button" class="action primary" @click="onCherryPick(selected.id)">
+              <Cherry :size="14" />
+              Cherry-pick
+            </button>
+            <button type="button" class="action" @click="onCheckout(selected.id)">
+              <GitBranch :size="14" />
+              Checkout
+            </button>
+            <button type="button" class="action" @click="onNewBranch(selected.id)">
+              New Branch…
+            </button>
+            <button type="button" class="action" @click="onShowDiff(selected.id)">
+              Show Diff
+            </button>
+            <button type="button" class="action" @click="onCopy(selected.id)">
+              <Copy :size="13" />
+              Copy Hash
+            </button>
+            <button type="button" class="action" @click="onRevertCommit(selected.id)">
+              <RotateCcw :size="13" />
+              Revert…
+            </button>
+            <button type="button" class="action" @click="onInteractiveRebase(selected.id)">
+              Rebase from Here…
+            </button>
+            <button type="button" class="action danger" @click="onResetHardHere(selected.id)">
+              Reset Hard…
+            </button>
+          </div>
+
+          <div class="files-head">
+            变更文件
+            <span v-if="selected.files?.length" class="count">{{
+              selected.files.length
+            }}</span>
+          </div>
+          <div v-if="!selected.files?.length" class="muted">无文件列表</div>
+          <div v-else class="file-list">
+            <button
+              v-for="f in selected.files"
+              :key="f"
+              type="button"
+              class="file"
+              :title="f"
+              @click="onShowDiff(selected.id, f)"
+            >
+              {{ f }}
+            </button>
+          </div>
+
+          <div class="danger-bar">
+            <button type="button" class="danger-btn" @click="git.undoCommit()">
+              撤销最近提交
+            </button>
+            <button type="button" class="danger-btn" @click="git.resetHard()">
+              硬重置 HEAD…
+            </button>
+          </div>
+        </aside>
       </div>
     </template>
 
@@ -273,18 +382,20 @@ async function onInteractiveRebase(id: string) {
   display: flex;
   flex-direction: column;
   position: relative;
+  background: var(--bg-app);
 }
 .toolbar {
   flex-shrink: 0;
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
 }
 .filter {
   flex: 1;
-  height: 28px;
+  height: 30px;
   padding: 0 10px;
   border-radius: 6px;
   border: 1px solid var(--border-subtle);
@@ -307,19 +418,29 @@ async function onInteractiveRebase(id: string) {
   color: var(--text-muted);
   font-size: 13px;
 }
-.log-list {
+.split {
   flex: 1;
   min-height: 0;
+  display: flex;
+}
+.log-list {
+  flex: 1;
+  min-width: 0;
   overflow: auto;
-  padding: 8px 0;
+  padding: 6px 0;
+  border-right: 1px solid var(--border-subtle);
 }
 .log-row {
   display: flex;
   gap: 10px;
-  padding: 6px 12px;
+  padding: 8px 14px;
+  cursor: default;
 }
 .log-row:hover {
   background: var(--accent-soft);
+}
+.log-row.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 .log-row.unpushed .summary {
   font-weight: 600;
@@ -332,23 +453,27 @@ async function onInteractiveRebase(id: string) {
   align-items: center;
 }
 .node {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: var(--text-muted);
-  margin-top: 5px;
+  background: #60a5fa;
+  margin-top: 4px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #60a5fa 25%, transparent);
 }
 .node.head {
   background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .node.merge {
   background: var(--warning);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 30%, transparent);
 }
 .line {
   flex: 1;
   width: 2px;
-  background: var(--border-subtle);
+  background: color-mix(in srgb, #60a5fa 55%, transparent);
   margin-top: 2px;
+  min-height: 12px;
 }
 .body {
   min-width: 0;
@@ -373,6 +498,18 @@ async function onInteractiveRebase(id: string) {
   background: var(--accent-soft);
   color: var(--accent);
 }
+.ref.local {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.ref.remote {
+  background: color-mix(in srgb, #60a5fa 18%, transparent);
+  color: #60a5fa;
+}
+.ref.head {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+}
 .badge {
   font-size: 10px;
   padding: 1px 5px;
@@ -392,34 +529,129 @@ async function onInteractiveRebase(id: string) {
   color: var(--text-muted);
   align-items: center;
 }
-.meta .link {
+
+.detail {
+  width: min(360px, 38%);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-panel);
+}
+.detail-head {
+  display: flex;
+  gap: 10px;
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.detail-icon {
   color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 2px;
 }
-.meta .link:hover {
-  text-decoration: underline;
+.detail-title {
+  min-width: 0;
 }
-.file-list {
+.detail-title .summary {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.detail-title .meta {
   margin-top: 4px;
+}
+.ref-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.action {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-app);
+  color: var(--text-secondary);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.action:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+.action.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+.action.primary:hover {
+  filter: brightness(1.06);
+  color: var(--accent-fg);
+}
+.action.danger {
+  color: var(--danger);
+}
+.action.danger:hover {
+  border-color: var(--danger);
+}
+.files-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.files-head .count {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.muted {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.file-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .file {
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--bg-app);
-  color: var(--text-muted);
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
   font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.file.more {
+.file:hover {
+  background: var(--accent-soft);
   color: var(--accent);
 }
 .danger-bar {
   flex-shrink: 0;
   display: flex;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border-top: 1px solid var(--border-subtle);
 }
 .danger-btn {
