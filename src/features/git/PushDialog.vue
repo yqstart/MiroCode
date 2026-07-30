@@ -5,7 +5,9 @@ import { gitUnpushedCommits, type GitCommitInfo } from "@/shared/gitApi";
 import { registerPushDialogHandler } from "@/shared/gitDialogs";
 import { useGitStore } from "@/stores/git";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useI18n } from "@/i18n";
 
+const { t } = useI18n();
 const visible = ref(false);
 const force = ref(false);
 const loading = ref(false);
@@ -48,7 +50,7 @@ function finish(result: { force: boolean } | null) {
 }
 
 function onConfirm() {
-  if (force.value && !window.confirm("强制推送可能覆盖远程历史，确定继续？")) {
+  if (force.value && !window.confirm(t("push.forceConfirm"))) {
     return;
   }
   finish({ force: force.value });
@@ -80,8 +82,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-if="visible" class="overlay" @mousedown.self="onCancel">
-    <div class="dialog" role="dialog" aria-modal="true" aria-label="Push">
-      <h3 class="title">Push Commits</h3>
+    <div class="dialog" role="dialog" aria-modal="true" :aria-label="t('push.title')">
+      <h3 class="title">{{ t("push.title") }}</h3>
       <p class="meta">
         {{ snapshot.branch ?? "—" }}
         <template v-if="snapshot.upstream"> → {{ snapshot.upstream }}</template>
@@ -89,8 +91,8 @@ onBeforeUnmount(() => {
       </p>
 
       <div class="list">
-        <div v-if="loading" class="empty">加载未推送提交…</div>
-        <div v-else-if="!commits.length" class="empty">没有待推送的提交</div>
+        <div v-if="loading" class="empty">{{ t("push.loading") }}</div>
+        <div v-else-if="!commits.length" class="empty">{{ t("push.empty") }}</div>
         <div v-for="c in commits" :key="c.id" class="row" :title="c.id">
           <span class="id">{{ c.id.slice(0, 7) }}</span>
           <span class="summary">{{ c.summary }}</span>
@@ -100,18 +102,20 @@ onBeforeUnmount(() => {
 
       <label class="check">
         <input v-model="force" type="checkbox" />
-        Force push（--force）
+        {{ t("push.force") }}
       </label>
 
       <div class="actions">
-        <button type="button" class="btn ghost" @click="onCancel">取消</button>
+        <button type="button" class="btn ghost" @click="onCancel">
+          {{ t("dialog.cancel") }}
+        </button>
         <button
           type="button"
           class="btn primary"
           :disabled="!commits.length && !force"
           @click="onConfirm"
         >
-          Push
+          {{ t("push.push") }}
         </button>
       </div>
     </div>

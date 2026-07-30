@@ -12,11 +12,13 @@
 - Vue SFC / CSS 语法高亮修复（`<style>` 嵌套与 `.css` 等）
 - Git Log 表格对齐 Git Graph（Graph / Description / Date / Author / Commit）；操作仅右键；右侧只展示提交信息与文件
 - 贮藏列表可见：Commit 面板「贮藏」分组 + Git Log stash 行 + 工具栏角标；支持 Apply / Pop / Drop
+- **界面语言**：设置中切换中文 / English 后，壳层、编辑区、Git、搜索、终端会话、对话框等操作文案同步切换（`src/i18n`）；macOS 顶部菜单栏同步切换，无需重启
 
 ### 修复
 
 - 终端 macOS 输入：退格无效、空格双写、方向键带出残字符、中英切换重复输入
 - Push 对话框提交行完整 hash 溢出叠字
+- Markdown 文件首次打开默认预览模式
 
 ## [0.2.0] - 2026-07-30
 

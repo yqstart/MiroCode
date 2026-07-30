@@ -9,7 +9,9 @@ import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useI18n } from "@/i18n";
 
+const { t } = useI18n();
 const settings = useSettingsStore();
 const workspace = useWorkspaceStore();
 const editor = useEditorStore();
@@ -36,7 +38,7 @@ const syncLabel = computed(() => {
   const parts: string[] = [];
   if (ahead) parts.push(`↑${ahead}`);
   if (behind) parts.push(`↓${behind}`);
-  if (!parts.length && upstream) return "已同步";
+  if (!parts.length && upstream) return t("status.synced");
   return parts.join(" ");
 });
 const themeLabel = computed(() => THEME_LABELS[theme.value]);
@@ -99,15 +101,15 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
       <span class="meta">{{ lang }}</span>
       <span class="sep">·</span>
       <span class="meta">UTF-8</span>
-      <span v-if="dirty" class="dirty">未保存</span>
+      <span v-if="dirty" class="dirty">{{ t("status.unsaved") }}</span>
       <button
         v-if="snapshot.conflictCount > 0"
         type="button"
         class="conflict"
-        title="打开冲突解决"
+        :title="t('status.openConflict')"
         @click="git.openFirstConflict()"
       >
-        {{ snapshot.conflictCount }} 冲突
+        {{ t("status.conflicts", { count: snapshot.conflictCount }) }}
       </button>
       <span v-if="workspace.notice" class="notice">{{ workspace.notice }}</span>
     </div>
@@ -120,7 +122,7 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
         <button
           type="button"
           class="theme-btn"
-          title="点击切换主题 · 右键循环"
+          :title="t('status.switchThemeHint')"
           @click="toggleThemeMenu"
           @contextmenu.prevent="cycleTheme"
         >
@@ -141,7 +143,7 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
         </div>
       </div>
       <span class="sep">·</span>
-      <span class="ok">就绪</span>
+      <span class="ok">{{ t("status.ready") }}</span>
     </div>
   </footer>
 

@@ -18,12 +18,14 @@ import { useCompareStore } from "@/stores/compare";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useI18n } from "@/i18n";
 
 const props = defineProps<{
   tabId: string;
   active: boolean;
 }>();
 
+const { t } = useI18n();
 const host = ref<HTMLDivElement | null>(null);
 const compare = useCompareStore();
 const git = useGitStore();
@@ -177,7 +179,7 @@ async function saveResult() {
     const abs = joinPath(workspace.rootPath, current.path);
     await writeTextFile(workspace.rootPath, abs, content);
     await git.resolveConflict(current.path, "manual");
-    workspace.showNotice(`已保存并标记解决：${current.path}`);
+    workspace.showNotice(t("compare.savedResolved", { path: current.path }));
     compare.closeTab(current.id);
   } catch (error) {
     workspace.showNotice(
@@ -254,7 +256,7 @@ function jumpConflict(dir: 1 | -1) {
   if (!view) return;
   const positions = conflictMarkerPositions();
   if (!positions.length) {
-    workspace.showNotice("未找到冲突标记（<<<<<<<）");
+    workspace.showNotice(t("compare.noConflictMarker"));
     return;
   }
   const cursor = view.state.selection.main.head;
@@ -349,31 +351,31 @@ watch(theme, () => {
         <span class="path">{{ tab.path }}</span>
       </div>
       <div v-if="tab.kind === 'merge'" class="actions">
-        <button type="button" class="btn" title="上一个冲突" @click="jumpConflict(-1)">
-          ↑冲突
+        <button type="button" class="btn" :title="t('compare.prevConflictTitle')" @click="jumpConflict(-1)">
+          {{ t("compare.prevConflict") }}
         </button>
-        <button type="button" class="btn" title="下一个冲突" @click="jumpConflict(1)">
-          ↓冲突
+        <button type="button" class="btn" :title="t('compare.nextConflictTitle')" @click="jumpConflict(1)">
+          {{ t("compare.nextConflict") }}
         </button>
         <button type="button" class="btn" @click="toggleCompareMode">
-          {{ tab.editableRight ? "查看双方" : "编辑结果" }}
+          {{ tab.editableRight ? t("compare.viewBoth") : t("compare.editResult") }}
         </button>
-        <button type="button" class="btn" @click="useOursInResult">填入本地</button>
-        <button type="button" class="btn" @click="useTheirsInResult">填入远程</button>
-        <button type="button" class="btn" @click="useBaseInResult">填入 Base</button>
-        <button type="button" class="btn danger" @click="acceptOurs">保留本地</button>
-        <button type="button" class="btn danger" @click="acceptTheirs">保留远程</button>
+        <button type="button" class="btn" @click="useOursInResult">{{ t("compare.fillOurs") }}</button>
+        <button type="button" class="btn" @click="useTheirsInResult">{{ t("compare.fillTheirs") }}</button>
+        <button type="button" class="btn" @click="useBaseInResult">{{ t("compare.fillBase") }}</button>
+        <button type="button" class="btn danger" @click="acceptOurs">{{ t("compare.keepOurs") }}</button>
+        <button type="button" class="btn danger" @click="acceptTheirs">{{ t("compare.keepTheirs") }}</button>
         <button
           type="button"
           class="btn primary"
           :disabled="!tab.editableRight"
           @click="saveResult"
         >
-          保存并解决
+          {{ t("compare.saveResolve") }}
         </button>
       </div>
       <div v-else class="actions">
-        <span class="hint">只读对比</span>
+        <span class="hint">{{ t("compare.readonlyHint") }}</span>
       </div>
     </header>
     <div ref="host" class="merge-host" />

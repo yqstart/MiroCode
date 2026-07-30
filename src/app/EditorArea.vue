@@ -17,8 +17,17 @@ import { useGitLogStore } from "@/stores/gitLog";
 import { useGitStore } from "@/stores/git";
 import { useSessionsStore } from "@/stores/sessions";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useI18n } from "@/i18n";
 
-const welcomeShortcutHint = `或使用 ${formatShortcut("mod", "O")} · ${formatShortcut("mod", "P")} 快速打开 · ${formatShortcut("mod", "J")} 终端`;
+const { t } = useI18n();
+
+const welcomeShortcutHint = computed(() =>
+  t("editor.welcomeHint", {
+    open: formatShortcut("mod", "O"),
+    quick: formatShortcut("mod", "P"),
+    term: formatShortcut("mod", "J"),
+  }),
+);
 
 const editor = useEditorStore();
 const sessions = useSessionsStore();
@@ -98,14 +107,16 @@ const previewShowing = computed(() =>
 );
 
 const previewToggleLabel = computed(() => {
-  if (isMarkdown.value) return markdownPreview.value ? "编辑" : "预览";
-  if (isSvg.value) return svgPreview.value ? "源码" : "预览";
-  return "预览";
+  if (isMarkdown.value) return markdownPreview.value ? t("editor.edit") : t("editor.preview");
+  if (isSvg.value) return svgPreview.value ? t("editor.source") : t("editor.preview");
+  return t("editor.preview");
 });
 
 const previewToggleTitle = computed(() => {
-  if (isMarkdown.value) return markdownPreview.value ? "编辑模式" : "预览模式";
-  if (isSvg.value) return svgPreview.value ? "编辑 SVG 源码" : "预览 SVG";
+  if (isMarkdown.value)
+    return markdownPreview.value ? t("editor.editMode") : t("editor.previewMode");
+  if (isSvg.value)
+    return svgPreview.value ? t("editor.editSvg") : t("editor.previewSvg");
   return "";
 });
 
@@ -264,8 +275,8 @@ async function discardFromEditor() {
   if (!rel || !entry || entry.conflicted) return;
   const isUntracked = entry.status === "untracked";
   const msg = isUntracked
-    ? `「${basename(rel)}」是未跟踪的新文件，回滚将删除该文件。此操作不可撤销。确定？`
-    : `确定回滚「${basename(rel)}」的未提交变更？此操作不可撤销。`;
+    ? t("editor.discardUntrackedConfirm", { name: basename(rel) })
+    : t("editor.discardConfirm", { name: basename(rel) });
   if (!confirm(msg)) return;
   await git.discard([rel]);
 }
@@ -302,7 +313,7 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
           <span class="name">{{ tab.name }}</span>
           <span
             class="close"
-            title="关闭"
+            :title="t('editor.close')"
             @click.stop="editor.closeTab(tab.path)"
           >
             <X :size="12" />
@@ -320,7 +331,11 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
         >
           <Columns2 :size="12" class="cmp-icon" />
           <span class="name">{{ tab.title }}</span>
-          <span class="close" title="关闭" @click.stop="closeCompareTab(tab.id)">
+          <span
+            class="close"
+            :title="t('editor.close')"
+            @click.stop="closeCompareTab(tab.id)"
+          >
             <X :size="12" />
           </span>
         </button>
@@ -335,8 +350,12 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
           @auxclick.middle.prevent="closeSessionsTab"
         >
           <TerminalSquare :size="12" class="term-icon" />
-          <span class="name">终端</span>
-          <span class="close" title="关闭终端（结束会话）" @click.stop="closeSessionsTab">
+          <span class="name">{{ t("editor.terminalTab") }}</span>
+          <span
+            class="close"
+            :title="t('editor.closeTerminal')"
+            @click.stop="closeSessionsTab"
+          >
             <X :size="12" />
           </span>
         </button>
@@ -351,8 +370,12 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
           @auxclick.middle.prevent="closeGitLogTab"
         >
           <GitCommitHorizontal :size="12" class="gitlog-icon" />
-          <span class="name">Git Log</span>
-          <span class="close" title="关闭 Git Log" @click.stop="closeGitLogTab">
+          <span class="name">{{ t("editor.gitLogTab") }}</span>
+          <span
+            class="close"
+            :title="t('editor.closeGitLog')"
+            @click.stop="closeGitLogTab"
+          >
             <X :size="12" />
           </span>
         </button>
@@ -408,14 +431,14 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
         v-else-if="!sessionsFocused && !compareFocused && !gitLogFocused && !activeTab"
         class="welcome"
       >
-        <h1>Miro Code</h1>
-        <p>轻量化桌面代码编辑器</p>
+        <h1>{{ t("app.name") }}</h1>
+        <p>{{ t("app.tagline") }}</p>
         <div class="actions">
           <button type="button" class="cta" @click="workspace.openFolder()">
-            打开文件夹…
+            {{ t("editor.openFolder") }}
           </button>
           <button type="button" class="ghost" @click="sessions.openSessions(workspace.rootPath)">
-            打开终端
+            {{ t("editor.openTerminal") }}
           </button>
           <p class="hint">{{ welcomeShortcutHint }}</p>
         </div>
@@ -429,9 +452,9 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
         :style="{ left: `${editorCtx.x}px`, top: `${editorCtx.y}px` }"
         @click.stop
       >
-        <button type="button" @click="showDiffFromEditor">显示 Diff</button>
+        <button type="button" @click="showDiffFromEditor">{{ t("editor.showDiff") }}</button>
         <button type="button" class="danger" @click="discardFromEditor">
-          回滚变更…
+          {{ t("editor.discardChanges") }}
         </button>
       </div>
     </Teleport>

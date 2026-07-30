@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { useI18n } from "@/i18n";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import {
   registerGitAuthHandler,
@@ -7,8 +8,9 @@ import {
   type GitAuthResult,
 } from "@/shared/gitAuthDialog";
 
+const { t } = useI18n();
 const visible = ref(false);
-const title = ref("Git 登录");
+const title = ref("");
 const remoteUrl = ref("");
 const message = ref("");
 const username = ref("");
@@ -24,7 +26,7 @@ async function open(options: GitAuthDialogOptions): Promise<GitAuthResult | null
     resolveFn(null);
     resolveFn = null;
   }
-  title.value = options.title ?? "Git 登录";
+  title.value = options.title ?? t("gitAuth.title");
   remoteUrl.value = options.remoteUrl?.trim() ?? "";
   message.value = options.message?.trim() ?? "";
   username.value = options.defaultUsername?.trim() ?? "";
@@ -90,7 +92,7 @@ onBeforeUnmount(() => {
       <p v-if="remoteUrl" class="remote" :title="remoteUrl">{{ remoteUrl }}</p>
       <p v-if="message" class="hint">{{ message }}</p>
 
-      <label class="label">用户名</label>
+      <label class="label">{{ t("gitAuth.username") }}</label>
       <input
         ref="userRef"
         v-model="username"
@@ -99,11 +101,11 @@ onBeforeUnmount(() => {
         type="text"
         name="miro-git-user"
         autocomplete="username"
-        placeholder="用户名或邮箱"
+        :placeholder="t('gitAuth.usernamePlaceholder')"
         @keydown.enter.prevent="passRef?.focus()"
       />
 
-      <label class="label">密码</label>
+      <label class="label">{{ t("gitAuth.password") }}</label>
       <input
         ref="passRef"
         v-model="password"
@@ -112,24 +114,24 @@ onBeforeUnmount(() => {
         type="password"
         name="miro-git-pass"
         autocomplete="current-password"
-        placeholder="密码"
+        :placeholder="t('gitAuth.passwordPlaceholder')"
         @keydown.enter.prevent="onConfirm"
       />
 
       <label class="remember">
         <input v-model="remember" type="checkbox" />
-        记住密码（保存到 Miro Code，下次自动登录）
+        {{ t("gitAuth.remember") }}
       </label>
 
       <div class="actions">
-        <button type="button" class="btn ghost" @click="onCancel">取消</button>
+        <button type="button" class="btn ghost" @click="onCancel">{{ t("common.cancel") }}</button>
         <button
           type="button"
           class="btn primary"
           :disabled="!username.trim() || !password"
           @click="onConfirm"
         >
-          登录
+          {{ t("gitAuth.login") }}
         </button>
       </div>
     </div>

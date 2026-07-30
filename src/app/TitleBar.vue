@@ -4,7 +4,9 @@ import { PanelLeft, PanelLeftClose } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { formatShortcut, isMacOS } from "@/shared/platform";
 import { useSettingsStore } from "@/stores/settings";
+import { useI18n } from "@/i18n";
 
+const { t } = useI18n();
 const settings = useSettingsStore();
 const { layout } = storeToRefs(settings);
 
@@ -12,10 +14,11 @@ const { layout } = storeToRefs(settings);
 const visible = isMacOS();
 
 const collapsed = computed(() => layout.value.sidebarCollapsed);
-const tip = computed(() => {
-  const action = collapsed.value ? "展开侧边栏" : "折叠侧边栏";
-  return `${action}（${formatShortcut("mod", "B")}）`;
-});
+const tip = computed(() =>
+  t(collapsed.value ? "title.expandSidebar" : "title.collapseSidebar", {
+    shortcut: formatShortcut("mod", "B"),
+  }),
+);
 
 /** 全屏时原生红绿灯隐藏，折叠按钮应贴左 */
 const isFullscreen = ref(false);
@@ -71,7 +74,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <header v-if="visible" class="titlebar" aria-label="标题栏">
+  <header v-if="visible" class="titlebar" :aria-label="t('app.titleBar')">
     <!-- 为原生红绿灯预留空间；全屏时收起，折叠按钮贴左 -->
     <div
       class="traffic-spacer"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
+import { useI18n } from "@/i18n";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { useGitStore } from "@/stores/git";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -13,6 +14,7 @@ const emit = defineEmits<{
   close: [];
 }>();
 
+const { t } = useI18n();
 const git = useGitStore();
 const workspace = useWorkspaceStore();
 const { branches, snapshot, loading } = storeToRefs(git);
@@ -81,10 +83,10 @@ async function onNew() {
   close();
   const { promptInput } = await import("@/shared/promptDialog");
   const name = await promptInput({
-    title: "新建分支",
-    label: "分支名称",
+    title: t("branches.newTitle"),
+    label: t("branches.newLabel"),
     placeholder: "feature/my-branch",
-    confirmText: "创建并切换",
+    confirmText: t("branches.newConfirm"),
   });
   if (!name?.trim()) return;
   await git.createBranch(name.trim(), true);
@@ -93,22 +95,22 @@ async function onNew() {
 async function onRename(target?: string) {
   const current = target ?? selected.value ?? snapshot.value.branch;
   if (!current) {
-    workspace.showNotice("请先选择要重命名的本地分支");
+    workspace.showNotice(t("branches.selectToRename"));
     return;
   }
   const info = branches.value.find((b) => b.name === current);
   if (info?.isRemote) {
-    workspace.showNotice("请选择本地分支进行重命名");
+    workspace.showNotice(t("branches.selectLocalToRename"));
     return;
   }
   ctx.value = null;
   close();
   const { promptInput } = await import("@/shared/promptDialog");
   const name = await promptInput({
-    title: "重命名分支",
-    label: "新名称",
+    title: t("branches.renameTitle"),
+    label: t("branches.renameLabel"),
     defaultValue: current,
-    confirmText: "重命名",
+    confirmText: t("branches.renameConfirm"),
   });
   if (!name?.trim() || name.trim() === current) return;
   await git.renameBranch(current, name.trim());
@@ -117,7 +119,7 @@ async function onRename(target?: string) {
 async function onDelete(name?: string) {
   const target = name ?? selected.value;
   if (!target) {
-    workspace.showNotice("请先选中要删除的分支");
+    workspace.showNotice(t("branches.selectToDelete"));
     return;
   }
   const info = branches.value.find((b) => b.name === target);
@@ -128,7 +130,7 @@ async function onDelete(name?: string) {
     return;
   }
   if (info?.isHead) {
-    workspace.showNotice("不能删除当前分支");
+    workspace.showNotice(t("branches.cannotDeleteCurrent"));
     return;
   }
   await git.deleteBranch(target);
@@ -159,11 +161,11 @@ async function onSetUpstream(name: string) {
   const remotes = remoteBranches.value.map((b) => b.name);
   const { promptInput } = await import("@/shared/promptDialog");
   const upstream = await promptInput({
-    title: "设置上游分支",
-    label: "远程跟踪分支",
+    title: t("branches.setUpstreamTitle"),
+    label: t("branches.setUpstreamLabel"),
     defaultValue: remotes.find((r) => r.endsWith(`/${name}`)) ?? remotes[0] ?? "origin/main",
     placeholder: "origin/feature",
-    confirmText: "设置",
+    confirmText: t("branches.setUpstreamConfirm"),
   });
   if (!upstream?.trim()) return;
   await git.setUpstream(name, upstream.trim());
@@ -173,9 +175,9 @@ async function onCopy(name: string) {
   ctx.value = null;
   try {
     await navigator.clipboard.writeText(name);
-    workspace.showNotice("已复制分支名");
+    workspace.showNotice(t("branches.copiedName"));
   } catch {
-    workspace.showNotice("复制失败");
+    workspace.showNotice(t("gitLog.copyFailed"));
   }
 }
 
@@ -199,9 +201,9 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
 
 <template>
   <div v-if="open" class="overlay" @mousedown.self="close">
-    <div class="panel" role="dialog" aria-label="Git Branches" @click="ctx = null">
+    <div class="panel" role="dialog" :aria-label="t('branches.title')" @click="ctx = null">
       <header class="head">
-        <strong>Branches</strong>
+        <strong>{{ t("branches.title") }}</strong>
         <button type="button" class="x" @click="close">×</button>
       </header>
       <input
@@ -210,12 +212,12 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
         v-bind="PLAIN_INPUT_ATTRS"
         class="filter"
         type="text"
-        placeholder="筛选分支…"
+        :placeholder="t('branches.filterPlaceholder')"
         @keydown.escape.stop="close"
       />
 
       <div class="section">
-        <div class="sec-title">Local</div>
+        <div class="sec-title">{{ t("branches.local") }}</div>
         <button
           v-for="b in localBranches"
           :key="b.name"
@@ -229,12 +231,12 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
           <span v-if="b.upstream" class="up">{{ b.upstream }}</span>
         </button>
         <p v-if="!localBranches.length" class="empty">
-          {{ loading ? "加载中…" : "无本地分支" }}
+          {{ loading ? t("common.loading") : t("branches.noLocal") }}
         </p>
       </div>
 
       <div class="section">
-        <div class="sec-title">Remote</div>
+        <div class="sec-title">{{ t("branches.remote") }}</div>
         <button
           v-for="b in remoteBranches"
           :key="b.name"
@@ -246,14 +248,14 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
         >
           <span class="name">{{ b.name }}</span>
         </button>
-        <p v-if="!remoteBranches.length" class="empty">无远程分支</p>
+        <p v-if="!remoteBranches.length" class="empty">{{ t("branches.noRemote") }}</p>
       </div>
 
       <div class="footer">
-        <button type="button" class="link" @click="onNew">+ New Branch…</button>
-        <button type="button" class="link" @click="onRename()">Rename…</button>
+        <button type="button" class="link" @click="onNew">{{ t("branches.newBranch") }}</button>
+        <button type="button" class="link" @click="onRename()">{{ t("branches.rename") }}</button>
         <button type="button" class="link danger" @click="onDelete()">
-          Delete…
+          {{ t("branches.delete") }}
         </button>
       </div>
     </div>
@@ -271,39 +273,39 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
           type="button"
           @click="onCheckoutLocal(ctx.name)"
         >
-          Checkout
+          {{ t("branches.checkout") }}
         </button>
         <button v-else type="button" @click="onCheckoutRemote(ctx.name)">
-          Checkout as local…
+          {{ t("branches.checkoutAsLocal") }}
         </button>
-        <button type="button" @click="onMerge(ctx.name)">Merge into Current…</button>
-        <button type="button" @click="onRebase(ctx.name)">Rebase Current onto…</button>
+        <button type="button" @click="onMerge(ctx.name)">{{ t("branches.mergeIntoCurrent") }}</button>
+        <button type="button" @click="onRebase(ctx.name)">{{ t("branches.rebaseCurrentOnto") }}</button>
         <button type="button" @click="onInteractiveRebase(ctx.name)">
-          Interactive Rebase onto…
+          {{ t("branches.interactiveRebaseOnto") }}
         </button>
-        <button type="button" @click="onCompare(ctx.name)">Compare with Current</button>
+        <button type="button" @click="onCompare(ctx.name)">{{ t("branches.compareWithCurrent") }}</button>
         <button
           v-if="!ctx.isRemote"
           type="button"
           @click="onSetUpstream(ctx.name)"
         >
-          Set Upstream…
+          {{ t("branches.setUpstream") }}
         </button>
         <button
           v-if="!ctx.isRemote"
           type="button"
           @click="onRename(ctx.name)"
         >
-          Rename…
+          {{ t("branches.rename") }}
         </button>
-        <button type="button" @click="onCopy(ctx.name)">Copy Branch Name</button>
+        <button type="button" @click="onCopy(ctx.name)">{{ t("branches.copyName") }}</button>
         <button
           v-if="!ctx.isRemote && !branches.find((b) => b.name === ctx!.name)?.isHead"
           type="button"
           class="danger"
           @click="onDelete(ctx.name)"
         >
-          Delete…
+          {{ t("branches.delete") }}
         </button>
         <button
           v-if="ctx.isRemote"
@@ -311,7 +313,7 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
           class="danger"
           @click="onDelete(ctx.name)"
         >
-          Delete on Remote…
+          {{ t("branches.deleteOnRemote") }}
         </button>
       </div>
     </Teleport>

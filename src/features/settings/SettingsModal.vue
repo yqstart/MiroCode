@@ -10,7 +10,9 @@ import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
 import type { ThemeId, ThemeMeta } from "@/shared/types";
+import { useI18n } from "@/i18n";
 
+const { t } = useI18n();
 const settings = useSettingsStore();
 const ui = useUiStore();
 const workspace = useWorkspaceStore();
@@ -45,29 +47,38 @@ const themes: ThemeMeta[] = [
   { id: "dawn", name: "Miro Dawn", available: true, preview: "light" },
 ];
 
-const navItems: { id: NavId; label: string }[] = [
-  { id: "editor", label: "编辑器" },
-  { id: "shortcuts", label: "快捷键" },
-  { id: "system", label: "关于" },
-];
+const navItems = computed(() => [
+  { id: "editor" as const, label: t("settings.navEditor") },
+  { id: "shortcuts" as const, label: t("settings.navShortcuts") },
+  { id: "system" as const, label: t("settings.navAbout") },
+]);
 
-const completionHint = `内置本地补全：语法关键字、代码片段、当前文档词、语言提示。输入即提示，${formatShortcut("mod", "Space")} 手动触发。无需模型，不联网。`;
+const completionHint = computed(() =>
+  t("settings.completionHint", { shortcut: formatShortcut("mod", "Space") }),
+);
 
-const shortcutRows: { keys: string; action: string }[] = [
-  { keys: formatShortcut("mod", "O"), action: "打开文件夹" },
-  { keys: formatShortcut("mod", "P"), action: "快速打开文件" },
-  { keys: formatShortcut("mod", "shift", "F"), action: "在文件中查找" },
-  { keys: formatShortcut("mod", "S"), action: "保存当前文件" },
-  { keys: formatShortcut("mod", ","), action: "打开设置" },
-  { keys: formatShortcut("mod", "Space"), action: "触发代码补全" },
-  { keys: formatShortcut("mod", "Enter"), action: "跳转到 import/路径" },
-  { keys: formatShortcut("mod", "["), action: "返回上一跳转位置" },
-  { keys: formatShortcut("alt", "F1"), action: "在资源管理器中定位" },
-  { keys: formatShortcut("mod", "J"), action: "显示 / 隐藏终端" },
-  { keys: formatShortcut("mod", "B"), action: "折叠 / 展开侧边栏" },
-];
+const shortcutRows = computed(() => [
+  { keys: formatShortcut("mod", "O"), action: t("settings.shortcutOpenFolder") },
+  { keys: formatShortcut("mod", "P"), action: t("settings.shortcutQuickOpen") },
+  {
+    keys: formatShortcut("mod", "shift", "F"),
+    action: t("settings.shortcutFindInFiles"),
+  },
+  { keys: formatShortcut("mod", "S"), action: t("settings.shortcutSave") },
+  { keys: formatShortcut("mod", ","), action: t("settings.shortcutSettings") },
+  { keys: formatShortcut("mod", "Space"), action: t("settings.shortcutComplete") },
+  { keys: formatShortcut("mod", "Enter"), action: t("settings.shortcutGoToDef") },
+  { keys: formatShortcut("mod", "["), action: t("settings.shortcutGoBack") },
+  { keys: formatShortcut("alt", "F1"), action: t("settings.shortcutReveal") },
+  { keys: formatShortcut("mod", "J"), action: t("settings.shortcutTerminal") },
+  { keys: formatShortcut("mod", "B"), action: t("settings.shortcutSidebar") },
+]);
 
 const activeThemeLabel = computed(() => THEME_LABELS[theme.value]);
+
+const activeNavLabel = computed(
+  () => navItems.value.find((n) => n.id === activeNav.value)?.label ?? "",
+);
 
 function selectTheme(id: ThemeId) {
   settings.setTheme(id);
@@ -82,9 +93,14 @@ function onOverlayClick(event: MouseEvent) {
 
 <template>
   <div class="overlay" @mousedown="onOverlayClick">
-    <div class="modal" role="dialog" aria-modal="true" aria-label="设置">
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="t('settings.title')"
+    >
       <aside class="nav">
-        <h2 class="nav-title">设置</h2>
+        <h2 class="nav-title">{{ t("settings.title") }}</h2>
         <button
           v-for="item in navItems"
           :key="item.id"
@@ -96,14 +112,14 @@ function onOverlayClick(event: MouseEvent) {
           {{ item.label }}
         </button>
         <div class="nav-footer">
-          <label class="field-label">界面语言</label>
+          <label class="field-label">{{ t("settings.language") }}</label>
           <select
             class="ui-select"
             :value="locale"
             @change="settings.setLocale(($event.target as HTMLSelectElement).value as 'zh-CN' | 'en-US')"
           >
-            <option value="zh-CN">中文</option>
-            <option value="en-US">English</option>
+            <option value="zh-CN">{{ t("settings.langZh") }}</option>
+            <option value="en-US">{{ t("settings.langEn") }}</option>
           </select>
         </div>
       </aside>
@@ -111,14 +127,21 @@ function onOverlayClick(event: MouseEvent) {
       <section class="content">
         <header class="content-header">
           <div>
-            <h1>{{ navItems.find((n) => n.id === activeNav)?.label }}</h1>
+            <h1>{{ activeNavLabel }}</h1>
             <p v-if="activeNav === 'editor'">
-              外观、排版与编辑偏好 · 当前 {{ activeThemeLabel }}
+              {{ t("settings.editorSubtitle", { theme: activeThemeLabel }) }}
             </p>
-            <p v-else-if="activeNav === 'shortcuts'">常用快捷键一览</p>
-            <p v-else>关于 Miro Code</p>
+            <p v-else-if="activeNav === 'shortcuts'">
+              {{ t("settings.shortcutsSubtitle") }}
+            </p>
+            <p v-else>{{ t("settings.aboutSubtitle") }}</p>
           </div>
-          <button type="button" class="close" title="关闭" @click="ui.closeSettings()">
+          <button
+            type="button"
+            class="close"
+            :title="t('common.close')"
+            @click="ui.closeSettings()"
+          >
             <X :size="18" />
           </button>
         </header>
@@ -126,7 +149,7 @@ function onOverlayClick(event: MouseEvent) {
         <div class="scroll">
           <template v-if="activeNav === 'editor'">
             <div class="ui-card section">
-              <h3>外观主题</h3>
+              <h3>{{ t("settings.appearance") }}</h3>
               <div class="theme-grid">
                 <button
                   v-for="item in themes"
@@ -151,10 +174,10 @@ function onOverlayClick(event: MouseEvent) {
             </div>
 
             <div class="ui-card section">
-              <h3>排版与布局</h3>
+              <h3>{{ t("settings.layout") }}</h3>
               <div class="form-grid">
                 <label class="field">
-                  <span class="field-label">字号</span>
+                  <span class="field-label">{{ t("settings.fontSize") }}</span>
                   <input
                     v-bind="PLAIN_INPUT_ATTRS"
                     class="ui-input"
@@ -167,7 +190,7 @@ function onOverlayClick(event: MouseEvent) {
                   />
                 </label>
                 <label class="field">
-                  <span class="field-label">TAB 大小</span>
+                  <span class="field-label">{{ t("settings.tabSize") }}</span>
                   <select
                     class="ui-select"
                     :value="editor.tabSize"
@@ -178,37 +201,37 @@ function onOverlayClick(event: MouseEvent) {
                   </select>
                 </label>
                 <label class="field">
-                  <span class="field-label">自动换行</span>
+                  <span class="field-label">{{ t("settings.wordWrap") }}</span>
                   <select
                     class="ui-select"
                     :value="editor.wordWrap ? 'on' : 'off'"
                     @change="settings.patchEditor({ wordWrap: ($event.target as HTMLSelectElement).value === 'on' })"
                   >
-                    <option value="on">开启</option>
-                    <option value="off">关闭</option>
+                    <option value="on">{{ t("common.on") }}</option>
+                    <option value="off">{{ t("common.off") }}</option>
                   </select>
                 </label>
                 <label class="field">
-                  <span class="field-label">行号</span>
+                  <span class="field-label">{{ t("settings.lineNumbers") }}</span>
                   <select
                     class="ui-select"
                     :value="editor.lineNumbers ? 'on' : 'off'"
                     @change="settings.patchEditor({ lineNumbers: ($event.target as HTMLSelectElement).value === 'on' })"
                   >
-                    <option value="on">开启</option>
-                    <option value="off">关闭</option>
+                    <option value="on">{{ t("common.on") }}</option>
+                    <option value="off">{{ t("common.off") }}</option>
                   </select>
                 </label>
               </div>
             </div>
 
             <div class="ui-card section">
-              <h3>文件保存</h3>
+              <h3>{{ t("settings.fileSave") }}</h3>
               <div class="save-row">
                 <div class="save-copy">
-                  <span class="field-label">自动保存</span>
+                  <span class="field-label">{{ t("settings.autoSave") }}</span>
                   <p class="desc">
-                    编辑后延迟写盘；窗口隐藏或退出前会强制落盘，降低崩溃丢改风险。
+                    {{ t("settings.autoSaveDesc") }}
                   </p>
                 </div>
                 <button
@@ -217,27 +240,27 @@ function onOverlayClick(event: MouseEvent) {
                   role="switch"
                   :aria-checked="editor.autoSave"
                   :data-on="editor.autoSave"
-                  :title="editor.autoSave ? '已开启' : '已关闭'"
+                  :title="editor.autoSave ? t('settings.enabled') : t('settings.disabled')"
                   @click="settings.patchEditor({ autoSave: !editor.autoSave })"
                 />
               </div>
               <label v-if="editor.autoSave" class="field delay-field">
-                <span class="field-label">延迟</span>
+                <span class="field-label">{{ t("settings.delay") }}</span>
                 <select
                   class="ui-select"
                   :value="editor.autoSaveDelayMs"
                   @change="settings.patchEditor({ autoSaveDelayMs: Number(($event.target as HTMLSelectElement).value) || 1000 })"
                 >
-                  <option :value="500">0.5 秒</option>
-                  <option :value="1000">1 秒</option>
-                  <option :value="2000">2 秒</option>
-                  <option :value="5000">5 秒</option>
+                  <option :value="500">{{ t("settings.delay05") }}</option>
+                  <option :value="1000">{{ t("settings.delay1") }}</option>
+                  <option :value="2000">{{ t("settings.delay2") }}</option>
+                  <option :value="5000">{{ t("settings.delay5") }}</option>
                 </select>
               </label>
             </div>
 
             <div class="ui-card section">
-              <h3>代码补全</h3>
+              <h3>{{ t("settings.completion") }}</h3>
               <p class="desc">
                 {{ completionHint }}
               </p>
@@ -246,7 +269,7 @@ function onOverlayClick(event: MouseEvent) {
 
           <template v-else-if="activeNav === 'shortcuts'">
             <div class="ui-card section">
-              <h3>常用快捷键</h3>
+              <h3>{{ t("settings.shortcutsTitle") }}</h3>
               <dl class="shortcut-list">
                 <div v-for="row in shortcutRows" :key="row.keys">
                   <dt>{{ row.keys }}</dt>
@@ -258,18 +281,20 @@ function onOverlayClick(event: MouseEvent) {
 
           <template v-else>
             <div class="ui-card section">
-              <h3>关于 Miro Code</h3>
-              <p class="desc">米罗编辑器 · 轻量、丝滑、美观的桌面代码编辑器</p>
-              <p class="desc">版本 {{ appVersion }} · Tauri + Vue 3 + CodeMirror 6</p>
-              <p class="desc muted">专注本地编辑体验，不含 AI Agent / 模型配置。</p>
+              <h3>{{ t("settings.aboutTitle") }}</h3>
+              <p class="desc">{{ t("settings.aboutDesc") }}</p>
+              <p class="desc">
+                {{ t("settings.aboutVersion", { version: appVersion }) }}
+              </p>
+              <p class="desc muted">{{ t("settings.aboutFocus") }}</p>
             </div>
             <div class="ui-card section">
-              <h3>软件更新</h3>
+              <h3>{{ t("settings.updates") }}</h3>
               <div class="save-row">
                 <div class="save-copy">
-                  <span class="field-label">启动时自动检查</span>
+                  <span class="field-label">{{ t("settings.autoCheckUpdates") }}</span>
                   <p class="desc">
-                    启动约 4 秒后静默检查 GitHub Release；仅有新版本时提示，确认后下载安装并重启。
+                    {{ t("settings.autoCheckUpdatesDesc") }}
                   </p>
                 </div>
                 <button
@@ -288,16 +313,19 @@ function onOverlayClick(event: MouseEvent) {
                   :disabled="checkingUpdate"
                   @click="onCheckUpdate"
                 >
-                  {{ checkingUpdate ? "检查中…" : "检查更新" }}
+                  {{
+                    checkingUpdate
+                      ? t("settings.checkingUpdate")
+                      : t("settings.checkUpdate")
+                  }}
                 </button>
               </div>
             </div>
             <div class="ui-card section">
-              <h3>开源许可</h3>
-              <p class="desc">本软件以 <strong>MIT License</strong> 开源免费分发。</p>
+              <h3>{{ t("settings.license") }}</h3>
+              <p class="desc">{{ t("settings.licenseMit") }}</p>
               <p class="desc muted">
-                本产品基于 Tauri、CodeMirror、libgit2 等开源软件构建。完整第三方许可列表见仓库根目录
-                <code>THIRD-PARTY-NOTICES.md</code>（安装包 Resources 中同步附带）。
+                {{ t("settings.licenseThirdParty") }}
               </p>
             </div>
           </template>

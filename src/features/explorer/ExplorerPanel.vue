@@ -18,13 +18,13 @@ import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { basename, dirname, relativeToRoot } from "@/shared/fs";
 import { openFolderInNewWindow } from "@/shared/openWorkspace";
 import { formatShortcut } from "@/shared/platform";
+import { useI18n } from "@/i18n";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
 
-const locateFileTitle = `定位到当前打开的文件（${formatShortcut("alt", "F1")}）`;
-
+const { t } = useI18n();
 const workspace = useWorkspaceStore();
 const editor = useEditorStore();
 const git = useGitStore();
@@ -58,7 +58,12 @@ const openingMode = ref(false);
 const dirtySet = computed(() => editor.dirtyPaths);
 const canLocate = computed(() => Boolean(rootPath.value && activePath.value));
 const isRootTarget = computed(() => Boolean(menu.value?.isRoot));
-const panelTitle = computed(() => (rootPath.value ? rootName.value : "选择项目"));
+const locateFileTitle = computed(() =>
+  t("explorer.revealActiveTitle", { shortcut: formatShortcut("alt", "F1") }),
+);
+const panelTitle = computed(() =>
+  rootPath.value ? rootName.value : t("explorer.selectProject"),
+);
 const switchCandidates = computed(() =>
   recentFolders.value.filter((p) => p !== rootPath.value),
 );
@@ -102,7 +107,7 @@ async function onOpenNewProject() {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "打开新项目",
+      title: t("explorer.openNewProjectDialog"),
     });
     if (!selected || Array.isArray(selected)) return;
     pendingOpenPath.value = selected;
@@ -118,7 +123,9 @@ async function confirmOpenMode(mode: "current" | "new") {
   try {
     if (mode === "new") {
       await openFolderInNewWindow(path);
-      workspace.showNotice(`已在新窗口打开 ${basename(path)}`);
+      workspace.showNotice(
+        t("explorer.openedInNewWindow", { name: basename(path) }),
+      );
     } else {
       await workspace.openFolder(path);
     }
@@ -212,13 +219,15 @@ function onContext(event: MouseEvent, path: string, isDir: boolean) {
 
 async function locateActiveFile() {
   if (!activePath.value) {
-    workspace.showNotice("当前没有打开的文件");
+    workspace.showNotice(t("notice.noActiveFile"));
     return;
   }
   settings.setActivePanel("explorer");
   settings.setSidebarCollapsed(false);
   await workspace.revealPath(activePath.value);
-  workspace.showNotice(`已定位 ${basename(activePath.value)}`);
+  workspace.showNotice(
+    t("notice.revealed", { name: basename(activePath.value) }),
+  );
 }
 
 async function runMenu(action: string) {
@@ -239,7 +248,7 @@ async function runMenu(action: string) {
     }
     if (action === "rename") {
       if (isRoot) {
-        workspace.showNotice("不能重命名工作区根目录");
+        workspace.showNotice(t("explorer.cannotRenameRoot"));
         return;
       }
       const result = await workspace.renamePath(path);
@@ -250,7 +259,7 @@ async function runMenu(action: string) {
     }
     if (action === "delete") {
       if (isRoot) {
-        workspace.showNotice("不能删除工作区根目录");
+        workspace.showNotice(t("explorer.cannotDeleteRoot"));
         return;
       }
       const ok = await workspace.removePath(path);
@@ -263,7 +272,7 @@ async function runMenu(action: string) {
     }
     if (action === "cut") {
       if (isRoot) {
-        workspace.showNotice("不能剪切工作区根目录");
+        workspace.showNotice(t("explorer.cannotCutRoot"));
         return;
       }
       workspace.setClipboard("cut", path);
@@ -278,13 +287,13 @@ async function runMenu(action: string) {
     }
     if (action === "copy-abs-path") {
       await writeClipboard(path);
-      workspace.showNotice("已复制绝对路径");
+      workspace.showNotice(t("explorer.copiedAbsPath"));
       return;
     }
     if (action === "copy-rel-path") {
       const rel = relativeToRoot(rootPath.value, path);
       await writeClipboard(rel);
-      workspace.showNotice("已复制相对路径");
+      workspace.showNotice(t("explorer.copiedRelPath"));
     }
   } catch (error) {
     workspace.showNotice(
@@ -304,7 +313,7 @@ defineExpose({ locateActiveFile });
         <button
           type="button"
           class="title-btn"
-          :title="rootPath ?? '选择或切换项目'"
+          :title="rootPath ?? t('explorer.selectOrSwitch')"
           @click.stop="toggleProjectMenu"
         >
           <span class="title">{{ panelTitle }}</span>
@@ -313,11 +322,11 @@ defineExpose({ locateActiveFile });
         <div v-if="projectMenuOpen" class="project-menu" @click.stop>
           <button type="button" class="project-item primary" @click="onOpenNewProject">
             <FolderInput :size="14" />
-            <span>打开新项目…</span>
+            <span>{{ t("explorer.openNewProject") }}</span>
           </button>
           <template v-if="switchCandidates.length">
             <div class="project-sep" />
-            <p class="project-label">最近项目</p>
+            <p class="project-label">{{ t("explorer.recentProjects") }}</p>
             <button
               v-for="item in switchCandidates"
               :key="item"
@@ -336,7 +345,7 @@ defineExpose({ locateActiveFile });
         <button
           type="button"
           class="icon-btn"
-          title="新建文件"
+          :title="t('explorer.newFile')"
           @click.stop="createFromToolbar(false)"
         >
           <FilePlus :size="15" />
@@ -344,7 +353,7 @@ defineExpose({ locateActiveFile });
         <button
           type="button"
           class="icon-btn"
-          title="新建文件夹"
+          :title="t('explorer.newFolder')"
           @click.stop="createFromToolbar(true)"
         >
           <FolderPlus :size="15" />
@@ -352,7 +361,7 @@ defineExpose({ locateActiveFile });
         <button
           type="button"
           class="icon-btn"
-          title="刷新资源管理器与打开的文件"
+          :title="t('explorer.refreshAll')"
           :disabled="refreshing"
           @click.stop="workspace.refreshFromDisk()"
         >
@@ -370,7 +379,7 @@ defineExpose({ locateActiveFile });
         <button
           type="button"
           class="icon-btn"
-          title="折叠全部文件夹"
+          :title="t('explorer.collapseAllFolders')"
           @click.stop="workspace.collapseAll()"
         >
           <ChevronsDownUp :size="15" />
@@ -384,7 +393,7 @@ defineExpose({ locateActiveFile });
       @mousedown.self="cancelOpenMode"
     >
       <div class="mode-card" @click.stop>
-        <p class="mode-title">打开项目</p>
+        <p class="mode-title">{{ t("explorer.openProject") }}</p>
         <p class="mode-path" :title="pendingOpenPath">
           {{ basename(pendingOpenPath) }}
         </p>
@@ -394,7 +403,7 @@ defineExpose({ locateActiveFile });
           :disabled="openingMode"
           @click="confirmOpenMode('current')"
         >
-          在本窗口打开
+          {{ t("explorer.openInThisWindow") }}
         </button>
         <button
           type="button"
@@ -402,7 +411,7 @@ defineExpose({ locateActiveFile });
           :disabled="openingMode"
           @click="confirmOpenMode('new')"
         >
-          在新窗口打开
+          {{ t("explorer.openInNewWindow") }}
         </button>
         <button
           type="button"
@@ -410,7 +419,7 @@ defineExpose({ locateActiveFile });
           :disabled="openingMode"
           @click="cancelOpenMode"
         >
-          取消
+          {{ t("common.cancel") }}
         </button>
       </div>
     </div>
@@ -420,10 +429,12 @@ defineExpose({ locateActiveFile });
         <div class="empty">
           <FolderOpen :size="28" :stroke-width="1.5" class="icon" />
           <p class="name">{{ rootName }}</p>
-          <p class="hint">打开本地文件夹后展示项目树</p>
-          <button class="cta" type="button" @click="onOpen">打开文件夹…</button>
+          <p class="hint">{{ t("explorer.emptyHint") }}</p>
+          <button class="cta" type="button" @click="onOpen">
+            {{ t("explorer.openFolder") }}
+          </button>
           <div v-if="recentFolders.length" class="recent">
-            <p class="recent-title">最近打开</p>
+            <p class="recent-title">{{ t("explorer.recentOpened") }}</p>
             <button
               v-for="item in recentFolders"
               :key="item"
@@ -488,38 +499,48 @@ defineExpose({ locateActiveFile });
       @click.stop
       @contextmenu.prevent
     >
-      <button type="button" @click="runMenu('new-file')">新建文件</button>
-      <button type="button" @click="runMenu('new-folder')">新建文件夹</button>
+      <button type="button" @click="runMenu('new-file')">
+        {{ t("explorer.newFile") }}
+      </button>
+      <button type="button" @click="runMenu('new-folder')">
+        {{ t("explorer.newFolder") }}
+      </button>
       <hr />
       <button
         type="button"
         :disabled="isRootTarget"
         @click="runMenu('rename')"
       >
-        重命名
+        {{ t("explorer.rename") }}
       </button>
       <button
         type="button"
         :disabled="isRootTarget"
         @click="runMenu('delete')"
       >
-        删除
+        {{ t("explorer.delete") }}
       </button>
       <hr />
-      <button type="button" @click="runMenu('copy')">复制</button>
+      <button type="button" @click="runMenu('copy')">
+        {{ t("explorer.copy") }}
+      </button>
       <button
         type="button"
         :disabled="isRootTarget"
         @click="runMenu('cut')"
       >
-        剪切
+        {{ t("explorer.cut") }}
       </button>
       <button type="button" :disabled="!clipboard" @click="runMenu('paste')">
-        粘贴
+        {{ t("explorer.paste") }}
       </button>
       <hr />
-      <button type="button" @click="runMenu('copy-abs-path')">复制绝对路径</button>
-      <button type="button" @click="runMenu('copy-rel-path')">复制相对路径</button>
+      <button type="button" @click="runMenu('copy-abs-path')">
+        {{ t("explorer.copyAbsPath") }}
+      </button>
+      <button type="button" @click="runMenu('copy-rel-path')">
+        {{ t("explorer.copyRelPath") }}
+      </button>
     </div>
   </div>
 </template>

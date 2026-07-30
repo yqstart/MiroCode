@@ -1,9 +1,154 @@
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
-    Emitter, Manager,
+    AppHandle, Emitter, Manager, Runtime,
 };
 
 mod commands;
+
+struct NativeMenuLabels {
+    file: &'static str,
+    edit: &'static str,
+    open_folder: &'static str,
+    save: &'static str,
+    find_file: &'static str,
+    search: &'static str,
+    reveal: &'static str,
+    terminal: &'static str,
+    sidebar: &'static str,
+    settings: &'static str,
+    quit: &'static str,
+    undo: &'static str,
+    redo: &'static str,
+    cut: &'static str,
+    copy: &'static str,
+    paste: &'static str,
+    select_all: &'static str,
+}
+
+fn menu_labels(locale: &str) -> NativeMenuLabels {
+    if locale == "en-US" || locale.starts_with("en") {
+        NativeMenuLabels {
+            file: "File",
+            edit: "Edit",
+            open_folder: "Open Folder…",
+            save: "Save",
+            find_file: "Find File…",
+            search: "Find in Files…",
+            reveal: "Reveal in Explorer",
+            terminal: "Toggle Terminal",
+            sidebar: "Toggle Sidebar",
+            settings: "Settings…",
+            quit: "Quit Miro Code",
+            undo: "Undo",
+            redo: "Redo",
+            cut: "Cut",
+            copy: "Copy",
+            paste: "Paste",
+            select_all: "Select All",
+        }
+    } else {
+        NativeMenuLabels {
+            file: "文件",
+            edit: "编辑",
+            open_folder: "打开文件夹…",
+            save: "保存",
+            find_file: "查找文件…",
+            search: "在文件中查找…",
+            reveal: "在资源管理器中显示",
+            terminal: "切换终端",
+            sidebar: "切换侧边栏",
+            settings: "设置…",
+            quit: "退出 Miro Code",
+            undo: "撤销",
+            redo: "重做",
+            cut: "剪切",
+            copy: "复制",
+            paste: "粘贴",
+            select_all: "全选",
+        }
+    }
+}
+
+fn build_app_menu<R: Runtime>(
+    handle: &AppHandle<R>,
+    locale: &str,
+) -> tauri::Result<Menu<R>> {
+    let l = menu_labels(locale);
+
+    let open_folder =
+        MenuItem::with_id(handle, "open_folder", l.open_folder, true, Some("CmdOrCtrl+O"))?;
+    let save = MenuItem::with_id(handle, "save", l.save, true, Some("CmdOrCtrl+S"))?;
+    let find_file =
+        MenuItem::with_id(handle, "find_file", l.find_file, true, Some("CmdOrCtrl+P"))?;
+    let search =
+        MenuItem::with_id(handle, "search", l.search, true, Some("CmdOrCtrl+Shift+F"))?;
+    let reveal_in_explorer = MenuItem::with_id(
+        handle,
+        "reveal_in_explorer",
+        l.reveal,
+        true,
+        Some("Alt+F1"),
+    )?;
+    let terminal =
+        MenuItem::with_id(handle, "terminal", l.terminal, true, Some("CmdOrCtrl+J"))?;
+    let toggle_sidebar = MenuItem::with_id(
+        handle,
+        "toggle_sidebar",
+        l.sidebar,
+        true,
+        Some("CmdOrCtrl+B"),
+    )?;
+    let settings = MenuItem::with_id(handle, "settings", l.settings, true, Some("CmdOrCtrl+,"))?;
+    let separator = PredefinedMenuItem::separator(handle)?;
+    let quit = PredefinedMenuItem::quit(handle, Some(l.quit))?;
+
+    let file_menu = Submenu::with_items(
+        handle,
+        l.file,
+        true,
+        &[
+            &open_folder,
+            &save,
+            &separator,
+            &find_file,
+            &search,
+            &reveal_in_explorer,
+            &terminal,
+            &toggle_sidebar,
+            &separator,
+            &settings,
+            &quit,
+        ],
+    )?;
+
+    // macOS WKWebView：自定义菜单会替换系统默认「编辑」菜单，
+    // 必须显式加入剪切/复制/粘贴，否则 Cmd+X/C/V 无法路由到 Web 内容。
+    // 预定义项传入显式文案，跟随应用语言，而非 macOS 系统语言。
+    let edit_menu = Submenu::with_items(
+        handle,
+        l.edit,
+        true,
+        &[
+            &PredefinedMenuItem::undo(handle, Some(l.undo))?,
+            &PredefinedMenuItem::redo(handle, Some(l.redo))?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::cut(handle, Some(l.cut))?,
+            &PredefinedMenuItem::copy(handle, Some(l.copy))?,
+            &PredefinedMenuItem::paste(handle, Some(l.paste))?,
+            &PredefinedMenuItem::select_all(handle, Some(l.select_all))?,
+        ],
+    )?;
+
+    Menu::with_items(handle, &[&file_menu, &edit_menu])
+}
+
+/// 按应用内语言重建原生菜单栏（无需重启）
+#[tauri::command]
+fn set_app_menu_locale(app: AppHandle, locale: String) -> Result<(), String> {
+    let menu = build_app_menu(&app, &locale).map_err(|e| e.to_string())?;
+    app.set_menu(menu).map_err(|e| e.to_string())?;
+    Ok(())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,70 +163,8 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle();
 
-            let open_folder =
-                MenuItem::with_id(handle, "open_folder", "打开文件夹…", true, Some("CmdOrCtrl+O"))?;
-            let save = MenuItem::with_id(handle, "save", "保存", true, Some("CmdOrCtrl+S"))?;
-            let find_file =
-                MenuItem::with_id(handle, "find_file", "查找文件…", true, Some("CmdOrCtrl+P"))?;
-            let search =
-                MenuItem::with_id(handle, "search", "在文件中查找…", true, Some("CmdOrCtrl+Shift+F"))?;
-            let reveal_in_explorer = MenuItem::with_id(
-                handle,
-                "reveal_in_explorer",
-                "在资源管理器中显示",
-                true,
-                Some("Alt+F1"),
-            )?;
-            let terminal =
-                MenuItem::with_id(handle, "terminal", "切换终端", true, Some("CmdOrCtrl+J"))?;
-            let toggle_sidebar = MenuItem::with_id(
-                handle,
-                "toggle_sidebar",
-                "切换侧边栏",
-                true,
-                Some("CmdOrCtrl+B"),
-            )?;
-            let settings = MenuItem::with_id(handle, "settings", "设置…", true, Some("CmdOrCtrl+,"))?;
-            let separator = PredefinedMenuItem::separator(handle)?;
-            let quit = PredefinedMenuItem::quit(handle, Some("退出 Miro Code"))?;
-
-            let file_menu = Submenu::with_items(
-                handle,
-                "文件",
-                true,
-                &[
-                    &open_folder,
-                    &save,
-                    &separator,
-                    &find_file,
-                    &search,
-                    &reveal_in_explorer,
-                    &terminal,
-                    &toggle_sidebar,
-                    &separator,
-                    &settings,
-                    &quit,
-                ],
-            )?;
-
-            // macOS WKWebView：自定义菜单会替换系统默认「编辑」菜单，
-            // 必须显式加入剪切/复制/粘贴，否则 Cmd+X/C/V 无法路由到 Web 内容。
-            let edit_menu = Submenu::with_items(
-                handle,
-                "编辑",
-                true,
-                &[
-                    &PredefinedMenuItem::undo(handle, None)?,
-                    &PredefinedMenuItem::redo(handle, None)?,
-                    &PredefinedMenuItem::separator(handle)?,
-                    &PredefinedMenuItem::cut(handle, None)?,
-                    &PredefinedMenuItem::copy(handle, None)?,
-                    &PredefinedMenuItem::paste(handle, None)?,
-                    &PredefinedMenuItem::select_all(handle, None)?,
-                ],
-            )?;
-
-            let menu = Menu::with_items(handle, &[&file_menu, &edit_menu])?;
+            // 启动默认中文菜单；前端读到 settings.locale 后会再同步一次
+            let menu = build_app_menu(handle, "zh-CN")?;
             app.set_menu(menu)?;
 
             app.on_menu_event(|app, event| {
@@ -103,6 +186,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            set_app_menu_locale,
             commands::fs::list_dir,
             commands::fs::read_text_file,
             commands::fs::read_file_base64,
@@ -179,5 +263,5 @@ pub fn run() {
             commands::window_chrome::sync_traffic_lights,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Miro Code");
+        .expect("error while running tauri application");
 }

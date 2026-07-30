@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Upload,
 } from "lucide-vue-next";
+import { useI18n } from "@/i18n";
 import {
   sftpClose,
   sftpList,
@@ -28,6 +29,7 @@ const emit = defineEmits<{
   disconnected: [];
 }>();
 
+const { t } = useI18n();
 const cwd = ref("/");
 const entries = ref<SftpEntry[]>([]);
 const loading = ref(false);
@@ -77,7 +79,7 @@ async function goParent() {
 async function onUpload() {
   const selected = await open({
     multiple: true,
-    title: "选择要上传的文件",
+    title: t("sftp.selectUpload"),
   });
   if (!selected) return;
   const files = Array.isArray(selected) ? selected : [selected];
@@ -92,7 +94,7 @@ async function onUpload() {
       await sftpUpload(props.sessionId, local, remote);
       ok += 1;
     }
-    notice.value = `已上传 ${ok} 个文件`;
+    notice.value = t("sftp.uploaded", { count: ok });
     window.setTimeout(() => {
       notice.value = "";
     }, 2400);
@@ -132,7 +134,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="icon-btn"
-          title="上级目录"
+          :title="t('sftp.parentDir')"
           :disabled="!parentPath || loading"
           @click="goParent"
         >
@@ -141,7 +143,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="icon-btn"
-          title="刷新"
+          :title="t('sftp.refresh')"
           :disabled="loading"
           @click="loadDir(cwd)"
         >
@@ -154,9 +156,9 @@ onBeforeUnmount(() => {
           @click="onUpload"
         >
           <Upload :size="14" />
-          {{ uploading ? "上传中…" : "上传" }}
+          {{ uploading ? t("sftp.uploading") : t("sftp.upload") }}
         </button>
-        <button type="button" class="ghost" @click="onDisconnect">断开</button>
+        <button type="button" class="ghost" @click="onDisconnect">{{ t("sftp.disconnect") }}</button>
       </div>
     </header>
 
@@ -172,7 +174,7 @@ onBeforeUnmount(() => {
       >
         <Folder :size="14" class="folder" />
         <span class="name">..</span>
-        <span class="meta">上级</span>
+        <span class="meta">{{ t("sftp.parent") }}</span>
       </button>
       <button
         v-for="entry in entries"
@@ -191,11 +193,17 @@ onBeforeUnmount(() => {
         <span class="name">{{ entry.name }}</span>
         <span class="meta">{{ formatSize(entry.size, entry.isDir) }}</span>
       </button>
-      <div v-if="!loading && !entries.length" class="empty">目录为空</div>
+      <div v-if="!loading && !entries.length" class="empty">{{ t("sftp.empty") }}</div>
     </div>
 
     <footer class="footer">
-      {{ config.username }}@{{ config.host }} · {{ entries.length }} 项
+      {{
+        t("sftp.itemCount", {
+          user: config.username,
+          host: config.host,
+          count: entries.length,
+        })
+      }}
     </footer>
   </div>
 </template>

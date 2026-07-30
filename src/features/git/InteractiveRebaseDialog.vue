@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { useI18n } from "@/i18n";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import {
   registerInteractiveRebaseHandler,
@@ -16,9 +17,10 @@ interface Row {
   time: string;
 }
 
+const { t } = useI18n();
 const git = useGitStore();
 const visible = ref(false);
-const title = ref("Interactive Rebase");
+const title = ref("");
 const onto = ref("");
 const rows = ref<Row[]>([]);
 const loading = ref(false);
@@ -33,7 +35,7 @@ async function open(options: InteractiveRebaseOptions): Promise<boolean> {
     resolveFn(false);
     resolveFn = null;
   }
-  title.value = options.title ?? "Interactive Rebase";
+  title.value = options.title ?? t("interactiveRebase.title");
   onto.value = options.onto;
   visible.value = true;
   loading.value = true;
@@ -123,11 +125,11 @@ onBeforeUnmount(() => {
     <div class="dialog" role="dialog" aria-modal="true" :aria-label="title">
       <h3 class="title">{{ title }}</h3>
       <p class="hint">
-        Onto <code>{{ onto.slice(0, 12) }}</code> — 拖拽排序，选择动作后开始
+        {{ t("interactiveRebase.hint", { onto: onto.slice(0, 12) }) }}
       </p>
 
-      <div v-if="loading" class="empty">加载提交…</div>
-      <div v-else-if="!rows.length" class="empty">没有可重放的提交</div>
+      <div v-if="loading" class="empty">{{ t("interactiveRebase.loading") }}</div>
+      <div v-else-if="!rows.length" class="empty">{{ t("interactiveRebase.empty") }}</div>
       <div v-else class="list">
         <div
           v-for="(row, index) in rows"
@@ -138,7 +140,7 @@ onBeforeUnmount(() => {
           @dragover.prevent
           @drop="onDrop(index)"
         >
-          <span class="grip" title="拖拽排序">⋮⋮</span>
+          <span class="grip" :title="t('interactiveRebase.dragTitle')">⋮⋮</span>
           <select v-model="row.action" class="action">
             <option v-for="a in ACTIONS" :key="a" :value="a">{{ a }}</option>
           </select>
@@ -155,14 +157,14 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="actions">
-        <button type="button" class="btn ghost" @click="onCancel">取消</button>
+        <button type="button" class="btn ghost" @click="onCancel">{{ t("common.cancel") }}</button>
         <button
           type="button"
           class="btn primary"
           :disabled="loading || !rows.length"
           @click="onStart"
         >
-          Start Rebasing
+          {{ t("interactiveRebase.start") }}
         </button>
       </div>
     </div>

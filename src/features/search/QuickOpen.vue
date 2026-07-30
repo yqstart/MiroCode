@@ -4,9 +4,11 @@ import { Search } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
+import { useI18n } from "@/i18n";
 import { useEditorStore } from "@/stores/editor";
 import { useSearchStore } from "@/stores/search";
 
+const { t } = useI18n();
 const search = useSearchStore();
 const editor = useEditorStore();
 const { fileQuery, fileResults, quickOpenVisible, loading } = storeToRefs(search);
@@ -81,7 +83,7 @@ onMounted(() => {
 
 <template>
   <div v-if="quickOpenVisible" class="overlay" @mousedown.self="close">
-    <div class="panel" role="dialog" aria-label="快速打开">
+    <div class="panel" role="dialog" :aria-label="t('search.quickOpenTitle')">
       <form class="input-row" autocomplete="off" @submit.prevent>
         <Search :size="16" class="icon" />
         <input
@@ -91,10 +93,10 @@ onMounted(() => {
           class="query"
           type="text"
           name="miro-quick-open"
-          placeholder="输入文件名…"
+          :placeholder="t('search.quickOpenPlaceholder')"
           @keydown="onKeydown"
         />
-        <span v-if="loading" class="hint">搜索中…</span>
+        <span v-if="loading" class="hint">{{ t("search.searching") }}</span>
       </form>
 
       <div v-if="displayResults.length" class="results">
@@ -114,7 +116,7 @@ onMounted(() => {
       </div>
 
       <div v-else-if="fileQuery.trim() && !loading" class="empty">
-        未找到匹配文件
+        {{ t("search.noMatchingFiles") }}
       </div>
     </div>
   </div>

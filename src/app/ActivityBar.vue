@@ -18,7 +18,9 @@ import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
 import type { SidePanelId } from "@/shared/types";
+import { useI18n } from "@/i18n";
 
+const { t } = useI18n();
 const settings = useSettingsStore();
 const ui = useUiStore();
 const sessions = useSessionsStore();
@@ -123,12 +125,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <aside class="activity-bar" aria-label="活动栏">
+  <aside class="activity-bar" :aria-label="t('app.activityBar')">
     <div class="group">
       <button
         class="item"
         type="button"
-        title="项目（资源管理器）"
+        :title="t('activity.explorer')"
         :class="{
           active:
             layout.activePanel === 'explorer' && !layout.sidebarCollapsed,
@@ -142,8 +144,8 @@ onBeforeUnmount(() => {
         type="button"
         :title="
           gitBadge
-            ? `Commit · ${changedFileCount} 个变更（⌘K）`
-            : 'Commit（⌘K）'
+            ? t('activity.commitWithChanges', { count: changedFileCount })
+            : t('activity.commit')
         "
         :class="{ active: commitActive }"
         @click="selectPanel('commit')"
@@ -157,7 +159,7 @@ onBeforeUnmount(() => {
       <button
         class="item"
         type="button"
-        title="Git Log（编辑区）"
+        :title="t('activity.gitLog')"
         :class="{ active: logActive }"
         @click="toggleLog"
       >
@@ -167,7 +169,7 @@ onBeforeUnmount(() => {
         ref="scriptsBtn"
         class="item"
         type="button"
-        title="运行 package.json scripts"
+        :title="t('activity.scripts')"
         :class="{ active: scriptsOpen }"
         :disabled="!workspace.rootPath"
         @click="toggleScripts"
@@ -178,13 +180,18 @@ onBeforeUnmount(() => {
       <button
         class="item"
         type="button"
-        title="终端"
+        :title="t('activity.terminal')"
         :class="{ active: isFocused }"
         @click="openTerminal"
       >
         <TerminalSquare :size="18" :stroke-width="1.75" />
       </button>
-      <button class="item" type="button" title="设置" @click="ui.openSettings()">
+      <button
+        class="item"
+        type="button"
+        :title="t('activity.settings')"
+        @click="ui.openSettings()"
+      >
         <Settings :size="18" :stroke-width="1.75" />
       </button>
     </div>

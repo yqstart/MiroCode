@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
+import { useI18n } from "@/i18n";
 import {
   registerUpdateDialogHandler,
   type UpdateStrategy,
 } from "@/shared/gitDialogs";
 import { useGitStore } from "@/stores/git";
 
+const { t } = useI18n();
 const visible = ref(false);
 const strategy = ref<UpdateStrategy>("merge");
 const git = useGitStore();
@@ -63,34 +65,34 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-if="visible" class="overlay" @mousedown.self="onCancel">
-    <div class="dialog" role="dialog" aria-modal="true" aria-label="Update Project">
-      <h3 class="title">Update Project</h3>
+    <div class="dialog" role="dialog" aria-modal="true" :aria-label="t('updateProject.title')">
+      <h3 class="title">{{ t("updateProject.title") }}</h3>
       <p class="meta">
         {{ snapshot.branch ?? "—" }}
         <template v-if="snapshot.upstream"> ← {{ snapshot.upstream }}</template>
         <span v-if="snapshot.behind" class="behind">↓{{ snapshot.behind }}</span>
       </p>
-      <p class="desc">先 Fetch，再按所选策略更新当前分支（对齐 WebStorm）。</p>
+      <p class="desc">{{ t("updateProject.desc") }}</p>
 
       <label class="radio">
         <input v-model="strategy" type="radio" value="merge" />
         <span>
-          <strong>Merge</strong>
-          <small>合并远程变更（可能产生 merge commit）</small>
+          <strong>{{ t("updateProject.merge") }}</strong>
+          <small>{{ t("updateProject.mergeDesc") }}</small>
         </span>
       </label>
       <label class="radio">
         <input v-model="strategy" type="radio" value="rebase" />
         <span>
-          <strong>Rebase</strong>
-          <small>变基到上游（历史更线性；冲突时可在 Commit 面板 Continue）</small>
+          <strong>{{ t("updateProject.rebase") }}</strong>
+          <small>{{ t("updateProject.rebaseDesc") }}</small>
         </span>
       </label>
 
       <div class="actions">
-        <button type="button" class="btn ghost" @click="onCancel">取消</button>
+        <button type="button" class="btn ghost" @click="onCancel">{{ t("common.cancel") }}</button>
         <button type="button" class="btn primary" @click="onConfirm">
-          Update
+          {{ t("updateProject.confirm") }}
         </button>
       </div>
     </div>

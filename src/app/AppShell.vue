@@ -27,6 +27,7 @@ import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { t } from "@/i18n";
 
 const ui = useUiStore();
 const workspace = useWorkspaceStore();
@@ -74,13 +75,13 @@ function toggleCommitPanel() {
 
 async function locateActiveInExplorer() {
   if (!editor.activePath) {
-    workspace.showNotice("当前没有打开的文件");
+    workspace.showNotice(t("notice.noActiveFile"));
     return;
   }
   settings.setActivePanel("explorer");
   settings.setSidebarCollapsed(false);
   await workspace.revealPath(editor.activePath);
-  workspace.showNotice(`已定位 ${basename(editor.activePath)}`);
+  workspace.showNotice(t("notice.revealed", { name: basename(editor.activePath) }));
 }
 
 function handleMenuAction(action: string) {

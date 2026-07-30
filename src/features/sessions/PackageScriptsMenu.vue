@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Play, RefreshCw } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
+import { useI18n } from "@/i18n";
 import { usePackageScriptsStore } from "@/stores/packageScripts";
 
 const props = defineProps<{
@@ -12,6 +13,7 @@ const emit = defineEmits<{
   ran: [];
 }>();
 
+const { t } = useI18n();
 const pkg = usePackageScriptsStore();
 const { scripts, manager, packageName, loading, hasPackageJson } =
   storeToRefs(pkg);
@@ -30,14 +32,14 @@ async function onRefresh() {
   <div class="scripts" :data-variant="props.variant ?? 'panel'">
     <header class="head">
       <div class="title-wrap">
-        <span class="title">Scripts</span>
+        <span class="title">{{ t("packageScripts.title") }}</span>
         <span v-if="packageName" class="pkg">{{ packageName }}</span>
         <span v-if="hasPackageJson" class="pm">{{ manager }}</span>
       </div>
       <button
         type="button"
         class="icon-btn"
-        title="刷新 package.json"
+        :title="t('packageScripts.refresh')"
         :disabled="loading"
         @click="onRefresh"
       >
@@ -45,9 +47,9 @@ async function onRefresh() {
       </button>
     </header>
 
-    <div v-if="loading && !scripts.length" class="hint">读取 scripts…</div>
-    <div v-else-if="!hasPackageJson" class="hint">当前项目无 package.json</div>
-    <div v-else-if="!scripts.length" class="hint">package.json 中没有 scripts</div>
+    <div v-if="loading && !scripts.length" class="hint">{{ t("packageScripts.loading") }}</div>
+    <div v-else-if="!hasPackageJson" class="hint">{{ t("packageScripts.noPackageJson") }}</div>
+    <div v-else-if="!scripts.length" class="hint">{{ t("packageScripts.noScripts") }}</div>
     <div v-else class="list">
       <button
         v-for="item in scripts"

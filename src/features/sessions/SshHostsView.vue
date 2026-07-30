@@ -9,6 +9,7 @@ import {
   Trash2,
   X,
 } from "lucide-vue-next";
+import { useI18n } from "@/i18n";
 import type { SshConnectConfig } from "@/shared/sshApi";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import {
@@ -28,6 +29,7 @@ const emit = defineEmits<{
   connect: [config: SshConnectConfig];
 }>();
 
+const { t } = useI18n();
 const profiles = ref<SshProfile[]>(loadSshProfiles());
 const showEditor = ref(false);
 const editingId = ref<string | null>(null);
@@ -44,7 +46,7 @@ const showUnlockPassword = ref(false);
 const showUnlockPassphrase = ref(false);
 
 const editorTitle = computed(() =>
-  editingId.value ? "编辑主机" : "添加主机",
+  editingId.value ? t("sessions.editHost") : t("sessions.addHost"),
 );
 
 const AVATAR_COLORS = [
@@ -204,12 +206,12 @@ const unlocking = computed(() =>
     <header class="toolbar">
       <button type="button" class="tool-btn primary" @click="openAdd">
         <Plus :size="15" />
-        添加主机
+        {{ t("sessions.addHost") }}
       </button>
     </header>
 
     <div class="content">
-      <h2 class="section-title">主机</h2>
+      <h2 class="section-title">{{ t("sessions.hosts") }}</h2>
 
       <div v-if="profiles.length" class="grid">
         <button
@@ -233,14 +235,14 @@ const unlocking = computed(() =>
           <span class="card-actions">
             <span
               class="icon-hit"
-              title="编辑"
+              :title="t('sessions.edit')"
               @click="openEdit(profile, $event)"
             >
               <Pencil :size="13" />
             </span>
             <span
               class="icon-hit danger"
-              title="删除"
+              :title="t('common.delete')"
               @click="onDeleteProfile(profile, $event)"
             >
               <Trash2 :size="13" />
@@ -251,9 +253,11 @@ const unlocking = computed(() =>
 
       <div v-else class="empty">
         <Server :size="28" :stroke-width="1.5" class="empty-icon" />
-        <p>还没有保存的主机</p>
-        <p class="empty-hint">添加主机后可一键连接；密码不会落盘。</p>
-        <button type="button" class="cta" @click="openAdd">添加主机</button>
+        <p>{{ t("sessions.hostsEmptyTitle") }}</p>
+        <p class="empty-hint">{{ t("sessions.hostsEmptyHint") }}</p>
+        <button type="button" class="cta" @click="openAdd">
+          {{ t("sessions.addHost") }}
+        </button>
       </div>
 
       <p v-if="error" class="error">{{ error }}</p>
@@ -264,25 +268,30 @@ const unlocking = computed(() =>
       <div class="sheet" @click.stop>
         <header class="sheet-head">
           <h3>{{ editorTitle }}</h3>
-          <button type="button" class="icon-btn" title="关闭" @click="closeEditor">
+          <button
+            type="button"
+            class="icon-btn"
+            :title="t('common.close')"
+            @click="closeEditor"
+          >
             <X :size="16" />
           </button>
         </header>
         <div class="sheet-body">
           <label class="field">
-            <span>显示名称</span>
+            <span>{{ t("sessions.displayName") }}</span>
             <input
               v-model="form.name"
               v-bind="PLAIN_INPUT_ATTRS"
               class="ui-input"
               type="text"
               name="miro-ssh-name"
-              placeholder="主机显示名称"
+              :placeholder="t('sessions.displayNamePlaceholder')"
             />
           </label>
           <div class="row-2">
             <label class="field grow">
-              <span>主机</span>
+              <span>{{ t("sessions.host") }}</span>
               <input
                 v-model="form.host"
                 v-bind="PLAIN_INPUT_ATTRS"
@@ -293,7 +302,7 @@ const unlocking = computed(() =>
               />
             </label>
             <label class="field narrow">
-              <span>端口</span>
+              <span>{{ t("sessions.port") }}</span>
               <input
                 v-model.number="form.port"
                 v-bind="PLAIN_INPUT_ATTRS"
@@ -306,7 +315,7 @@ const unlocking = computed(() =>
             </label>
           </div>
           <label class="field">
-            <span>用户名</span>
+            <span>{{ t("sessions.username") }}</span>
             <input
               v-model="form.username"
               v-bind="PLAIN_INPUT_ATTRS"
@@ -317,14 +326,14 @@ const unlocking = computed(() =>
             />
           </label>
           <label class="field">
-            <span>认证方式</span>
+            <span>{{ t("sessions.authMethod") }}</span>
             <select v-model="form.authKind" class="ui-select">
-              <option value="password">密码</option>
-              <option value="key">私钥</option>
+              <option value="password">{{ t("sessions.authPassword") }}</option>
+              <option value="key">{{ t("sessions.authKey") }}</option>
             </select>
           </label>
           <label v-if="form.authKind === 'password'" class="field">
-            <span>密码（连接时使用，不保存）</span>
+            <span>{{ t("sessions.passwordConnectHint") }}</span>
             <div class="password-field">
               <input
                 v-model="password"
@@ -336,7 +345,11 @@ const unlocking = computed(() =>
               <button
                 type="button"
                 class="pwd-toggle"
-                :title="showFormPassword ? '隐藏密码' : '显示密码'"
+                :title="
+                  showFormPassword
+                    ? t('sessions.hidePassword')
+                    : t('sessions.showPassword')
+                "
                 @click="showFormPassword = !showFormPassword"
               >
                 <EyeOff v-if="showFormPassword" :size="14" />
@@ -346,7 +359,7 @@ const unlocking = computed(() =>
           </label>
           <template v-else>
             <label class="field">
-              <span>私钥路径</span>
+              <span>{{ t("sessions.privateKey") }}</span>
               <input
                 v-model="form.privateKeyPath"
                 v-bind="PLAIN_INPUT_ATTRS"
@@ -357,7 +370,7 @@ const unlocking = computed(() =>
               />
             </label>
             <label class="field">
-              <span>私钥口令（可选，不保存）</span>
+              <span>{{ t("sessions.passphraseOptional") }}</span>
               <div class="password-field">
                 <input
                   v-model="passphrase"
@@ -369,7 +382,11 @@ const unlocking = computed(() =>
                 <button
                   type="button"
                   class="pwd-toggle"
-                  :title="showPassphrase ? '隐藏口令' : '显示口令'"
+                  :title="
+                    showPassphrase
+                      ? t('sessions.hidePassphrase')
+                      : t('sessions.showPassphrase')
+                  "
                   @click="showPassphrase = !showPassphrase"
                 >
                   <EyeOff v-if="showPassphrase" :size="14" />
@@ -380,18 +397,20 @@ const unlocking = computed(() =>
           </template>
           <label v-if="!editingId" class="check">
             <input v-model="remember" type="checkbox" />
-            <span>保存到主机列表（不含密码）</span>
+            <span>{{ t("sessions.rememberHost") }}</span>
           </label>
         </div>
         <footer class="sheet-foot">
-          <button type="button" class="ghost" @click="closeEditor">取消</button>
+          <button type="button" class="ghost" @click="closeEditor">
+            {{ t("common.cancel") }}
+          </button>
           <button
             type="button"
             class="ghost"
             :disabled="!form.host.trim() || !form.username.trim()"
             @click="onSaveOnly"
           >
-            仅保存
+            {{ t("sessions.saveOnly") }}
           </button>
           <button
             type="button"
@@ -399,7 +418,9 @@ const unlocking = computed(() =>
             :disabled="connecting || !form.host.trim() || !form.username.trim()"
             @click="onSaveAndConnect"
           >
-            {{ connecting ? "连接中…" : "保存并连接" }}
+            {{
+              connecting ? t("sessions.connecting") : t("sessions.saveAndConnect")
+            }}
           </button>
         </footer>
       </div>
@@ -409,15 +430,26 @@ const unlocking = computed(() =>
     <div v-if="unlocking" class="overlay" @mousedown.self="cancelUnlock">
       <div class="sheet compact" @click.stop>
         <header class="sheet-head">
-          <h3>连接 {{ unlocking.name || unlocking.host }}</h3>
-          <button type="button" class="icon-btn" title="关闭" @click="cancelUnlock">
+          <h3>
+            {{
+              t("sessions.connectTo", {
+                name: unlocking.name || unlocking.host,
+              })
+            }}
+          </h3>
+          <button
+            type="button"
+            class="icon-btn"
+            :title="t('common.close')"
+            @click="cancelUnlock"
+          >
             <X :size="16" />
           </button>
         </header>
         <div class="sheet-body">
           <p class="unlock-meta">ssh · {{ unlocking.username }}@{{ unlocking.host }}:{{ unlocking.port }}</p>
           <label v-if="unlocking.authKind === 'password'" class="field">
-            <span>密码</span>
+            <span>{{ t("sessions.password") }}</span>
             <div class="password-field">
               <input
                 v-model="unlockPassword"
@@ -430,7 +462,11 @@ const unlocking = computed(() =>
               <button
                 type="button"
                 class="pwd-toggle"
-                :title="showUnlockPassword ? '隐藏密码' : '显示密码'"
+                :title="
+                  showUnlockPassword
+                    ? t('sessions.hidePassword')
+                    : t('sessions.showPassword')
+                "
                 @click="showUnlockPassword = !showUnlockPassword"
               >
                 <EyeOff v-if="showUnlockPassword" :size="14" />
@@ -439,7 +475,7 @@ const unlocking = computed(() =>
             </div>
           </label>
           <label v-else class="field">
-            <span>私钥口令（如无请留空）</span>
+            <span>{{ t("sessions.passphraseIfAny") }}</span>
             <div class="password-field">
               <input
                 v-model="unlockPassphrase"
@@ -452,7 +488,11 @@ const unlocking = computed(() =>
               <button
                 type="button"
                 class="pwd-toggle"
-                :title="showUnlockPassphrase ? '隐藏口令' : '显示口令'"
+                :title="
+                  showUnlockPassphrase
+                    ? t('sessions.hidePassphrase')
+                    : t('sessions.showPassphrase')
+                "
                 @click="showUnlockPassphrase = !showUnlockPassphrase"
               >
                 <EyeOff v-if="showUnlockPassphrase" :size="14" />
@@ -462,14 +502,16 @@ const unlocking = computed(() =>
           </label>
         </div>
         <footer class="sheet-foot">
-          <button type="button" class="ghost" @click="cancelUnlock">取消</button>
+          <button type="button" class="ghost" @click="cancelUnlock">
+            {{ t("common.cancel") }}
+          </button>
           <button
             type="button"
             class="cta"
             :disabled="connecting || (unlocking.authKind === 'password' && !unlockPassword)"
             @click="confirmUnlock"
           >
-            {{ connecting ? "连接中…" : "连接" }}
+            {{ connecting ? t("sessions.connecting") : t("sessions.connect") }}
           </button>
         </footer>
       </div>

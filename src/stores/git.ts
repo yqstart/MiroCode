@@ -56,6 +56,7 @@ import {
   type GitStatusEntry,
   type GitStatusSnapshot,
 } from "@/shared/gitApi";
+import { t } from "@/i18n";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const EMPTY: GitStatusSnapshot = {
@@ -239,7 +240,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       await gitInit(workspace.rootPath);
-      workspace.showNotice("Git 仓库已初始化");
+      workspace.showNotice(t("git.initOk"));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -282,13 +283,13 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return false;
     const msg = (message ?? commitMessage.value).trim();
     if (!msg) {
-      workspace.showNotice("请输入提交说明");
+      workspace.showNotice(t("git.needMessage"));
       return false;
     }
     // 显式 paths：先 stage 再提交；否则提交当前 index（已暂存）
     const explicit = paths?.length ? paths : undefined;
     if (!amendCommit.value && !explicit && !stagedEntries.value.length) {
-      workspace.showNotice("请先暂存要提交的文件");
+      workspace.showNotice(t("git.needStaged"));
       return false;
     }
     try {
@@ -300,7 +301,7 @@ export const useGitStore = defineStore("git", () => {
       );
       commitMessage.value = "";
       amendCommit.value = false;
-      workspace.showNotice("提交成功");
+      workspace.showNotice(t("git.commitOk"));
       await refresh();
       return true;
     } catch (error) {
@@ -329,7 +330,7 @@ export const useGitStore = defineStore("git", () => {
 
     try {
       await gitCheckout(root, name, false);
-      workspace.showNotice(`已切换到 ${name}`);
+      workspace.showNotice(t("git.switchedTo", { name }));
       await refresh();
       return;
     } catch (error) {
@@ -344,15 +345,12 @@ export const useGitStore = defineStore("git", () => {
     // 有未提交变更且安全切换失败 → VS Code / WebStorm 风格处理
     const { promptChoice } = await import("@/shared/choiceDialog");
     const choice = await promptChoice({
-      title: "切换分支",
-      message:
-        `本地有未提交变更，直接切换到「${name}」可能覆盖这些文件。\n\n` +
-        `· 智能切换：先贮藏冲突变更，切换后再恢复（WebStorm）\n` +
-        `· 强制切换：丢弃本地变更后切换（VS Code）`,
+      title: t("git.checkoutTitle"),
+      message: t("git.checkoutDirtyMessage", { name }),
       choices: [
-        { id: "cancel", label: "取消", variant: "ghost" },
-        { id: "force", label: "强制切换", variant: "danger" },
-        { id: "smart", label: "智能切换", variant: "primary" },
+        { id: "cancel", label: t("common.cancel"), variant: "ghost" },
+        { id: "force", label: t("git.forceCheckout"), variant: "danger" },
+        { id: "smart", label: t("git.smartCheckout"), variant: "primary" },
       ],
       dismissId: "cancel",
     });
@@ -365,18 +363,18 @@ export const useGitStore = defineStore("git", () => {
         await gitCheckout(root, name, false);
         try {
           await gitStashPop(root);
-          workspace.showNotice(`已切换到 ${name}（变更已恢复）`);
+          workspace.showNotice(t("git.switchedRestored", { name }));
         } catch (popError) {
           const popMsg =
             popError instanceof Error ? popError.message : String(popError);
           workspace.showNotice(
-            `已切换到 ${name}，但恢复贮藏时出现冲突：${popMsg}`,
+            t("git.switchedStashConflict", { name, detail: popMsg }),
             4800,
           );
         }
       } else if (choice === "force") {
         await gitCheckout(root, name, true);
-        workspace.showNotice(`已强制切换到 ${name}（本地变更已丢弃）`);
+        workspace.showNotice(t("git.forceSwitched", { name }));
       }
       await refresh();
     } catch (error) {
@@ -408,7 +406,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       await gitCreateBranch(workspace.rootPath, name, checkout);
-      workspace.showNotice(`分支 ${name} 已创建`);
+      workspace.showNotice(t("git.branchCreated", { name }));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -421,10 +419,10 @@ export const useGitStore = defineStore("git", () => {
   async function deleteBranch(name: string) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
-    if (!window.confirm(`确定删除分支「${name}」？`)) return;
+    if (!window.confirm(t("git.deleteBranchConfirm", { name }))) return;
     try {
       await gitDeleteBranch(workspace.rootPath, name);
-      workspace.showNotice(`分支 ${name} 已删除`);
+      workspace.showNotice(t("git.branchDeleted", { name }));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -439,7 +437,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       await gitRenameBranch(workspace.rootPath, from, to);
-      workspace.showNotice(`分支已重命名为 ${to}`);
+      workspace.showNotice(t("git.branchRenamed", { name: to }));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -454,7 +452,7 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function push(force = false) {
-    if (force && !window.confirm("确定强制推送？此操作可能覆盖远程历史。")) {
+    if (force && !window.confirm(t("git.forcePushConfirm"))) {
       return;
     }
     await runRemoteWithAuth("push", force);
@@ -500,8 +498,9 @@ export const useGitStore = defineStore("git", () => {
         else if (kind === "fetch") msg = await gitFetch(root, "origin", auth);
         else msg = await gitUpdateProject(root, updateStrategy, auth);
         const remembered = auth?.remember === true;
+        const fallback = msg || t("git.done");
         workspace.showNotice(
-          remembered ? `${msg || "完成"}（已记住登录）` : msg || "完成",
+          remembered ? t("git.doneRemembered", { msg: fallback }) : fallback,
         );
         await refresh();
         return;
@@ -514,10 +513,10 @@ export const useGitStore = defineStore("git", () => {
         }
         const { promptGitAuth } = await import("@/shared/gitAuthDialog");
         const titles: Record<typeof kind, string> = {
-          pull: "拉取需要登录",
-          push: "推送需要登录",
-          fetch: "Fetch 需要登录",
-          update: "更新需要登录",
+          pull: t("git.authPull"),
+          push: t("git.authPush"),
+          fetch: t("git.authFetch"),
+          update: t("git.authUpdate"),
         };
         let defaultUsername = lastUser || guessUsernameFromUrl(parsed.url);
         if (!defaultUsername && parsed.url) {
@@ -531,9 +530,7 @@ export const useGitStore = defineStore("git", () => {
         const next = await promptGitAuth({
           title: titles[kind],
           remoteUrl: parsed.url,
-          message: auth
-            ? "账号或密码不正确，请重试"
-            : "远程需要认证，请输入账号与密码",
+          message: auth ? t("git.authRetry") : t("git.authRequired"),
           defaultUsername,
         });
         if (!next) return;
@@ -570,7 +567,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       await gitStash(workspace.rootPath, message);
-      workspace.showNotice("已贮藏工作区更改");
+      workspace.showNotice(t("git.stashOk"));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -585,7 +582,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       await gitStashPop(workspace.rootPath, index);
-      workspace.showNotice("已弹出贮藏");
+      workspace.showNotice(t("git.stashPopOk"));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -600,7 +597,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       await gitStashApply(workspace.rootPath, index);
-      workspace.showNotice("已应用贮藏（仍保留条目）");
+      workspace.showNotice(t("git.stashApplyOk"));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -613,10 +610,10 @@ export const useGitStore = defineStore("git", () => {
   async function stashDrop(index: number) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
-    if (!confirm(`确定删除 stash@{${index}}？此操作不可撤销。`)) return;
+    if (!confirm(t("git.stashDropConfirm", { index }))) return;
     try {
       await gitStashDrop(workspace.rootPath, index);
-      workspace.showNotice("已删除贮藏");
+      workspace.showNotice(t("git.stashDropOk"));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -634,7 +631,9 @@ export const useGitStore = defineStore("git", () => {
       const { useEditorStore } = await import("@/stores/editor");
       await useEditorStore().reloadAfterDiscard(paths);
       workspace.showNotice(
-        paths.length === 1 ? "已回滚变更" : `已回滚 ${paths.length} 个文件的变更`,
+        paths.length === 1
+          ? t("git.discardedOne")
+          : t("git.discardedMany", { count: paths.length }),
       );
       await refresh();
     } catch (error) {
@@ -648,7 +647,7 @@ export const useGitStore = defineStore("git", () => {
   async function discardAll() {
     const paths = unstagedEntries.value.map((e) => e.path);
     if (!paths.length) {
-      useWorkspaceStore().showNotice("没有可丢弃的更改");
+      useWorkspaceStore().showNotice(t("git.nothingToDiscard"));
       return;
     }
     await discard(paths);
@@ -680,7 +679,7 @@ export const useGitStore = defineStore("git", () => {
       idx >= 0
         ? raw.slice(idx + "GIT_REBASE_CONFLICT|||".length).trim()
         : raw;
-    workspace.showNotice(msg || "Rebase 产生冲突，请解决后 Continue", 5200);
+    workspace.showNotice(msg || t("git.rebaseConflictDefault"), 5200);
     void useSettingsStoreOpenCommit();
   }
 
@@ -703,7 +702,9 @@ export const useGitStore = defineStore("git", () => {
     try {
       const result = await gitDiff(workspace.rootPath, path, staged);
       diffResults.value = [result];
-      diffTitle.value = staged ? "已暂存更改" : "工作区更改";
+      diffTitle.value = staged
+        ? t("git.stagedChanges")
+        : t("git.workingChanges");
       diffVisible.value = true;
     } catch (error) {
       workspace.showNotice(
@@ -747,15 +748,13 @@ export const useGitStore = defineStore("git", () => {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
     if (
-      !window.confirm(
-        "确定执行硬重置？所有未提交更改将永久丢失，此操作不可撤销。",
-      )
+      !window.confirm(t("git.resetHardConfirm"))
     ) {
       return;
     }
     try {
       await gitResetHard(workspace.rootPath);
-      workspace.showNotice("已硬重置到 HEAD");
+      workspace.showNotice(t("git.resetHardOk"));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -769,15 +768,13 @@ export const useGitStore = defineStore("git", () => {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
     if (
-      !window.confirm(
-        "确定撤销最近一次提交？更改将保留在工作区。",
-      )
+      !window.confirm(t("git.undoCommitConfirm"))
     ) {
       return;
     }
     try {
       await gitUndoCommit(workspace.rootPath);
-      workspace.showNotice("已撤销最近一次提交");
+      workspace.showNotice(t("git.undoCommitOk"));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -792,14 +789,14 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     if (
       !window.confirm(
-        `确定回退到 ${commitId.slice(0, 7)}？未提交更改可能丢失。`,
+        t("git.revertToConfirm", { hash: commitId.slice(0, 7) }),
       )
     ) {
       return;
     }
     try {
       await gitRevertTo(workspace.rootPath, commitId);
-      workspace.showNotice("已回退到指定提交");
+      workspace.showNotice(t("git.revertToOk"));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -814,7 +811,9 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       const msg = await gitMergeBranch(workspace.rootPath, name);
-      workspace.showNotice(typeof msg === "string" && msg ? msg : `已合并 ${name}`);
+      workspace.showNotice(
+        typeof msg === "string" && msg ? msg : t("git.merged", { name }),
+      );
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -829,7 +828,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       const msg = await gitRebaseBranch(workspace.rootPath, onto);
-      workspace.showNotice(msg || `已 rebase 到 ${onto}`);
+      workspace.showNotice(msg || t("git.rebasedOnto", { onto }));
       await refresh();
     } catch (error) {
       const raw = error instanceof Error ? error.message : String(error);
@@ -844,7 +843,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       const msg = await gitRebaseContinue(workspace.rootPath);
-      workspace.showNotice(msg || "Rebase 已继续");
+      workspace.showNotice(msg || t("git.rebaseContinued"));
       await refresh();
       await loadLog();
     } catch (error) {
@@ -858,12 +857,12 @@ export const useGitStore = defineStore("git", () => {
   async function rebaseAbort() {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
-    if (!window.confirm("确定中止 Rebase？工作区将恢复到 rebase 开始前。")) {
+    if (!window.confirm(t("git.rebaseAbortConfirm"))) {
       return;
     }
     try {
       const msg = await gitRebaseAbort(workspace.rootPath);
-      workspace.showNotice(msg || "已中止 Rebase");
+      workspace.showNotice(msg || t("git.rebaseAborted"));
       await refresh();
       await loadLog();
     } catch (error) {
@@ -879,7 +878,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       const msg = await gitRebaseSkip(workspace.rootPath);
-      workspace.showNotice(msg || "已跳过");
+      workspace.showNotice(msg || t("git.rebaseSkipped"));
       await refresh();
       await loadLog();
     } catch (error) {
@@ -895,7 +894,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       const msg = await gitRebaseInteractive(workspace.rootPath, onto, steps);
-      workspace.showNotice(msg || "交互 Rebase 完成");
+      workspace.showNotice(msg || t("git.interactiveRebaseDone"));
       await refresh();
       await loadLog();
     } catch (error) {
@@ -926,7 +925,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     try {
       await gitSetUpstream(workspace.rootPath, branch, upstream);
-      workspace.showNotice(`已设置上游 ${upstream}`);
+      workspace.showNotice(t("git.upstreamSet", { upstream }));
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -940,9 +939,7 @@ export const useGitStore = defineStore("git", () => {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
     if (
-      !window.confirm(
-        `确定删除远程分支 ${remoteRef}？此操作不可轻易撤销。`,
-      )
+      !window.confirm(t("git.deleteRemoteConfirm", { ref: remoteRef }))
     ) {
       return;
     }
@@ -974,7 +971,7 @@ export const useGitStore = defineStore("git", () => {
         id,
         kind: "diff",
         path: sides.path,
-        title: `${sides.path} · 分支对比`,
+        title: t("git.branchCompare", { path: sides.path }),
         leftLabel: sides.leftLabel,
         rightLabel: sides.rightLabel,
         left: sides.left,
@@ -1000,7 +997,9 @@ export const useGitStore = defineStore("git", () => {
     try {
       await gitCreateBranchAt(workspace.rootPath, name, commitId, checkout);
       workspace.showNotice(
-        checkout ? `已创建并切换到 ${name}` : `已创建分支 ${name}`,
+        checkout
+          ? t("git.createdAndSwitched", { name })
+          : t("git.branchCreatedAt", { name }),
       );
       await refresh();
       await loadLog();
@@ -1017,7 +1016,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) return;
     if (
       !window.confirm(
-        `确定检出提交 ${commitId.slice(0, 7)}？（分离 HEAD）`,
+        t("git.checkoutCommitConfirm", { hash: commitId.slice(0, 7) }),
       )
     ) {
       return;
@@ -1062,7 +1061,7 @@ export const useGitStore = defineStore("git", () => {
         await gitResolveConflict(workspace.rootPath, path, strategy);
       }
       workspace.showNotice(
-        strategy === "ours" ? "已全部接受本地版本" : "已全部接受远程版本",
+        strategy === "ours" ? t("git.acceptAllOurs") : t("git.acceptAllTheirs"),
       );
       await refresh();
     } catch (error) {
@@ -1123,8 +1122,17 @@ export const useGitStore = defineStore("git", () => {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
     const label =
-      mode === "hard" ? "硬重置（丢弃工作区）" : mode === "soft" ? "软重置" : "混合重置";
-    if (!window.confirm(`确定对 ${commitId.slice(0, 7)} 执行${label}？`)) return;
+      mode === "hard"
+        ? t("git.resetHardLabel")
+        : mode === "soft"
+          ? t("git.resetSoftLabel")
+          : t("git.resetMixedLabel");
+    if (
+      !window.confirm(
+        t("git.resetConfirm", { hash: commitId.slice(0, 7), label }),
+      )
+    )
+      return;
     try {
       const msg = await gitReset(workspace.rootPath, commitId, mode);
       workspace.showNotice(msg);
@@ -1161,7 +1169,7 @@ export const useGitStore = defineStore("git", () => {
     try {
       await gitResolveConflict(workspace.rootPath, path, strategy);
       workspace.showNotice(
-        strategy === "manual" ? "已标记为手动解决" : "冲突已解决",
+        strategy === "manual" ? t("git.conflictManual") : t("git.conflictResolved"),
       );
       await refresh();
     } catch (error) {

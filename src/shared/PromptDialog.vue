@@ -5,13 +5,14 @@ import {
   registerPromptHandler,
   type PromptDialogOptions,
 } from "@/shared/promptDialog";
+import { t } from "@/i18n";
 
 const visible = ref(false);
 const title = ref("");
 const label = ref("");
 const placeholder = ref("");
-const confirmText = ref("确定");
-const cancelText = ref("取消");
+const confirmText = ref("");
+const cancelText = ref("");
 const value = ref("");
 const inputRef = ref<HTMLInputElement | null>(null);
 
@@ -25,8 +26,8 @@ async function open(options: PromptDialogOptions): Promise<string | null> {
   title.value = options.title;
   label.value = options.label ?? "";
   placeholder.value = options.placeholder ?? "";
-  confirmText.value = options.confirmText ?? "确定";
-  cancelText.value = options.cancelText ?? "取消";
+  confirmText.value = options.confirmText ?? t("dialog.ok");
+  cancelText.value = options.cancelText ?? t("dialog.cancel");
   value.value = options.defaultValue ?? "";
   visible.value = true;
   await nextTick();

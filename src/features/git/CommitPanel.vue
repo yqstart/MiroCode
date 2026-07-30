@@ -23,7 +23,9 @@ import { useEditorStore } from "@/stores/editor";
 import { useGitLogStore } from "@/stores/gitLog";
 import { useGitStore } from "@/stores/git";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useI18n } from "@/i18n";
 
+const { t } = useI18n();
 const workspace = useWorkspaceStore();
 const git = useGitStore();
 const editor = useEditorStore();
@@ -75,12 +77,12 @@ function statusLabel(status: string) {
 
 function statusTitle(status: string) {
   const map: Record<string, string> = {
-    modified: "已修改",
-    untracked: "未跟踪（回滚将删除）",
-    deleted: "已删除",
-    renamed: "已重命名",
-    conflict: "冲突",
-    changed: "已变更",
+    modified: t("git.statusModified"),
+    untracked: t("git.statusUntracked"),
+    deleted: t("git.statusDeleted"),
+    renamed: t("git.statusRenamed"),
+    conflict: t("git.statusConflict"),
+    changed: t("git.statusChanged"),
   };
   return map[status] ?? status;
 }
@@ -132,8 +134,8 @@ async function onDiscard(path: string) {
   const entry = git.statusMap.get(path);
   const isUntracked = entry?.status === "untracked";
   const msg = isUntracked
-    ? `「${basename(path)}」是未跟踪的新文件，回滚将删除该文件。此操作不可撤销。确定？`
-    : `确定回滚「${basename(path)}」的未提交变更？此操作不可撤销。`;
+    ? t("git.discardUntrackedConfirm", { name: basename(path) })
+    : t("git.discardConfirm", { name: basename(path) });
   if (!confirm(msg)) return;
   await git.discard([path]);
 }
@@ -156,10 +158,10 @@ async function onDiscardAllChanges() {
   const hasUntracked = paths.some(
     (p) => git.statusMap.get(p)?.status === "untracked",
   );
-  const tip = hasUntracked ? "（含未跟踪文件，将被删除）" : "";
+  const tip = hasUntracked ? t("git.untrackedTip") : "";
   if (
     !confirm(
-      `确定回滚全部 ${paths.length} 个未暂存变更${tip}？此操作不可撤销。`,
+      t("git.discardAllConfirm", { count: paths.length, tip }),
     )
   ) {
     return;
@@ -193,12 +195,12 @@ function onCommitKeydown(event: KeyboardEvent) {
 <template>
   <div class="commit-panel" @click="contextMenu = null; commitMenuOpen = false">
     <header class="header">
-      <span class="title">Commit</span>
+      <span class="title">{{ t("git.commit") }}</span>
       <div class="header-actions">
         <button
           type="button"
           class="icon-btn"
-          title="刷新"
+          :title="t('git.refresh')"
           @click="git.refresh()"
         >
           <RefreshCw :size="14" :class="{ spin: loading }" />
@@ -206,7 +208,7 @@ function onCommitKeydown(event: KeyboardEvent) {
         <button
           type="button"
           class="icon-btn"
-          title="Git Log"
+          :title="t('git.gitLog')"
           @click="openLog"
         >
           <History :size="14" />
@@ -214,20 +216,20 @@ function onCommitKeydown(event: KeyboardEvent) {
       </div>
     </header>
 
-    <div v-if="!rootPath" class="empty">请先打开工作区文件夹</div>
+    <div v-if="!rootPath" class="empty">{{ t("git.emptyWorkspace") }}</div>
 
     <template v-else-if="!snapshot.initialized">
       <div class="empty">
-        <p>当前文件夹尚未初始化 Git</p>
+        <p>{{ t("git.notInit") }}</p>
         <button type="button" class="cta" @click="git.initRepo()">
-          初始化仓库
+          {{ t("git.initRepo") }}
         </button>
       </div>
     </template>
 
     <template v-else>
       <div class="toolbar">
-        <span class="branch">{{ snapshot.branch ?? "无分支" }}</span>
+        <span class="branch">{{ snapshot.branch ?? t("git.noBranch") }}</span>
         <span
           v-if="snapshot.ahead || snapshot.behind"
           class="sync"
@@ -240,7 +242,7 @@ function onCommitKeydown(event: KeyboardEvent) {
         <button
           type="button"
           class="mini"
-          title="Update Project：Fetch 后按策略合并/变基到当前分支"
+          :title="t('git.updateProject')"
           aria-label="Update Project"
           @click="git.updateProject()"
         >
@@ -249,7 +251,7 @@ function onCommitKeydown(event: KeyboardEvent) {
         <button
           type="button"
           class="mini"
-          title="Fetch：只下载远程更新，不改本地分支"
+          :title="t('git.fetch')"
           aria-label="Fetch"
           @click="git.fetchRemote()"
         >
@@ -258,8 +260,8 @@ function onCommitKeydown(event: KeyboardEvent) {
         <button
           type="button"
           class="mini"
-          title="拉取 Pull：Fetch + 合并到当前分支"
-          aria-label="拉取"
+          :title="t('git.pull')"
+          :aria-label="t('git.pullShort')"
           @click="git.pull()"
         >
           <ArrowDown :size="14" />
@@ -267,8 +269,8 @@ function onCommitKeydown(event: KeyboardEvent) {
         <button
           type="button"
           class="mini"
-          title="推送 Push"
-          aria-label="推送"
+          :title="t('git.push')"
+          :aria-label="t('git.pushShort')"
           @click="git.pushWithDialog()"
         >
           <ArrowUp :size="14" />
@@ -278,10 +280,10 @@ function onCommitKeydown(event: KeyboardEvent) {
           class="mini"
           :title="
             stashes.length
-              ? `贮藏 Stash（已有 ${stashes.length} 条，见下方列表）`
-              : '贮藏 Stash：暂存本地未提交改动'
+              ? t('git.stashWithCount', { count: stashes.length })
+              : t('git.stash')
           "
-          aria-label="贮藏"
+          :aria-label="t('git.stashShort')"
           @click="git.stash()"
         >
           <Archive :size="14" />
@@ -293,9 +295,13 @@ function onCommitKeydown(event: KeyboardEvent) {
 
       <div v-if="rebaseStatus.inProgress" class="rebase-banner">
         <span class="rebase-text">
-          Rebase 进行中
-          <template v-if="rebaseStatus.onto">（onto {{ rebaseStatus.onto }}）</template>
-          <template v-if="rebaseStatus.conflicted"> — 请先解决冲突</template>
+          {{ t("git.rebaseInProgress") }}
+          <template v-if="rebaseStatus.onto">{{
+            t("git.rebaseOnto", { onto: rebaseStatus.onto })
+          }}</template>
+          <template v-if="rebaseStatus.conflicted">{{
+            t("git.rebaseConflictHint")
+          }}</template>
         </span>
         <div class="rebase-actions">
           <button type="button" class="link" @click="git.rebaseContinue()">
@@ -310,20 +316,20 @@ function onCommitKeydown(event: KeyboardEvent) {
 
       <div v-if="conflictEntries.length" class="conflict-banner">
         <AlertTriangle :size="12" />
-        {{ conflictEntries.length }} 个冲突 — 请先解决
+        {{ t("git.conflictBanner", { count: conflictEntries.length }) }}
         <button
           type="button"
           class="link"
           @click="git.resolveAllConflicts('ours')"
         >
-          全部本地
+          {{ t("git.allOurs") }}
         </button>
         <button
           type="button"
           class="link"
           @click="git.resolveAllConflicts('theirs')"
         >
-          全部远程
+          {{ t("git.allTheirs") }}
         </button>
       </div>
 
@@ -336,16 +342,16 @@ function onCommitKeydown(event: KeyboardEvent) {
                 class="chev"
                 :class="{ closed: !stashesOpen }"
               />
-              贮藏
+              {{ t("git.stashes") }}
             </span>
             <div class="group-actions" @click.stop>
               <button
                 type="button"
                 class="act"
-                title="弹出最新贮藏"
+                :title="t('git.stashPopLatest')"
                 @click="git.stashPop(0)"
               >
-                Pop
+                {{ t("git.stashPop") }}
               </button>
               <span class="count">{{ stashes.length }}</span>
             </div>
@@ -364,26 +370,26 @@ function onCommitKeydown(event: KeyboardEvent) {
                 <button
                   type="button"
                   class="act"
-                  title="应用（保留条目）"
+                  :title="t('git.stashApplyTitle')"
                   @click="git.stashApply(s.index)"
                 >
-                  Apply
+                  {{ t("git.stashApply") }}
                 </button>
                 <button
                   type="button"
                   class="act"
-                  title="弹出（应用后删除）"
+                  :title="t('git.stashPopTitle')"
                   @click="git.stashPop(s.index)"
                 >
-                  Pop
+                  {{ t("git.stashPop") }}
                 </button>
                 <button
                   type="button"
                   class="act danger-act"
-                  title="删除"
+                  :title="t('common.delete')"
                   @click="git.stashDrop(s.index)"
                 >
-                  Drop
+                  {{ t("git.stashDrop") }}
                 </button>
               </div>
             </div>
@@ -391,7 +397,7 @@ function onCommitKeydown(event: KeyboardEvent) {
         </div>
 
         <div v-if="conflictEntries.length" class="group">
-          <div class="group-title">合并冲突</div>
+          <div class="group-title">{{ t("git.conflicts") }}</div>
           <div
             v-for="entry in conflictEntries"
             :key="`c-${entry.path}`"
@@ -404,28 +410,28 @@ function onCommitKeydown(event: KeyboardEvent) {
               basename(entry.path)
             }}</span>
             <span class="dir" :title="entry.path">{{ dirOf(entry.path) }}</span>
-            <span class="status st-conflict" title="冲突">C</span>
+            <span class="status st-conflict" :title="t('git.statusConflict')">C</span>
             <div class="row-actions always" @click.stop>
               <button
                 type="button"
                 class="act"
                 @click="git.openConflictCompare(entry.path)"
               >
-                合并
+                {{ t("git.merge") }}
               </button>
               <button
                 type="button"
                 class="act"
                 @click="git.resolveConflict(entry.path, 'ours')"
               >
-                本地
+                {{ t("git.ours") }}
               </button>
               <button
                 type="button"
                 class="act"
                 @click="git.resolveConflict(entry.path, 'theirs')"
               >
-                远程
+                {{ t("git.theirs") }}
               </button>
             </div>
           </div>
@@ -439,13 +445,13 @@ function onCommitKeydown(event: KeyboardEvent) {
                 class="chev"
                 :class="{ closed: !stagedOpen }"
               />
-              暂存的更改
+              {{ t("git.staged") }}
             </span>
             <div class="group-actions" @click.stop>
               <button
                 type="button"
                 class="act-icon"
-                title="全部取消暂存"
+                :title="t('git.unstageAll')"
                 @click="onUnstageAll"
               >
                 <Minus :size="14" />
@@ -478,7 +484,7 @@ function onCommitKeydown(event: KeyboardEvent) {
                 <button
                   type="button"
                   class="act-icon"
-                  title="取消暂存"
+                  :title="t('git.unstage')"
                   @click="onUnstage(entry.path)"
                 >
                   <Minus :size="13" />
@@ -496,14 +502,14 @@ function onCommitKeydown(event: KeyboardEvent) {
                 class="chev"
                 :class="{ closed: !changesOpen }"
               />
-              更改
+              {{ t("git.changes") }}
             </span>
             <div class="group-actions" @click.stop>
               <button
                 v-if="unstagedEntries.length"
                 type="button"
                 class="act-icon"
-                title="全部暂存"
+                :title="t('git.stageAll')"
                 @click="onStageAll"
               >
                 <Plus :size="14" />
@@ -512,7 +518,7 @@ function onCommitKeydown(event: KeyboardEvent) {
                 v-if="unstagedEntries.length"
                 type="button"
                 class="act-icon"
-                title="全部回滚"
+                :title="t('git.discardAll')"
                 @click="onDiscardAllChanges"
               >
                 <Undo2 :size="13" />
@@ -522,7 +528,7 @@ function onCommitKeydown(event: KeyboardEvent) {
           </div>
           <template v-if="changesOpen">
             <div v-if="!unstagedEntries.length" class="muted">
-              没有未暂存的更改
+              {{ t("git.emptyChanges") }}
             </div>
             <div
               v-for="entry in unstagedEntries"
@@ -548,7 +554,7 @@ function onCommitKeydown(event: KeyboardEvent) {
                 <button
                   type="button"
                   class="act-icon"
-                  title="暂存"
+                  :title="t('git.stage')"
                   @click="onStage(entry.path)"
                 >
                   <Plus :size="13" />
@@ -556,7 +562,7 @@ function onCommitKeydown(event: KeyboardEvent) {
                 <button
                   type="button"
                   class="act-icon"
-                  title="回滚"
+                  :title="t('git.discard')"
                   @click="onDiscard(entry.path)"
                 >
                   <Undo2 :size="12" />
@@ -574,12 +580,12 @@ function onCommitKeydown(event: KeyboardEvent) {
           class="message"
           rows="3"
           name="miro-commit-message"
-          placeholder="Commit Message（⌘⏎ 提交已暂存）"
+          :placeholder="t('git.commitMessage')"
           @keydown="onCommitKeydown"
         />
         <label class="amend">
           <input v-model="amendCommit" type="checkbox" />
-          Amend
+          {{ t("git.amend") }}
         </label>
         <div class="commit-actions">
           <div class="commit-split">
@@ -589,13 +595,13 @@ function onCommitKeydown(event: KeyboardEvent) {
               :disabled="!canCommit"
               @click.stop="doCommit"
             >
-              <Check :size="14" /> Commit
+              <Check :size="14" /> {{ t("git.commit") }}
             </button>
             <button
               type="button"
               class="cta-menu"
               :disabled="!canCommit"
-              title="更多"
+              :title="t('common.more')"
               @click.stop="commitMenuOpen = !commitMenuOpen"
             >
               <ChevronDown :size="14" />
@@ -606,7 +612,7 @@ function onCommitKeydown(event: KeyboardEvent) {
                 :disabled="!canCommit"
                 @click="doCommitAndPush"
               >
-                Commit and Push…
+                {{ t("git.commitAndPush") }}
               </button>
             </div>
           </div>
@@ -625,7 +631,7 @@ function onCommitKeydown(event: KeyboardEvent) {
           type="button"
           @click="openFile(contextMenu.path); contextMenu = null"
         >
-          打开文件
+          {{ t("git.openFile") }}
         </button>
         <button
           type="button"
@@ -634,21 +640,21 @@ function onCommitKeydown(event: KeyboardEvent) {
             contextMenu = null;
           "
         >
-          在编辑器中显示 Diff
+          {{ t("git.showDiff") }}
         </button>
         <button
           v-if="!contextMenu.staged"
           type="button"
           @click="onStage(contextMenu.path)"
         >
-          暂存
+          {{ t("git.stage") }}
         </button>
         <button
           v-else
           type="button"
           @click="onUnstage(contextMenu.path)"
         >
-          取消暂存
+          {{ t("git.unstage") }}
         </button>
         <button
           v-if="!contextMenu.staged"
@@ -656,7 +662,7 @@ function onCommitKeydown(event: KeyboardEvent) {
           class="danger-item"
           @click="onDiscard(contextMenu.path)"
         >
-          回滚…
+          {{ t("git.discardEllipsis") }}
         </button>
       </div>
     </Teleport>

@@ -1,14 +1,23 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { Replace, Search, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { formatShortcut } from "@/shared/platform";
+import { useI18n } from "@/i18n";
 import { useEditorStore } from "@/stores/editor";
 import { useSearchStore } from "@/stores/search";
 
-const findShortcutHint = `WebStorm 风格 · ${formatShortcut("mod", "shift", "F")}`;
-const resultShortcutHint = `↑↓ 选择 · Enter 打开 · ${formatShortcut("mod", "Enter")} 打开并保持窗口`;
+const { t } = useI18n();
+const findShortcutHint = computed(
+  () => t("search.styleHint", { shortcut: formatShortcut("mod", "shift", "F") }),
+);
+const resultShortcutHint = computed(
+  () =>
+    t("search.resultNavHint", {
+      shortcut: formatShortcut("mod", "Enter"),
+    }),
+);
 
 const search = useSearchStore();
 const editor = useEditorStore();
@@ -62,7 +71,10 @@ async function onApplyReplace() {
   }
   if (!replacePreview.value?.replacements) return;
   const ok = window.confirm(
-    `将替换 ${replacePreview.value.replacements} 处，涉及 ${replacePreview.value.changedFiles} 个文件。确定继续？`,
+    t("search.replaceConfirm", {
+      replacements: replacePreview.value.replacements,
+      files: replacePreview.value.changedFiles,
+    }),
   );
   if (!ok) return;
   await search.applyReplace();
@@ -115,21 +127,21 @@ function onKeydown(event: KeyboardEvent) {
     @mousedown="onOverlay"
     @keydown="onKeydown"
   >
-    <div class="dialog" role="dialog" aria-modal="true" aria-label="在文件中查找">
+    <div class="dialog" role="dialog" aria-modal="true" :aria-label="t('search.findInFiles')">
       <header class="header">
         <div class="title-row">
           <Search :size="18" class="title-icon" />
-          <h1>在文件中查找</h1>
+          <h1>{{ t("search.findInFiles") }}</h1>
           <span class="hint">{{ findShortcutHint }}</span>
         </div>
-        <button type="button" class="icon-btn" title="关闭" @click="close">
+        <button type="button" class="icon-btn" :title="t('common.close')" @click="close">
           <X :size="18" />
         </button>
       </header>
 
       <div class="form">
         <label class="field">
-          <span class="label">查找</span>
+          <span class="label">{{ t("search.findLabel") }}</span>
           <input
             ref="queryRef"
             v-model="contentQuery"
@@ -137,13 +149,13 @@ function onKeydown(event: KeyboardEvent) {
             class="ui-input"
             type="text"
             name="miro-find-query"
-            placeholder="输入要查找的文本…"
+            :placeholder="t('search.findInputPlaceholder')"
             @keydown.enter.exact.prevent="onSearch"
           />
         </label>
 
         <div v-if="showReplace" class="field">
-          <span class="label">替换为</span>
+          <span class="label">{{ t("search.replacePlaceholder") }}</span>
           <div class="replace-row">
             <Replace :size="14" class="inline-icon" />
             <input
@@ -152,7 +164,7 @@ function onKeydown(event: KeyboardEvent) {
               class="ui-input"
               type="text"
               name="miro-find-replace"
-              placeholder="替换文本…"
+              :placeholder="t('search.replaceInputPlaceholder')"
             />
           </div>
         </div>
@@ -160,17 +172,17 @@ function onKeydown(event: KeyboardEvent) {
         <div class="options">
           <label class="check">
             <input v-model="caseSensitive" type="checkbox" />
-            区分大小写
+            {{ t("search.caseSensitive") }}
           </label>
           <label class="field inline">
-            <span class="label">文件掩码</span>
+            <span class="label">{{ t("search.fileMask") }}</span>
             <input
               v-model="extensions"
               v-bind="PLAIN_INPUT_ATTRS"
               class="ui-input mask"
               type="text"
               name="miro-find-mask"
-              placeholder="ts, vue, md（可选）"
+              :placeholder="t('search.fileMaskPlaceholder')"
             />
           </label>
           <div class="actions">
@@ -179,7 +191,7 @@ function onKeydown(event: KeyboardEvent) {
               class="btn ghost"
               @click="showReplace = !showReplace"
             >
-              {{ showReplace ? "隐藏替换" : "替换" }}
+              {{ showReplace ? t("search.hideReplace") : t("search.replace") }}
             </button>
             <button
               v-if="showReplace"
@@ -188,7 +200,7 @@ function onKeydown(event: KeyboardEvent) {
               :disabled="loading"
               @click="onPreviewReplace"
             >
-              预览
+              {{ t("search.preview") }}
             </button>
             <button
               v-if="showReplace"
@@ -197,7 +209,7 @@ function onKeydown(event: KeyboardEvent) {
               :disabled="loading"
               @click="onApplyReplace"
             >
-              全部替换
+              {{ t("search.replaceAll") }}
             </button>
             <button
               type="button"
@@ -205,15 +217,19 @@ function onKeydown(event: KeyboardEvent) {
               :disabled="loading || !contentQuery.trim()"
               @click="onSearch"
             >
-              {{ loading ? "搜索中…" : "查找" }}
+              {{ loading ? t("search.searching") : t("search.find") }}
             </button>
           </div>
         </div>
       </div>
 
       <div v-if="replacePreview" class="preview-banner">
-        预览：{{ replacePreview.replacements }} 处 ·
-        {{ replacePreview.changedFiles }} 个文件
+        {{
+          t("search.previewBanner", {
+            replacements: replacePreview.replacements,
+            files: replacePreview.changedFiles,
+          })
+        }}
         <span v-if="replacePreview.files.length">
           — {{ replacePreview.files.slice(0, 4).join(", ")
           }}{{ replacePreview.files.length > 4 ? "…" : "" }}
@@ -222,13 +238,13 @@ function onKeydown(event: KeyboardEvent) {
 
       <div class="results">
         <div class="results-meta">
-          <template v-if="loading">正在搜索项目…</template>
+          <template v-if="loading">{{ t("search.searchingProject") }}</template>
           <template v-else-if="contentResults.length">
-            {{ contentResults.length }} 条匹配
+            {{ t("search.matchCount", { count: contentResults.length }) }}
             <span class="meta-hint">{{ resultShortcutHint }}</span>
           </template>
-          <template v-else-if="contentQuery.trim()">无匹配结果</template>
-          <template v-else>输入关键词后按 Enter 或点击「查找」</template>
+          <template v-else-if="contentQuery.trim()">{{ t("search.noMatch") }}</template>
+          <template v-else>{{ t("search.findEmptyHint") }}</template>
         </div>
 
         <div class="list">

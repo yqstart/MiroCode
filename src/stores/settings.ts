@@ -1,5 +1,6 @@
 import { computed, reactive, watch } from "vue";
 import { defineStore } from "pinia";
+import { setI18nLocale } from "@/i18n";
 import {
   DEFAULT_SETTINGS,
   type AppSettings,
@@ -29,6 +30,16 @@ function isDarkTheme(theme: ThemeId): boolean {
     theme === "midnight" ||
     theme === "cyberpunk"
   );
+}
+
+/** 同步 macOS / 系统菜单栏文案到应用语言（无需重启） */
+async function syncNativeMenuLocale(locale: AppSettings["locale"]) {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_app_menu_locale", { locale });
+  } catch {
+    // 纯 Vite 预览或命令未就绪
+  }
 }
 
 function loadSettings(): AppSettings {
@@ -148,13 +159,23 @@ function applyTheme(theme: ThemeId) {
 export const useSettingsStore = defineStore("settings", () => {
   const settings = reactive<AppSettings>(loadSettings());
   applyTheme(settings.theme);
+  setI18nLocale(settings.locale);
   void syncNativeWindowTheme(settings.theme);
+  void syncNativeMenuLocale(settings.locale);
 
   watch(
     () => settings.theme,
     (theme) => {
       applyTheme(theme);
       void syncNativeWindowTheme(theme);
+    },
+  );
+
+  watch(
+    () => settings.locale,
+    (locale) => {
+      setI18nLocale(locale);
+      void syncNativeMenuLocale(locale);
     },
   );
 

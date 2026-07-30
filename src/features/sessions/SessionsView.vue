@@ -15,7 +15,9 @@ import {
 } from "@/stores/sessions";
 import { usePackageScriptsStore } from "@/stores/packageScripts";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useI18n } from "@/i18n";
 
+const { t } = useI18n();
 const sessions = useSessionsStore();
 const workspace = useWorkspaceStore();
 const pkg = usePackageScriptsStore();
@@ -35,10 +37,10 @@ const sshSurface = ref<"hosts" | "session">("hosts");
 const sftpBusy = ref(false);
 const sftpError = ref("");
 
-const navItems: { id: SessionSubView; label: string }[] = [
-  { id: "local", label: "本地终端" },
-  { id: "remote", label: "SSH" },
-];
+const navItems = computed(() => [
+  { id: "local" as SessionSubView, label: t("sessions.local") },
+  { id: "remote" as SessionSubView, label: t("sessions.remote") },
+]);
 
 const activeRemote = computed(() =>
   remoteSessions.value.find((t) => t.id === activeRemoteId.value) ?? null,
@@ -159,7 +161,7 @@ watch(remoteSessions, (list) => {
 
 <template>
   <div class="sessions">
-    <aside class="rail" aria-label="会话类型">
+    <aside class="rail" :aria-label="t('sessions.sessionType')">
       <button
         v-for="item in navItems"
         :key="item.id"
@@ -189,13 +191,18 @@ watch(remoteSessions, (list) => {
             <span>{{ term.title }}</span>
             <span
               class="close"
-              title="关闭终端"
+              :title="t('sessions.closeTerminal')"
               @click.stop="sessions.closeLocalTerminal(term.id)"
             >
               <X :size="12" />
             </span>
           </button>
-          <button type="button" class="add" title="新建本地终端" @click="onAddLocal">
+          <button
+            type="button"
+            class="add"
+            :title="t('sessions.newLocalTitle')"
+            @click="onAddLocal"
+          >
             <Plus :size="14" />
           </button>
           <div v-if="hasScripts" class="scripts-slot">
@@ -212,8 +219,10 @@ watch(remoteSessions, (list) => {
             :active="term.id === activeLocalId"
           />
           <div v-if="!localTerminals.length" class="empty">
-            <p>暂无本地终端</p>
-            <button type="button" class="cta" @click="onAddLocal">新建终端</button>
+            <p>{{ t("sessions.localEmpty") }}</p>
+            <button type="button" class="cta" @click="onAddLocal">
+              {{ t("sessions.newTerminal") }}
+            </button>
           </div>
         </div>
       </template>
@@ -225,11 +234,11 @@ watch(remoteSessions, (list) => {
             type="button"
             class="subtab"
             :class="{ active: showHosts }"
-            title="主机列表"
+            :title="t('sessions.hostsList')"
             @click="goHosts"
           >
             <LayoutGrid :size="12" />
-            <span>主机</span>
+            <span>{{ t("sessions.hosts") }}</span>
           </button>
           <button
             v-for="term in remoteSessions"
@@ -242,7 +251,7 @@ watch(remoteSessions, (list) => {
             <span>{{ term.title }}</span>
             <span
               class="close"
-              title="关闭"
+              :title="t('common.close')"
               @click.stop="closeRemoteFully(term.id)"
             >
               <X :size="12" />
@@ -261,7 +270,7 @@ watch(remoteSessions, (list) => {
             @click="switchRemotePane('shell')"
           >
             <TerminalSquare :size="13" />
-            终端
+            {{ t("sessions.shell") }}
           </button>
           <button
             type="button"
@@ -271,7 +280,7 @@ watch(remoteSessions, (list) => {
             @click="switchRemotePane('sftp')"
           >
             <HardDrive :size="13" />
-            {{ sftpBusy ? "连接中…" : "SFTP" }}
+            {{ sftpBusy ? t("sessions.connecting") : t("sessions.sftp") }}
           </button>
           <p v-if="sftpError" class="pane-error">{{ sftpError }}</p>
         </div>

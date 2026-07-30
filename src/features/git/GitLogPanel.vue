@@ -8,6 +8,7 @@ import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
 import type { GitCommitInfo, GitStashEntry } from "@/shared/gitApi";
+import { useI18n } from "@/i18n";
 
 type RowKind = "uncommitted" | "stash" | "commit";
 
@@ -31,6 +32,7 @@ type CtxTarget =
   | { kind: "stash"; index: number }
   | { kind: "uncommitted" };
 
+const { t } = useI18n();
 const git = useGitStore();
 const gitLog = useGitLogStore();
 const workspace = useWorkspaceStore();
@@ -56,7 +58,7 @@ const rows = computed<GraphRow[]>(() => {
     const row: GraphRow = {
       kind: "uncommitted",
       key: "uncommitted",
-      summary: `Uncommitted Changes (${dirtyCount.value})`,
+      summary: t("gitLog.uncommitted", { count: dirtyCount.value }),
       files: changelistEntries.value.map((e) => e.path),
     };
     if (
@@ -241,10 +243,10 @@ async function onNewBranch(id: string) {
   ctx.value = null;
   const { promptInput } = await import("@/shared/promptDialog");
   const name = await promptInput({
-    title: "从此提交新建分支",
-    label: "分支名称",
+    title: t("gitLog.newBranchTitle"),
+    label: t("gitLog.newBranchLabel"),
     placeholder: "feature/from-commit",
-    confirmText: "创建并切换",
+    confirmText: t("gitLog.newBranchConfirm"),
   });
   if (!name?.trim()) return;
   await git.createBranchAt(name.trim(), id, true);
@@ -255,9 +257,9 @@ async function onCopy(id: string) {
   ctx.value = null;
   try {
     await navigator.clipboard.writeText(id);
-    workspace.showNotice("已复制提交 hash");
+    workspace.showNotice(t("gitLog.copiedHash"));
   } catch {
-    workspace.showNotice("复制失败");
+    workspace.showNotice(t("gitLog.copyFailed"));
   }
 }
 
@@ -266,7 +268,7 @@ async function onShowDiff(id: string, filePath?: string) {
   const item = log.value.find((c) => c.id === id);
   const path = filePath ?? item?.files?.[0];
   if (!path) {
-    workspace.showNotice("该提交没有可预览的文件列表");
+    workspace.showNotice(t("gitLog.noDiffFiles"));
     return;
   }
   if (!snapshot.value.branch) return;
@@ -308,7 +310,7 @@ async function onInteractiveRebase(id: string) {
   const item = log.value.find((c) => c.id === id);
   const onto = item?.parents?.[0];
   if (!onto) {
-    workspace.showNotice("无法确定 onto（需要有父提交）");
+    workspace.showNotice(t("gitLog.noOnto"));
     return;
   }
   const { openInteractiveRebase } = await import("@/shared/gitRebaseDialog");
@@ -359,26 +361,26 @@ function detailFiles(row: GraphRow | null): string[] {
 
 <template>
   <div class="log-panel" @click="ctx = null">
-    <div v-if="!snapshot.initialized" class="empty">尚未初始化 Git 仓库</div>
+    <div v-if="!snapshot.initialized" class="empty">{{ t("gitLog.notInit") }}</div>
     <template v-else>
       <div class="toolbar">
         <label class="tool-label">
-          Branches:
+          {{ t("gitLog.branches") }}
           <select v-model="branchScope" class="select">
-            <option value="all">Show All</option>
-            <option value="current">Current Branch</option>
+            <option value="all">{{ t("gitLog.showAll") }}</option>
+            <option value="current">{{ t("gitLog.currentBranch") }}</option>
           </select>
         </label>
         <label class="check">
           <input v-model="showRemote" type="checkbox" />
-          Show Remote Branches
+          {{ t("gitLog.showRemote") }}
         </label>
         <div class="spacer" />
         <button
           type="button"
           class="icon-btn"
           :class="{ active: filterOpen }"
-          title="过滤"
+          :title="t('gitLog.filter')"
           @click="filterOpen = !filterOpen"
         >
           <Search :size="14" />
@@ -386,13 +388,13 @@ function detailFiles(row: GraphRow | null): string[] {
         <button
           type="button"
           class="icon-btn"
-          title="刷新"
+          :title="t('common.refresh')"
           @click="ensureLog()"
         >
           <RefreshCw :size="14" :class="{ spin: loading }" />
         </button>
         <button type="button" class="link" @click="git.loadMoreLog()">
-          加载更多
+          {{ t("gitLog.loadMore") }}
         </button>
       </div>
 
@@ -402,20 +404,20 @@ function detailFiles(row: GraphRow | null): string[] {
           v-bind="PLAIN_INPUT_ATTRS"
           class="filter"
           type="text"
-          placeholder="过滤消息 / 作者 / hash / 分支…"
+          :placeholder="t('gitLog.filterPlaceholder')"
         />
       </div>
 
-      <div v-if="loading && !log.length" class="empty">加载提交历史…</div>
-      <div v-else-if="!rows.length" class="empty">暂无提交记录</div>
+      <div v-if="loading && !log.length" class="empty">{{ t("gitLog.loading") }}</div>
+      <div v-else-if="!rows.length" class="empty">{{ t("gitLog.empty") }}</div>
       <div v-else class="split">
         <div class="table-wrap">
           <div class="thead">
-            <span class="col graph-h">Graph</span>
-            <span class="col desc-h">Description</span>
-            <span class="col date-h">Date</span>
-            <span class="col author-h">Author</span>
-            <span class="col hash-h">Commit</span>
+            <span class="col graph-h">{{ t("gitLog.graph") }}</span>
+            <span class="col desc-h">{{ t("gitLog.description") }}</span>
+            <span class="col date-h">{{ t("gitLog.date") }}</span>
+            <span class="col author-h">{{ t("gitLog.author") }}</span>
+            <span class="col hash-h">{{ t("gitLog.commit") }}</span>
           </div>
           <div class="tbody">
             <div
@@ -449,7 +451,7 @@ function detailFiles(row: GraphRow | null): string[] {
                   :class="refClass(refName)"
                   >{{ refName }}</span
                 >
-                <span v-if="row.unpushed" class="badge">未推送</span>
+                <span v-if="row.unpushed" class="badge">{{ t("gitLog.unpushed") }}</span>
                 <span class="summary" :class="{ bold: row.kind !== 'commit' }">{{
                   row.summary
                 }}</span>
@@ -478,7 +480,7 @@ function detailFiles(row: GraphRow | null): string[] {
               <span :title="selectedRow.id">{{ shortHash(selectedRow.id) }}</span>
             </div>
             <div v-else class="meta">
-              <span>工作区未提交变更</span>
+              <span>{{ t("gitLog.workspaceDirty") }}</span>
             </div>
           </div>
 
@@ -495,7 +497,7 @@ function detailFiles(row: GraphRow | null): string[] {
           </div>
 
           <div class="files-head">
-            {{ selectedRow.kind === "stash" ? "贮藏" : "变更文件" }}
+            {{ selectedRow.kind === "stash" ? t("git.stashes") : t("gitLog.files") }}
             <span v-if="detailFiles(selectedRow).length" class="count">{{
               detailFiles(selectedRow).length
             }}</span>
@@ -504,10 +506,10 @@ function detailFiles(row: GraphRow | null): string[] {
             v-if="selectedRow.kind === 'stash'"
             class="muted"
           >
-            右键可 Apply / Pop / Drop。Apply 保留条目，Pop 应用后删除。
+            {{ t("gitLog.stashHint") }}
           </div>
           <div v-else-if="!detailFiles(selectedRow).length" class="muted">
-            无文件列表
+            {{ t("gitLog.noFiles") }}
           </div>
           <div v-else class="file-list">
             <button
@@ -538,51 +540,59 @@ function detailFiles(row: GraphRow | null): string[] {
       >
         <template v-if="ctx.target.kind === 'commit'">
           <button type="button" @click="onCheckout(ctx.target.id)">
-            Checkout Revision…
+            {{ t("gitLog.checkout") }}
           </button>
           <button type="button" @click="onNewBranch(ctx.target.id)">
-            New Branch from Here…
+            {{ t("gitLog.newBranch") }}
           </button>
-          <button type="button" @click="onCopy(ctx.target.id)">Copy Revision</button>
-          <button type="button" @click="onShowDiff(ctx.target.id)">Show Diff…</button>
-          <button type="button" @click="onCherryPick(ctx.target.id)">Cherry-pick</button>
+          <button type="button" @click="onCopy(ctx.target.id)">
+            {{ t("gitLog.copyRevision") }}
+          </button>
+          <button type="button" @click="onShowDiff(ctx.target.id)">
+            {{ t("gitLog.showDiff") }}
+          </button>
+          <button type="button" @click="onCherryPick(ctx.target.id)">
+            {{ t("gitLog.cherryPick") }}
+          </button>
           <button type="button" @click="onRevertCommit(ctx.target.id)">
-            Revert Commit…
+            {{ t("gitLog.revert") }}
           </button>
           <button type="button" @click="onInteractiveRebase(ctx.target.id)">
-            Interactive Rebase from Here…
+            {{ t("gitLog.rebase") }}
           </button>
           <button type="button" @click="onReset(ctx.target.id, 'soft')">
-            Reset Soft…
+            {{ t("gitLog.resetSoft") }}
           </button>
           <button type="button" @click="onReset(ctx.target.id, 'mixed')">
-            Reset Mixed…
+            {{ t("gitLog.resetMixed") }}
           </button>
           <button
             type="button"
             class="danger"
             @click="onReset(ctx.target.id, 'hard')"
           >
-            Reset Hard to Here…
+            {{ t("gitLog.resetHard") }}
           </button>
         </template>
         <template v-else-if="ctx.target.kind === 'stash'">
           <button type="button" @click="onStashApply(ctx.target.index)">
-            Apply Stash…
+            {{ t("gitLog.applyStash") }}
           </button>
           <button type="button" @click="onStashPop(ctx.target.index)">
-            Pop Stash…
+            {{ t("gitLog.popStash") }}
           </button>
           <button
             type="button"
             class="danger"
             @click="onStashDrop(ctx.target.index)"
           >
-            Drop Stash…
+            {{ t("gitLog.dropStash") }}
           </button>
         </template>
         <template v-else>
-          <button type="button" @click="openCommitPanel">打开 Commit 面板</button>
+          <button type="button" @click="openCommitPanel">
+            {{ t("gitLog.openCommitPanel") }}
+          </button>
         </template>
       </div>
     </Teleport>

@@ -58,7 +58,7 @@ Git（`features/git`）对标 **VS Code Source Control + Git Graph**：左侧 Co
 
 - 对外全称：Miro Code
 - 仓库/包名：MiroCode
-- 标识符、文件名：英文；注释、文档、提交说明：中文
+- 标识符、文件名：英文；界面文案走 `src/i18n`（`zh-CN` / `en-US`）；注释、文档、提交说明：中文
 - 品牌说明：与 Miro.com（看板产品）无关联
 
 ## 变更约定
