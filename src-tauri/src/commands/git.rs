@@ -1180,10 +1180,51 @@ pub fn git_stash(
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStashEntry {
+    pub index: usize,
+    pub id: String,
+    pub message: String,
+}
+
 #[tauri::command]
-pub fn git_stash_pop(root: String) -> Result<(), String> {
+pub fn git_stash_list(root: String) -> Result<Vec<GitStashEntry>, String> {
     let mut repo = open_repo(&root)?;
-    repo.stash_pop(0, None).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    repo.stash_foreach(|index, message, oid| {
+        out.push(GitStashEntry {
+            index,
+            id: oid.to_string(),
+            message: message.to_string(),
+        });
+        true
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn git_stash_pop(root: String, index: Option<usize>) -> Result<(), String> {
+    let mut repo = open_repo(&root)?;
+    repo.stash_pop(index.unwrap_or(0), None)
+        .map_err(|e| format!("弹出贮藏失败: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn git_stash_apply(root: String, index: usize) -> Result<(), String> {
+    let mut repo = open_repo(&root)?;
+    repo.stash_apply(index, None)
+        .map_err(|e| format!("应用贮藏失败: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn git_stash_drop(root: String, index: usize) -> Result<(), String> {
+    let mut repo = open_repo(&root)?;
+    repo.stash_drop(index)
+        .map_err(|e| format!("删除贮藏失败: {e}"))?;
     Ok(())
 }
 

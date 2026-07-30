@@ -34,6 +34,7 @@ const {
   stagedEntries,
   unstagedEntries,
   conflictEntries,
+  stashes,
   selectedPath,
   loading,
   commitMessage,
@@ -47,6 +48,7 @@ const contextMenu = ref<{ x: number; y: number; path: string; staged: boolean } 
 const commitMenuOpen = ref(false);
 const stagedOpen = ref(true);
 const changesOpen = ref(true);
+const stashesOpen = ref(true);
 
 const canCommit = computed(
   () =>
@@ -274,11 +276,18 @@ function onCommitKeydown(event: KeyboardEvent) {
         <button
           type="button"
           class="mini"
-          title="贮藏 Stash：暂存本地未提交改动"
+          :title="
+            stashes.length
+              ? `贮藏 Stash（已有 ${stashes.length} 条，见下方列表）`
+              : '贮藏 Stash：暂存本地未提交改动'
+          "
           aria-label="贮藏"
           @click="git.stash()"
         >
           <Archive :size="14" />
+          <span v-if="stashes.length" class="mini-badge">{{
+            stashes.length > 9 ? "9+" : stashes.length
+          }}</span>
         </button>
       </div>
 
@@ -319,6 +328,68 @@ function onCommitKeydown(event: KeyboardEvent) {
       </div>
 
       <div class="changes">
+        <div v-if="stashes.length" class="group">
+          <div class="group-title" @click="stashesOpen = !stashesOpen">
+            <span class="group-label">
+              <ChevronDown
+                :size="12"
+                class="chev"
+                :class="{ closed: !stashesOpen }"
+              />
+              贮藏
+            </span>
+            <div class="group-actions" @click.stop>
+              <button
+                type="button"
+                class="act"
+                title="弹出最新贮藏"
+                @click="git.stashPop(0)"
+              >
+                Pop
+              </button>
+              <span class="count">{{ stashes.length }}</span>
+            </div>
+          </div>
+          <template v-if="stashesOpen">
+            <div
+              v-for="s in stashes"
+              :key="`stash-${s.index}`"
+              class="row stash-row"
+            >
+              <span class="stash-idx">stash@{{ s.index }}</span>
+              <span class="name stash-msg" :title="s.message">{{
+                s.message
+              }}</span>
+              <div class="row-actions always" @click.stop>
+                <button
+                  type="button"
+                  class="act"
+                  title="应用（保留条目）"
+                  @click="git.stashApply(s.index)"
+                >
+                  Apply
+                </button>
+                <button
+                  type="button"
+                  class="act"
+                  title="弹出（应用后删除）"
+                  @click="git.stashPop(s.index)"
+                >
+                  Pop
+                </button>
+                <button
+                  type="button"
+                  class="act danger-act"
+                  title="删除"
+                  @click="git.stashDrop(s.index)"
+                >
+                  Drop
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+
         <div v-if="conflictEntries.length" class="group">
           <div class="group-title">合并冲突</div>
           <div
@@ -719,11 +790,28 @@ function onCommitKeydown(event: KeyboardEvent) {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  position: relative;
 }
 
 .mini:hover {
   background: var(--accent-soft);
   color: var(--text-primary);
+}
+
+.mini-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
 }
 
 .conflict-banner {
@@ -955,6 +1043,27 @@ function onCommitKeydown(event: KeyboardEvent) {
 
 .act:hover {
   text-decoration: underline;
+}
+
+.danger-act {
+  color: var(--danger);
+}
+
+.stash-row {
+  padding-left: 12px;
+}
+
+.stash-idx {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: #a78bfa;
+}
+
+.stash-msg {
+  flex: 1;
+  max-width: none;
+  color: var(--text-secondary);
 }
 
 .link {

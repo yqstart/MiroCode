@@ -197,8 +197,26 @@ export async function gitStash(
   });
 }
 
-export async function gitStashPop(root: string): Promise<void> {
-  return invoke("git_stash_pop", { root });
+export interface GitStashEntry {
+  index: number;
+  id: string;
+  message: string;
+}
+
+export async function gitStashList(root: string): Promise<GitStashEntry[]> {
+  return invoke("git_stash_list", { root });
+}
+
+export async function gitStashPop(root: string, index?: number): Promise<void> {
+  return invoke("git_stash_pop", { root, index: index ?? null });
+}
+
+export async function gitStashApply(root: string, index: number): Promise<void> {
+  return invoke("git_stash_apply", { root, index });
+}
+
+export async function gitStashDrop(root: string, index: number): Promise<void> {
+  return invoke("git_stash_drop", { root, index });
 }
 
 export async function gitDiscardPaths(

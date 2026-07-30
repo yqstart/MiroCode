@@ -1,54 +1,141 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import {
-  Copy,
-  GitBranch,
-  GitCommitHorizontal,
-  RotateCcw,
-  Cherry,
-} from "lucide-vue-next";
+import { RefreshCw, Search } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { useGitLogStore } from "@/stores/gitLog";
 import { useGitStore } from "@/stores/git";
+import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
-import type { GitCommitInfo } from "@/shared/gitApi";
+import type { GitCommitInfo, GitStashEntry } from "@/shared/gitApi";
+
+type RowKind = "uncommitted" | "stash" | "commit";
+
+interface GraphRow {
+  kind: RowKind;
+  key: string;
+  /** commit / stash oid */
+  id?: string;
+  stashIndex?: number;
+  summary: string;
+  author?: string;
+  time?: string;
+  refs?: string[];
+  files?: string[];
+  unpushed?: boolean;
+  merge?: boolean;
+}
+
+type CtxTarget =
+  | { kind: "commit"; id: string }
+  | { kind: "stash"; index: number }
+  | { kind: "uncommitted" };
 
 const git = useGitStore();
 const gitLog = useGitLogStore();
 const workspace = useWorkspaceStore();
-const { log, loading, snapshot } = storeToRefs(git);
+const settings = useSettingsStore();
+const { log, loading, snapshot, stashes, changelistEntries } = storeToRefs(git);
 const { selectedId, open: logOpen } = storeToRefs(gitLog);
 
 const filter = ref("");
-const ctx = ref<{ x: number; y: number; id: string } | null>(null);
+const filterOpen = ref(false);
+const showRemote = ref(true);
+const branchScope = ref<"all" | "current">("all");
+const ctx = ref<{ x: number; y: number; target: CtxTarget } | null>(null);
+/** 选中行：uncommitted | stash:N | commitOid */
+const selectedKey = ref<string | null>(null);
 
-const filtered = computed(() => {
+const dirtyCount = computed(() => changelistEntries.value.length);
+
+const rows = computed<GraphRow[]>(() => {
   const q = filter.value.trim().toLowerCase();
-  if (!q) return log.value;
-  return log.value.filter(
-    (item) =>
-      item.summary.toLowerCase().includes(q) ||
-      item.author.toLowerCase().includes(q) ||
-      item.id.toLowerCase().includes(q) ||
-      item.refs.some((r) => r.toLowerCase().includes(q)),
-  );
+  const out: GraphRow[] = [];
+
+  if (dirtyCount.value > 0) {
+    const row: GraphRow = {
+      kind: "uncommitted",
+      key: "uncommitted",
+      summary: `Uncommitted Changes (${dirtyCount.value})`,
+      files: changelistEntries.value.map((e) => e.path),
+    };
+    if (
+      !q ||
+      row.summary.toLowerCase().includes(q) ||
+      (row.files ?? []).some((f) => f.toLowerCase().includes(q))
+    ) {
+      out.push(row);
+    }
+  }
+
+  for (const s of stashes.value) {
+    const row: GraphRow = {
+      kind: "stash",
+      key: `stash:${s.index}`,
+      id: s.id,
+      stashIndex: s.index,
+      summary: stashLabel(s),
+      author: "stash",
+      time: "",
+      refs: [`stash@{${s.index}}`],
+    };
+    if (
+      !q ||
+      row.summary.toLowerCase().includes(q) ||
+      (row.refs ?? []).some((r) => r.toLowerCase().includes(q))
+    ) {
+      out.push(row);
+    }
+  }
+
+  const current = snapshot.value.branch;
+  for (const item of log.value) {
+    let refs = item.refs ?? [];
+    if (!showRemote.value) {
+      refs = refs.filter((r) => !isRemoteRef(r));
+    }
+    void current;
+    void branchScope.value;
+    const row: GraphRow = {
+      kind: "commit",
+      key: item.id,
+      id: item.id,
+      summary: item.summary,
+      author: item.author,
+      time: item.time,
+      refs,
+      files: item.files,
+      unpushed: item.unpushed,
+      merge: (item.parents?.length ?? 0) > 1,
+    };
+    if (
+      !q ||
+      row.summary.toLowerCase().includes(q) ||
+      (row.author ?? "").toLowerCase().includes(q) ||
+      (row.id ?? "").toLowerCase().includes(q) ||
+      (row.refs ?? []).some((r) => r.toLowerCase().includes(q))
+    ) {
+      out.push(row);
+    }
+  }
+  return out;
 });
 
-const selected = computed<GitCommitInfo | null>(() => {
-  if (!selectedId.value) return filtered.value[0] ?? null;
-  return (
-    log.value.find((c) => c.id === selectedId.value) ??
-    filtered.value[0] ??
-    null
-  );
+const selectedRow = computed(
+  () => rows.value.find((r) => r.key === selectedKey.value) ?? rows.value[0] ?? null,
+);
+
+const selectedCommit = computed<GitCommitInfo | null>(() => {
+  const row = selectedRow.value;
+  if (!row || row.kind !== "commit" || !row.id) return null;
+  return log.value.find((c) => c.id === row.id) ?? null;
 });
 
 async function ensureLog() {
   if (!workspace.rootPath || !snapshot.value.initialized) return;
-  await git.loadLog(100);
-  if (!selectedId.value && log.value[0]) {
-    gitLog.selectCommit(log.value[0].id);
+  await Promise.all([git.loadLog(100), git.refresh()]);
+  if (!selectedKey.value && rows.value[0]) {
+    selectedKey.value = rows.value[0].key;
   }
 }
 
@@ -60,22 +147,70 @@ watch(logOpen, (open) => {
   if (open) void ensureLog();
 });
 
-watch(filtered, (list) => {
-  if (!list.length) return;
-  if (!selectedId.value || !list.some((c) => c.id === selectedId.value)) {
-    gitLog.selectCommit(list[0].id);
+watch(rows, (list) => {
+  if (!list.length) {
+    selectedKey.value = null;
+    return;
+  }
+  if (!selectedKey.value || !list.some((r) => r.key === selectedKey.value)) {
+    selectedKey.value = list[0].key;
   }
 });
 
-function selectRow(id: string) {
-  gitLog.selectCommit(id);
+// 兼容旧 selectedId
+watch(selectedId, (id) => {
+  if (id) selectedKey.value = id;
+});
+
+function stashLabel(s: GitStashEntry) {
+  // git 消息常为 "On master: msg" / "WIP on master: …"
+  const m = s.message.replace(/^On [^:]+:\s*/i, "").replace(/^WIP on [^:]+:\s*/i, "");
+  return m || s.message || `stash@{${s.index}}`;
+}
+
+function isRemoteRef(name: string) {
+  return (
+    name.includes("/") ||
+    name.startsWith("origin") ||
+    name.endsWith("/HEAD")
+  );
+}
+
+function isTagRef(name: string) {
+  return name.startsWith("v") && /^v?\d/.test(name.replace(/^refs\/tags\//, ""));
+}
+
+function refClass(name: string) {
+  if (name.startsWith("stash@")) return "ref stash";
+  if (name.includes("HEAD") && name.includes("/")) return "ref remote-head";
+  if (isRemoteRef(name)) return "ref remote";
+  if (isTagRef(name)) return "ref tag";
+  return "ref local";
+}
+
+function selectRow(key: string) {
+  selectedKey.value = key;
+  const row = rows.value.find((r) => r.key === key);
+  if (row?.kind === "commit" && row.id) {
+    gitLog.selectCommit(row.id);
+  }
   ctx.value = null;
 }
 
-function onCtx(event: MouseEvent, id: string) {
+function onCtx(event: MouseEvent, row: GraphRow) {
   event.preventDefault();
-  gitLog.selectCommit(id);
-  ctx.value = { x: event.clientX, y: event.clientY, id };
+  selectRow(row.key);
+  if (row.kind === "commit" && row.id) {
+    ctx.value = { x: event.clientX, y: event.clientY, target: { kind: "commit", id: row.id } };
+  } else if (row.kind === "stash" && row.stashIndex != null) {
+    ctx.value = {
+      x: event.clientX,
+      y: event.clientY,
+      target: { kind: "stash", index: row.stashIndex },
+    };
+  } else if (row.kind === "uncommitted") {
+    ctx.value = { x: event.clientX, y: event.clientY, target: { kind: "uncommitted" } };
+  }
 }
 
 async function onCherryPick(id: string) {
@@ -87,12 +222,6 @@ async function onCherryPick(id: string) {
 async function onReset(id: string, mode: "soft" | "mixed" | "hard") {
   ctx.value = null;
   await git.resetTo(id, mode);
-  await ensureLog();
-}
-
-async function onResetHardHere(id: string) {
-  ctx.value = null;
-  await git.resetTo(id, "hard");
   await ensureLog();
 }
 
@@ -189,10 +318,42 @@ async function onInteractiveRebase(id: string) {
   });
 }
 
-function refClass(name: string) {
-  if (name.startsWith("origin/") || name.includes("/")) return "ref remote";
-  if (name === "HEAD" || name.startsWith("HEAD")) return "ref head";
-  return "ref local";
+async function onOpenUncommittedDiff(path: string) {
+  await git.showDiff(path, false);
+  gitLog.blurLog();
+}
+
+function openCommitPanel() {
+  ctx.value = null;
+  settings.openCommitPanel();
+}
+
+async function onStashPop(index: number) {
+  ctx.value = null;
+  await git.stashPop(index);
+  await ensureLog();
+}
+
+async function onStashApply(index: number) {
+  ctx.value = null;
+  await git.stashApply(index);
+  await ensureLog();
+}
+
+async function onStashDrop(index: number) {
+  ctx.value = null;
+  await git.stashDrop(index);
+  await ensureLog();
+}
+
+function shortHash(id?: string) {
+  return id ? id.slice(0, 8) : "";
+}
+
+function detailFiles(row: GraphRow | null): string[] {
+  if (!row) return [];
+  if (row.kind === "commit") return selectedCommit.value?.files ?? row.files ?? [];
+  return row.files ?? [];
 }
 </script>
 
@@ -201,6 +362,41 @@ function refClass(name: string) {
     <div v-if="!snapshot.initialized" class="empty">尚未初始化 Git 仓库</div>
     <template v-else>
       <div class="toolbar">
+        <label class="tool-label">
+          Branches:
+          <select v-model="branchScope" class="select">
+            <option value="all">Show All</option>
+            <option value="current">Current Branch</option>
+          </select>
+        </label>
+        <label class="check">
+          <input v-model="showRemote" type="checkbox" />
+          Show Remote Branches
+        </label>
+        <div class="spacer" />
+        <button
+          type="button"
+          class="icon-btn"
+          :class="{ active: filterOpen }"
+          title="过滤"
+          @click="filterOpen = !filterOpen"
+        >
+          <Search :size="14" />
+        </button>
+        <button
+          type="button"
+          class="icon-btn"
+          title="刷新"
+          @click="ensureLog()"
+        >
+          <RefreshCw :size="14" :class="{ spin: loading }" />
+        </button>
+        <button type="button" class="link" @click="git.loadMoreLog()">
+          加载更多
+        </button>
+      </div>
+
+      <div v-if="filterOpen" class="filter-bar">
         <input
           v-model="filter"
           v-bind="PLAIN_INPUT_ATTRS"
@@ -208,135 +404,125 @@ function refClass(name: string) {
           type="text"
           placeholder="过滤消息 / 作者 / hash / 分支…"
         />
-        <button type="button" class="link" @click="git.loadMoreLog()">
-          加载更多
-        </button>
-        <button type="button" class="link" @click="ensureLog()">刷新</button>
       </div>
 
       <div v-if="loading && !log.length" class="empty">加载提交历史…</div>
-      <div v-else-if="!filtered.length" class="empty">暂无提交记录</div>
+      <div v-else-if="!rows.length" class="empty">暂无提交记录</div>
       <div v-else class="split">
-        <div class="log-list">
-          <div
-            v-for="(item, index) in filtered"
-            :key="item.id"
-            class="log-row"
-            :class="{
-              unpushed: item.unpushed,
-              active: selected?.id === item.id,
-            }"
-            @click="selectRow(item.id)"
-            @contextmenu="onCtx($event, item.id)"
-          >
-            <div class="graph" aria-hidden="true">
-              <span
-                class="node"
-                :class="{
-                  head: index === 0 && !filter,
-                  merge: (item.parents?.length ?? 0) > 1,
-                }"
-              />
-              <span v-if="index < filtered.length - 1" class="line" />
-            </div>
-            <div class="body">
-              <div class="main">
+        <div class="table-wrap">
+          <div class="thead">
+            <span class="col graph-h">Graph</span>
+            <span class="col desc-h">Description</span>
+            <span class="col date-h">Date</span>
+            <span class="col author-h">Author</span>
+            <span class="col hash-h">Commit</span>
+          </div>
+          <div class="tbody">
+            <div
+              v-for="(row, index) in rows"
+              :key="row.key"
+              class="tr"
+              :class="{
+                active: selectedRow?.key === row.key,
+                uncommitted: row.kind === 'uncommitted',
+                stash: row.kind === 'stash',
+              }"
+              @click="selectRow(row.key)"
+              @contextmenu="onCtx($event, row)"
+            >
+              <div class="col graph-c" aria-hidden="true">
                 <span
-                  v-for="refName in item.refs"
+                  class="node"
+                  :class="{
+                    head: row.kind === 'commit' && row.id === log[0]?.id,
+                    merge: row.merge,
+                    stash: row.kind === 'stash',
+                    dirty: row.kind === 'uncommitted',
+                  }"
+                />
+                <span v-if="index < rows.length - 1" class="line" />
+              </div>
+              <div class="col desc-c">
+                <span
+                  v-for="refName in row.refs ?? []"
                   :key="refName"
                   :class="refClass(refName)"
                   >{{ refName }}</span
                 >
-                <span v-if="item.unpushed" class="badge">未推送</span>
-                <span class="summary">{{ item.summary }}</span>
+                <span v-if="row.unpushed" class="badge">未推送</span>
+                <span class="summary" :class="{ bold: row.kind !== 'commit' }">{{
+                  row.summary
+                }}</span>
               </div>
-              <div class="meta">
-                <span class="id" :title="item.id">{{ item.id.slice(0, 7) }}</span>
-                <span>{{ item.author }}</span>
-                <span>{{ item.time }}</span>
+              <div class="col date-c">{{ row.time || "—" }}</div>
+              <div class="col author-c">{{ row.author || "—" }}</div>
+              <div class="col hash-c" :title="row.id">
+                {{ row.kind === "commit" || row.kind === "stash" ? shortHash(row.id) : "" }}
               </div>
             </div>
           </div>
         </div>
 
-        <aside v-if="selected" class="detail">
+        <aside v-if="selectedRow" class="detail">
           <div class="detail-head">
-            <GitCommitHorizontal :size="16" class="detail-icon" />
-            <div class="detail-title">
-              <div class="summary">{{ selected.summary }}</div>
-              <div class="meta">
-                <span class="id">{{ selected.id.slice(0, 10) }}</span>
-                <span>{{ selected.author }} · {{ selected.time }}</span>
-              </div>
+            <div class="summary">{{ selectedRow.summary }}</div>
+            <div v-if="selectedRow.kind === 'commit'" class="meta">
+              <span class="id" :title="selectedRow.id">{{
+                selectedRow.id?.slice(0, 10)
+              }}</span>
+              <span>{{ selectedRow.author }}</span>
+              <span>{{ selectedRow.time }}</span>
+            </div>
+            <div v-else-if="selectedRow.kind === 'stash'" class="meta">
+              <span class="id">stash@{{ selectedRow.stashIndex }}</span>
+              <span :title="selectedRow.id">{{ shortHash(selectedRow.id) }}</span>
+            </div>
+            <div v-else class="meta">
+              <span>工作区未提交变更</span>
             </div>
           </div>
 
-          <div v-if="selected.refs.length" class="ref-row">
+          <div
+            v-if="selectedRow.refs?.length"
+            class="ref-row"
+          >
             <span
-              v-for="refName in selected.refs"
+              v-for="refName in selectedRow.refs"
               :key="refName"
               :class="refClass(refName)"
               >{{ refName }}</span
             >
           </div>
 
-          <div class="actions">
-            <button type="button" class="action primary" @click="onCherryPick(selected.id)">
-              <Cherry :size="14" />
-              Cherry-pick
-            </button>
-            <button type="button" class="action" @click="onCheckout(selected.id)">
-              <GitBranch :size="14" />
-              Checkout
-            </button>
-            <button type="button" class="action" @click="onNewBranch(selected.id)">
-              New Branch…
-            </button>
-            <button type="button" class="action" @click="onShowDiff(selected.id)">
-              Show Diff
-            </button>
-            <button type="button" class="action" @click="onCopy(selected.id)">
-              <Copy :size="13" />
-              Copy Hash
-            </button>
-            <button type="button" class="action" @click="onRevertCommit(selected.id)">
-              <RotateCcw :size="13" />
-              Revert…
-            </button>
-            <button type="button" class="action" @click="onInteractiveRebase(selected.id)">
-              Rebase from Here…
-            </button>
-            <button type="button" class="action danger" @click="onResetHardHere(selected.id)">
-              Reset Hard…
-            </button>
-          </div>
-
           <div class="files-head">
-            变更文件
-            <span v-if="selected.files?.length" class="count">{{
-              selected.files.length
+            {{ selectedRow.kind === "stash" ? "贮藏" : "变更文件" }}
+            <span v-if="detailFiles(selectedRow).length" class="count">{{
+              detailFiles(selectedRow).length
             }}</span>
           </div>
-          <div v-if="!selected.files?.length" class="muted">无文件列表</div>
+          <div
+            v-if="selectedRow.kind === 'stash'"
+            class="muted"
+          >
+            右键可 Apply / Pop / Drop。Apply 保留条目，Pop 应用后删除。
+          </div>
+          <div v-else-if="!detailFiles(selectedRow).length" class="muted">
+            无文件列表
+          </div>
           <div v-else class="file-list">
             <button
-              v-for="f in selected.files"
+              v-for="f in detailFiles(selectedRow)"
               :key="f"
               type="button"
               class="file"
               :title="f"
-              @click="onShowDiff(selected.id, f)"
+              @click="
+                selectedRow.kind === 'commit' && selectedRow.id
+                  ? onShowDiff(selectedRow.id, f)
+                  : onOpenUncommittedDiff(f)
+              "
             >
               {{ f }}
-            </button>
-          </div>
-
-          <div class="danger-bar">
-            <button type="button" class="danger-btn" @click="git.undoCommit()">
-              撤销最近提交
-            </button>
-            <button type="button" class="danger-btn" @click="git.resetHard()">
-              硬重置 HEAD…
             </button>
           </div>
         </aside>
@@ -350,26 +536,54 @@ function refClass(name: string) {
         :style="{ left: `${ctx.x}px`, top: `${ctx.y}px` }"
         @click.stop
       >
-        <button type="button" @click="onCheckout(ctx.id)">Checkout Revision…</button>
-        <button type="button" @click="onNewBranch(ctx.id)">
-          New Branch from Here…
-        </button>
-        <button type="button" @click="onCopy(ctx.id)">Copy Revision</button>
-        <button type="button" @click="onShowDiff(ctx.id)">Show Diff…</button>
-        <button type="button" @click="onCherryPick(ctx.id)">Cherry-pick</button>
-        <button type="button" @click="onRevertCommit(ctx.id)">
-          Revert Commit…
-        </button>
-        <button type="button" @click="onInteractiveRebase(ctx.id)">
-          Interactive Rebase from Here…
-        </button>
-        <button type="button" @click="onReset(ctx.id, 'soft')">Reset Soft…</button>
-        <button type="button" @click="onReset(ctx.id, 'mixed')">
-          Reset Mixed…
-        </button>
-        <button type="button" class="danger" @click="onResetHardHere(ctx.id)">
-          Reset Hard to Here…
-        </button>
+        <template v-if="ctx.target.kind === 'commit'">
+          <button type="button" @click="onCheckout(ctx.target.id)">
+            Checkout Revision…
+          </button>
+          <button type="button" @click="onNewBranch(ctx.target.id)">
+            New Branch from Here…
+          </button>
+          <button type="button" @click="onCopy(ctx.target.id)">Copy Revision</button>
+          <button type="button" @click="onShowDiff(ctx.target.id)">Show Diff…</button>
+          <button type="button" @click="onCherryPick(ctx.target.id)">Cherry-pick</button>
+          <button type="button" @click="onRevertCommit(ctx.target.id)">
+            Revert Commit…
+          </button>
+          <button type="button" @click="onInteractiveRebase(ctx.target.id)">
+            Interactive Rebase from Here…
+          </button>
+          <button type="button" @click="onReset(ctx.target.id, 'soft')">
+            Reset Soft…
+          </button>
+          <button type="button" @click="onReset(ctx.target.id, 'mixed')">
+            Reset Mixed…
+          </button>
+          <button
+            type="button"
+            class="danger"
+            @click="onReset(ctx.target.id, 'hard')"
+          >
+            Reset Hard to Here…
+          </button>
+        </template>
+        <template v-else-if="ctx.target.kind === 'stash'">
+          <button type="button" @click="onStashApply(ctx.target.index)">
+            Apply Stash…
+          </button>
+          <button type="button" @click="onStashPop(ctx.target.index)">
+            Pop Stash…
+          </button>
+          <button
+            type="button"
+            class="danger"
+            @click="onStashDrop(ctx.target.index)"
+          >
+            Drop Stash…
+          </button>
+        </template>
+        <template v-else>
+          <button type="button" @click="openCommitPanel">打开 Commit 面板</button>
+        </template>
       </div>
     </Teleport>
   </div>
@@ -387,21 +601,59 @@ function refClass(name: string) {
 .toolbar {
   flex-shrink: 0;
   display: flex;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
-  padding: 8px 12px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-panel);
+  font-size: 12px;
 }
-.filter {
-  flex: 1;
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 6px;
+.tool-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+.select {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 4px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-app);
   color: var(--text-primary);
   font-size: 12px;
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.spacer {
+  flex: 1;
+}
+.icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+.icon-btn:hover,
+.icon-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .toolbar .link {
   flex-shrink: 0;
@@ -410,6 +662,23 @@ function refClass(name: string) {
 }
 .toolbar .link:hover {
   text-decoration: underline;
+}
+.filter-bar {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+.filter {
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 12px;
+  box-sizing: border-box;
 }
 .empty {
   flex: 1;
@@ -423,41 +692,75 @@ function refClass(name: string) {
   min-height: 0;
   display: flex;
 }
-.log-list {
+.table-wrap {
   flex: 1;
   min-width: 0;
-  overflow: auto;
-  padding: 6px 0;
-  border-right: 1px solid var(--border-subtle);
-}
-.log-row {
-  display: flex;
-  gap: 10px;
-  padding: 8px 14px;
-  cursor: default;
-}
-.log-row:hover {
-  background: var(--accent-soft);
-}
-.log-row.active {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-}
-.log-row.unpushed .summary {
-  font-weight: 600;
-}
-.graph {
-  width: 14px;
-  flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  border-right: 1px solid var(--border-subtle);
+}
+.thead,
+.tr {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 148px 100px 80px;
+  align-items: stretch;
+  gap: 0;
+}
+.thead {
+  flex-shrink: 0;
+  height: 28px;
   align-items: center;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.thead .col {
+  padding: 0 8px;
+}
+.tbody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.tr {
+  min-height: 28px;
+  cursor: default;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent);
+  font-size: 12px;
+}
+.tr:hover {
+  background: var(--accent-soft);
+}
+.tr.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.tr.uncommitted .summary,
+.tr.stash .summary.bold {
+  font-weight: 600;
+}
+.col {
+  padding: 4px 8px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.graph-c {
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 8px;
+  padding-left: 0;
+  padding-right: 0;
 }
 .node {
   width: 9px;
   height: 9px;
   border-radius: 50%;
   background: #60a5fa;
-  margin-top: 4px;
+  flex-shrink: 0;
   box-shadow: 0 0 0 2px color-mix(in srgb, #60a5fa 25%, transparent);
 }
 .node.head {
@@ -466,72 +769,93 @@ function refClass(name: string) {
 }
 .node.merge {
   background: var(--warning);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 30%, transparent);
+}
+.node.stash {
+  background: #a78bfa;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #a78bfa 30%, transparent);
+}
+.node.dirty {
+  background: var(--warning);
+  border-radius: 2px;
 }
 .line {
   flex: 1;
   width: 2px;
+  min-height: 10px;
   background: color-mix(in srgb, #60a5fa 55%, transparent);
   margin-top: 2px;
-  min-height: 12px;
 }
-.body {
-  min-width: 0;
-  flex: 1;
-}
-.main {
-  display: flex;
+.desc-c {
   flex-wrap: wrap;
-  gap: 6px;
-  align-items: baseline;
-  font-size: 13px;
-}
-.id {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--accent);
-}
-.ref {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.ref.local {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent);
-}
-.ref.remote {
-  background: color-mix(in srgb, #60a5fa 18%, transparent);
-  color: #60a5fa;
-}
-.ref.head {
-  background: color-mix(in srgb, var(--success) 18%, transparent);
-  color: var(--success);
-}
-.badge {
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--warning) 20%, transparent);
-  color: var(--warning);
+  gap: 5px;
+  row-gap: 2px;
 }
 .summary {
   color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.meta {
-  margin-top: 2px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 11px;
+.summary.bold {
+  font-weight: 600;
+}
+.date-c,
+.author-c {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hash-c {
+  font-family: var(--font-mono);
   color: var(--text-muted);
+  white-space: nowrap;
+}
+.ref {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 0 6px;
+  height: 18px;
+  border-radius: 9px;
+  display: inline-flex;
   align-items: center;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.ref.local {
+  background: color-mix(in srgb, #3b82f6 18%, transparent);
+  color: #3b82f6;
+}
+.ref.remote {
+  background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+  color: var(--text-secondary);
+}
+.ref.remote-head {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, #3b82f6 50%, transparent);
+  color: #3b82f6;
+}
+.ref.tag {
+  background: color-mix(in srgb, #3b82f6 14%, transparent);
+  color: #2563eb;
+}
+.ref.stash {
+  background: color-mix(in srgb, #a78bfa 20%, transparent);
+  color: #a78bfa;
+}
+.badge {
+  font-size: 10px;
+  padding: 0 5px;
+  height: 16px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+  color: var(--warning);
 }
 
 .detail {
-  width: min(360px, 38%);
+  width: min(320px, 36%);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -539,26 +863,26 @@ function refClass(name: string) {
   background: var(--bg-panel);
 }
 .detail-head {
-  display: flex;
-  gap: 10px;
   padding: 14px 14px 10px;
   border-bottom: 1px solid var(--border-subtle);
 }
-.detail-icon {
-  color: var(--accent);
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-.detail-title {
-  min-width: 0;
-}
-.detail-title .summary {
+.detail-head .summary {
   font-size: 14px;
   font-weight: 600;
   line-height: 1.4;
+  white-space: normal;
 }
-.detail-title .meta {
-  margin-top: 4px;
+.meta {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.id {
+  font-family: var(--font-mono);
+  color: var(--accent);
 }
 .ref-row {
   display: flex;
@@ -566,44 +890,6 @@ function refClass(name: string) {
   gap: 6px;
   padding: 8px 14px;
   border-bottom: 1px solid var(--border-subtle);
-}
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.action {
-  height: 28px;
-  padding: 0 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-app);
-  color: var(--text-secondary);
-  font-size: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.action:hover {
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
-.action.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
-}
-.action.primary:hover {
-  filter: brightness(1.06);
-  color: var(--accent-fg);
-}
-.action.danger {
-  color: var(--danger);
-}
-.action.danger:hover {
-  border-color: var(--danger);
 }
 .files-head {
   display: flex;
@@ -622,6 +908,7 @@ function refClass(name: string) {
   padding: 8px 14px;
   font-size: 12px;
   color: var(--text-muted);
+  line-height: 1.45;
 }
 .file-list {
   flex: 1;
@@ -646,22 +933,6 @@ function refClass(name: string) {
 .file:hover {
   background: var(--accent-soft);
   color: var(--accent);
-}
-.danger-bar {
-  flex-shrink: 0;
-  display: flex;
-  gap: 8px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border-subtle);
-}
-.danger-btn {
-  font-size: 11px;
-  color: var(--danger);
-  padding: 4px 8px;
-  border-radius: 6px;
-}
-.danger-btn:hover {
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 .ctx {
   position: fixed;

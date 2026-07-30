@@ -45,7 +45,8 @@ const {
   tabId: gitLogTabId,
 } = storeToRefs(gitLog);
 
-const markdownPreview = ref(false);
+/** Markdown 首次打开默认预览；点「编辑」可切回源码 */
+const markdownPreview = ref(true);
 const svgPreview = ref(true);
 
 const isMarkdown = computed(() => {
@@ -133,7 +134,7 @@ const hasAnyTab = computed(
 watch(
   () => activeTab.value?.path,
   () => {
-    markdownPreview.value = false;
+    markdownPreview.value = true;
     svgPreview.value = true;
   },
 );

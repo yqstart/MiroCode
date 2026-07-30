@@ -38,6 +38,9 @@ import {
   gitSetUpstream,
   gitStage,
   gitStash,
+  gitStashApply,
+  gitStashDrop,
+  gitStashList,
   gitStashPop,
   gitStatus,
   gitUndoCommit,
@@ -49,6 +52,7 @@ import {
   type GitDiffResult,
   type GitRebaseStatus,
   type GitRebaseStep,
+  type GitStashEntry,
   type GitStatusEntry,
   type GitStatusSnapshot,
 } from "@/shared/gitApi";
@@ -76,6 +80,7 @@ export const useGitStore = defineStore("git", () => {
   const snapshot = ref<GitStatusSnapshot>({ ...EMPTY });
   const branches = ref<GitBranchInfo[]>([]);
   const log = ref<GitCommitInfo[]>([]);
+  const stashes = ref<GitStashEntry[]>([]);
   const logLimit = ref(80);
   const conflictFiles = ref<string[]>([]);
   const rebaseStatus = ref<GitRebaseStatus>({ ...EMPTY_REBASE });
@@ -170,6 +175,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) {
       snapshot.value = { ...EMPTY };
       branches.value = [];
+      stashes.value = [];
       conflictFiles.value = [];
       checkedMap.value = {};
       selectedPath.value = null;
@@ -192,6 +198,12 @@ export const useGitStore = defineStore("git", () => {
           branches.value = await gitBranches(workspace.rootPath);
           if (seq !== refreshSeq) return;
           try {
+            stashes.value = await gitStashList(workspace.rootPath);
+          } catch {
+            stashes.value = [];
+          }
+          if (seq !== refreshSeq) return;
+          try {
             rebaseStatus.value = await gitRebaseStatus(workspace.rootPath);
           } catch {
             rebaseStatus.value = { ...EMPTY_REBASE };
@@ -204,6 +216,7 @@ export const useGitStore = defineStore("git", () => {
           }
         } else {
           branches.value = [];
+          stashes.value = [];
           conflictFiles.value = [];
           rebaseStatus.value = { ...EMPTY_REBASE };
         }
@@ -567,12 +580,43 @@ export const useGitStore = defineStore("git", () => {
     }
   }
 
-  async function stashPop() {
+  async function stashPop(index = 0) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
     try {
-      await gitStashPop(workspace.rootPath);
+      await gitStashPop(workspace.rootPath, index);
       workspace.showNotice("已弹出贮藏");
+      await refresh();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function stashApply(index: number) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    try {
+      await gitStashApply(workspace.rootPath, index);
+      workspace.showNotice("已应用贮藏（仍保留条目）");
+      await refresh();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function stashDrop(index: number) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    if (!confirm(`确定删除 stash@{${index}}？此操作不可撤销。`)) return;
+    try {
+      await gitStashDrop(workspace.rootPath, index);
+      workspace.showNotice("已删除贮藏");
       await refresh();
     } catch (error) {
       workspace.showNotice(
@@ -680,6 +724,7 @@ export const useGitStore = defineStore("git", () => {
     snapshot.value = { ...EMPTY };
     branches.value = [];
     log.value = [];
+    stashes.value = [];
     logLimit.value = 80;
     conflictFiles.value = [];
     rebaseStatus.value = { ...EMPTY_REBASE };
@@ -1141,6 +1186,7 @@ export const useGitStore = defineStore("git", () => {
     snapshot,
     branches,
     log,
+    stashes,
     logLimit,
     conflictFiles,
     rebaseStatus,
@@ -1181,6 +1227,8 @@ export const useGitStore = defineStore("git", () => {
     fetchRemote,
     stash,
     stashPop,
+    stashApply,
+    stashDrop,
     discard,
     discardAll,
     loadLog,
