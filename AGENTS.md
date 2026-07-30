@@ -31,6 +31,7 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 - 搜索：Rust walk + 模糊/内容检索/替换
 - Git：Rust `git2`（日常操作 + 冲突解决）
 - 主题：`miro-dark` / `dawn` / `midnight` / `cyberpunk`
+- 文件图标：Material Icon Theme（资源树 / Commit / 快速打开等）
 
 ## 源码结构（当前）
 

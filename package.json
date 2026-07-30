@@ -43,6 +43,7 @@
     "codemirror": "^6.0.2",
     "lucide-vue-next": "^0.525.0",
     "marked": "^18.0.7",
+    "material-icon-theme": "^5.37.0",
     "pinia": "^3.0.4",
     "tauri-pty": "^0.3.1",
     "vue": "^3.5.13"

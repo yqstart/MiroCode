@@ -597,28 +597,48 @@ pub fn git_discard_paths(root: String, paths: Vec<String>) -> Result<(), String>
         .exclude_submodules(true);
     let statuses = repo.statuses(Some(&mut opts)).map_err(|e| e.to_string())?;
 
-    let path_set: std::collections::HashSet<&str> =
-        paths.iter().map(|p| p.as_str()).collect();
+    fn norm(p: &str) -> String {
+        p.replace('\\', "/")
+    }
+
+    let path_set: std::collections::HashSet<String> =
+        paths.iter().map(|p| norm(p)).collect();
     let mut tracked: Vec<String> = Vec::new();
     let mut untracked: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for entry in statuses.iter() {
         let path = entry.path().unwrap_or("");
-        if path.is_empty() || !path_set.contains(path) {
+        if path.is_empty() {
             continue;
         }
+        let key = norm(path);
+        if !path_set.contains(&key) {
+            continue;
+        }
+        seen.insert(key.clone());
         let st = entry.status();
         // 纯未跟踪（工作区新增且未入 index）→ 删除文件
-        if st.is_wt_new() && !st.intersects(
-            git2::Status::INDEX_NEW
-                | git2::Status::INDEX_MODIFIED
-                | git2::Status::INDEX_DELETED
-                | git2::Status::INDEX_RENAMED
-                | git2::Status::INDEX_TYPECHANGE,
-        ) {
+        if st.is_wt_new()
+            && !st.intersects(
+                git2::Status::INDEX_NEW
+                    | git2::Status::INDEX_MODIFIED
+                    | git2::Status::INDEX_DELETED
+                    | git2::Status::INDEX_RENAMED
+                    | git2::Status::INDEX_TYPECHANGE,
+            )
+        {
             untracked.push(path.to_string());
         } else {
             tracked.push(path.to_string());
+        }
+    }
+
+    // 状态列表未命中时仍尝试 checkout（路径格式偶发不一致的兜底）
+    for p in &paths {
+        let key = norm(p);
+        if !seen.contains(&key) {
+            tracked.push(p.clone());
         }
     }
 
@@ -634,10 +654,7 @@ pub fn git_discard_paths(root: String, paths: Vec<String>) -> Result<(), String>
 
         // INDEX_NEW（已暂存但从未提交）在 HEAD 中不存在，需从 index 移除并删工作区文件
         let mut index = repo.index().map_err(|e| e.to_string())?;
-        let head_tree = repo
-            .head()
-            .ok()
-            .and_then(|h| h.peel_to_tree().ok());
+        let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
         for path in &tracked {
             let in_head = head_tree
                 .as_ref()

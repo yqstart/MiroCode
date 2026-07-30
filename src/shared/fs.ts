@@ -78,7 +78,7 @@ export function dirname(path: string): string {
   return path.slice(0, idx);
 }
 
-/** 相对工作区根的路径；根自身返回 `.` */
+  /** 相对工作区根的路径；根自身返回 `.` */
 export function relativeToRoot(root: string, absPath: string): string {
   const normRoot = root.replace(/[/\\]+$/, "");
   if (absPath === normRoot) return ".";
@@ -87,6 +87,12 @@ export function relativeToRoot(root: string, absPath: string): string {
   if (absPath.startsWith(prefixSlash)) return absPath.slice(prefixSlash.length);
   if (absPath.startsWith(prefixBack)) return absPath.slice(prefixBack.length);
   return absPath;
+}
+
+/** 将仓库相对路径转为绝对路径；已是绝对路径则原样返回 */
+export function toAbsolutePath(root: string, path: string): string {
+  if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return path;
+  return joinPath(root, path);
 }
 
 export function languageFromPath(path: string): string {

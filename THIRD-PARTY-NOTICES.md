@@ -25,6 +25,12 @@
 - 仓库：https://github.com/lucide-icons/lucide
 - 许可证：ISC
 
+### Material Icon Theme（material-icon-theme）
+- 仓库：https://github.com/material-extensions/vscode-material-icon-theme
+- 用途：资源管理器 / 变更列表等文件与文件夹类型图标
+- 许可证：MIT
+- 版权：Material Extensions / Philipp Kief 及贡献者
+
 ### Marked
 - 仓库：https://github.com/markedjs/marked
 - 许可证：MIT

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Folder, FolderOpen } from "lucide-vue-next";
-import { resolveFileIcon } from "@/shared/fileIcons";
+import { resolveMaterialIconUrl } from "@/shared/fileIcons";
 
 const props = withDefaults(
   defineProps<{
@@ -17,39 +16,42 @@ const props = withDefaults(
   },
 );
 
-const fileSpec = computed(() =>
-  props.isDir ? null : resolveFileIcon(props.path),
+const src = computed(() =>
+  resolveMaterialIconUrl(props.path, {
+    isDir: props.isDir,
+    expanded: props.expanded,
+  }),
 );
 </script>
 
 <template>
-  <FolderOpen
-    v-if="isDir && expanded"
-    :size="size"
-    class="file-type-icon folder"
-  />
-  <Folder
-    v-else-if="isDir"
-    :size="size"
-    class="file-type-icon folder"
-  />
-  <component
-    :is="fileSpec!.icon"
-    v-else
-    :size="size"
+  <img
+    v-if="src"
     class="file-type-icon"
-    :style="{ color: fileSpec!.color }"
+    :src="src"
+    :width="size"
+    :height="size"
+    alt=""
+    draggable="false"
+  />
+  <span
+    v-else
+    class="file-type-icon placeholder"
+    :style="{ width: `${size}px`, height: `${size}px` }"
   />
 </template>
 
 <style scoped>
 .file-type-icon {
   flex-shrink: 0;
-  color: var(--text-muted);
+  display: block;
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
 }
 
-.file-type-icon.folder {
-  color: var(--accent);
-  opacity: 0.85;
+.file-type-icon.placeholder {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-muted) 25%, transparent);
 }
 </style>

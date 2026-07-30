@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Columns2, Eye, FileCode, TerminalSquare, X } from "lucide-vue-next";
 import { marked } from "marked";
 import { storeToRefs } from "pinia";
@@ -7,10 +7,12 @@ import CodeMirrorEditor from "@/features/editor/CodeMirrorEditor.vue";
 import ImagePreview from "@/features/editor/ImagePreview.vue";
 import CompareView from "@/features/git/CompareView.vue";
 import SessionsView from "@/features/sessions/SessionsView.vue";
+import { basename, relativeToRoot } from "@/shared/fs";
 import { isRasterImagePath, isSvgPath } from "@/shared/media";
 import { formatShortcut } from "@/shared/platform";
 import { useCompareStore } from "@/stores/compare";
 import { useEditorStore } from "@/stores/editor";
+import { useGitStore } from "@/stores/git";
 import { useSessionsStore } from "@/stores/sessions";
 import { useWorkspaceStore } from "@/stores/workspace";
 
@@ -20,7 +22,9 @@ const editor = useEditorStore();
 const sessions = useSessionsStore();
 const compare = useCompareStore();
 const workspace = useWorkspaceStore();
+const git = useGitStore();
 const { tabs, activePath, activeTab } = storeToRefs(editor);
+const { rootPath } = storeToRefs(workspace);
 const {
   open: sessionsOpen,
   mounted: sessionsMounted,
@@ -176,6 +180,65 @@ function onTabsWheel(event: WheelEvent) {
   if (!delta) return;
   el.scrollLeft += delta;
 }
+
+const editorCtx = ref<{ x: number; y: number; absPath: string } | null>(null);
+
+const editorCtxRelPath = computed(() => {
+  if (!editorCtx.value || !rootPath.value) return null;
+  return relativeToRoot(rootPath.value, editorCtx.value.absPath);
+});
+
+const editorCtxGitEntry = computed(() => {
+  const rel = editorCtxRelPath.value;
+  if (!rel || rel === ".") return null;
+  return git.statusMap.get(rel) ?? null;
+});
+
+const canDiscardActive = computed(
+  () => Boolean(editorCtxGitEntry.value) && !editorCtxGitEntry.value?.conflicted,
+);
+
+function onEditorContextMenu(event: MouseEvent) {
+  if (!activeTab.value || !showFileEditor.value) return;
+  if (sessionsFocused.value || compareFocused.value) return;
+  if (!rootPath.value) return;
+  const rel = relativeToRoot(rootPath.value, activeTab.value.path);
+  const entry = git.statusMap.get(rel);
+  if (!entry || entry.conflicted) return;
+  event.preventDefault();
+  editorCtx.value = {
+    x: event.clientX,
+    y: event.clientY,
+    absPath: activeTab.value.path,
+  };
+}
+
+async function discardFromEditor() {
+  const rel = editorCtxRelPath.value;
+  const entry = editorCtxGitEntry.value;
+  editorCtx.value = null;
+  if (!rel || !entry || entry.conflicted) return;
+  const isUntracked = entry.status === "untracked";
+  const msg = isUntracked
+    ? `「${basename(rel)}」是未跟踪的新文件，回滚将删除该文件。此操作不可撤销。确定？`
+    : `确定回滚「${basename(rel)}」的未提交变更？此操作不可撤销。`;
+  if (!confirm(msg)) return;
+  await git.discard([rel]);
+}
+
+async function showDiffFromEditor() {
+  const rel = editorCtxRelPath.value;
+  editorCtx.value = null;
+  if (!rel) return;
+  await git.showDiff(rel, false);
+}
+
+function onDocClick() {
+  editorCtx.value = null;
+}
+
+onMounted(() => window.addEventListener("click", onDocClick));
+onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
 </script>
 
 <template>
@@ -248,7 +311,7 @@ function onTabsWheel(event: WheelEvent) {
       </button>
     </div>
 
-    <div class="canvas">
+    <div class="canvas" @contextmenu="onEditorContextMenu">
       <SessionsView v-if="sessionsMounted" v-show="sessionsFocused" />
 
       <CompareView
@@ -296,6 +359,20 @@ function onTabsWheel(event: WheelEvent) {
         </div>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="editorCtx && showFileEditor && canDiscardActive"
+        class="editor-ctx"
+        :style="{ left: `${editorCtx.x}px`, top: `${editorCtx.y}px` }"
+        @click.stop
+      >
+        <button type="button" @click="showDiffFromEditor">显示 Diff</button>
+        <button type="button" class="danger" @click="discardFromEditor">
+          回滚变更…
+        </button>
+      </div>
+    </Teleport>
   </section>
 </template>
 
@@ -526,5 +603,34 @@ function onTabsWheel(event: WheelEvent) {
   margin-top: 4px;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.editor-ctx {
+  position: fixed;
+  z-index: 80;
+  min-width: 160px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-ctx button {
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.editor-ctx button:hover {
+  background: var(--accent-soft);
+}
+
+.editor-ctx .danger {
+  color: var(--danger);
 }
 </style>

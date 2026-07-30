@@ -586,8 +586,10 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath || !paths.length) return;
     try {
       await gitDiscardPaths(workspace.rootPath, paths);
+      const { useEditorStore } = await import("@/stores/editor");
+      await useEditorStore().reloadAfterDiscard(paths);
       workspace.showNotice(
-        paths.length === 1 ? "已丢弃变更" : `已丢弃 ${paths.length} 个文件的变更`,
+        paths.length === 1 ? "已回滚变更" : `已回滚 ${paths.length} 个文件的变更`,
       );
       await refresh();
     } catch (error) {
@@ -1128,7 +1130,7 @@ export const useGitStore = defineStore("git", () => {
     const entry = statusMap.value.get(path);
     if (!entry) return null;
     if (entry.conflicted) return "var(--danger)";
-    if (entry.status === "untracked") return "var(--text-muted)";
+    if (entry.status === "untracked") return "var(--success)";
     if (entry.staged) return "var(--success)";
     if (entry.unstaged) return "var(--warning)";
     return null;

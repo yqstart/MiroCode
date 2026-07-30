@@ -48,7 +48,7 @@
 | Git | **Rust `git2`（libgit2）** | 性能与可控性优于前端壳调 CLI |
 | 搜索索引 | **Rust walkdir + 增量索引**；内容检索优先 ripgrep 风格扫描 | 千级文件可接受；过大项目可后续换 tantivy |
 | 配置持久化 | Tauri `Store` / 本地 JSON | 主题、布局、忽略规则、搜索历史 |
-| UI 图标 | **Lucide** 或等价线性图标 | 贴近 theme 截图的细线图标风格 |
+| UI 图标 | **Lucide**（控件）+ **Material Icon Theme**（资源树/文件类型） | 控件细线风格；文件图标对齐 VS Code Material Icon Theme |
 | 包管理 | pnpm（推荐） | 磁盘占用与安装速度更优 |
 
 ### 3.2 为何选 CodeMirror 6 而非 Monaco

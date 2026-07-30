@@ -80,23 +80,25 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
 <template>
   <footer class="status-bar">
     <div class="left">
-      <span>{{ workspace.rootName }}</span>
+      <span class="root-name" :title="workspace.rootName">{{
+        workspace.rootName
+      }}</span>
       <div v-if="branch" class="branch-switch" @click.stop>
         <button
           type="button"
           class="branch-btn"
-          title="Git Branches"
+          :title="`Git Branches · ${branch}${syncLabel ? ` · ${syncLabel}` : ''}`"
           @click="toggleBranches"
         >
-          <GitBranch :size="12" />
+          <GitBranch :size="12" class="branch-icon" />
           <span class="branch-name">{{ branch }}</span>
           <span v-if="syncLabel" class="sync-label">{{ syncLabel }}</span>
         </button>
       </div>
       <span class="sep">·</span>
-      <span>{{ lang }}</span>
+      <span class="meta">{{ lang }}</span>
       <span class="sep">·</span>
-      <span>UTF-8</span>
+      <span class="meta">UTF-8</span>
       <span v-if="dirty" class="dirty">未保存</span>
       <button
         v-if="snapshot.conflictCount > 0"
@@ -152,11 +154,13 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 0 12px;
   background: var(--bg-panel);
   border-top: 1px solid var(--border-subtle);
   color: var(--text-secondary);
   font-size: 12px;
+  min-width: 0;
 }
 
 .left,
@@ -167,15 +171,36 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
   min-width: 0;
 }
 
+.left {
+  flex: 1;
+  overflow: hidden;
+}
+
+.right {
+  flex-shrink: 0;
+}
+
+.root-name {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .branch-switch {
   position: relative;
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 .branch-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  max-width: 220px;
+  max-width: 100%;
+  min-width: 0;
   padding: 2px 6px;
   margin: -2px 0;
   border-radius: 4px;
@@ -188,30 +213,44 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
   background: var(--accent-soft);
 }
 
+.branch-icon {
+  flex-shrink: 0;
+}
+
 .branch-name {
+  min-width: 0;
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .sync-label {
+  flex-shrink: 0;
   font-size: 11px;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 
+.meta {
+  flex-shrink: 0;
+}
+
 .sep {
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .dirty {
   color: var(--warning);
+  flex-shrink: 0;
 }
 
 .conflict {
   color: var(--danger);
   font-weight: 600;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .conflict:hover {
@@ -220,7 +259,8 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
 
 .notice {
   color: var(--accent);
-  max-width: 420px;
+  min-width: 0;
+  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

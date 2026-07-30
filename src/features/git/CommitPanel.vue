@@ -57,13 +57,25 @@ onMounted(() => {
 function statusLabel(status: string) {
   const map: Record<string, string> = {
     modified: "M",
-    untracked: "?",
+    untracked: "N",
     deleted: "D",
     renamed: "R",
     conflict: "C",
     changed: "M",
   };
   return map[status] ?? status.slice(0, 1).toUpperCase();
+}
+
+function statusTitle(status: string) {
+  const map: Record<string, string> = {
+    modified: "已修改",
+    untracked: "未跟踪 · New（回滚将删除）",
+    deleted: "已删除",
+    renamed: "已重命名",
+    conflict: "冲突",
+    changed: "已变更",
+  };
+  return map[status] ?? status;
 }
 
 function statusClass(status: string) {
@@ -110,18 +122,27 @@ function onContextMenu(event: MouseEvent, path: string) {
 
 async function onDiscard(path: string) {
   contextMenu.value = null;
-  if (!confirm(`确定回滚「${basename(path)}」的未提交变更？此操作不可撤销。`)) {
-    return;
-  }
+  const entry = git.statusMap.get(path);
+  const isUntracked = entry?.status === "untracked";
+  const msg = isUntracked
+    ? `「${basename(path)}」是未跟踪的新文件，回滚将删除该文件。此操作不可撤销。确定？`
+    : `确定回滚「${basename(path)}」的未提交变更？此操作不可撤销。`;
+  if (!confirm(msg)) return;
   await git.discard([path]);
 }
 
 async function onDiscardChecked() {
   const paths = git.checkedPaths;
   if (!paths.length) return;
+  const hasUntracked = paths.some(
+    (p) => git.statusMap.get(p)?.status === "untracked",
+  );
+  const tip = hasUntracked
+    ? `（含未跟踪文件，将被删除）`
+    : "";
   if (
     !confirm(
-      `确定回滚已勾选的 ${paths.length} 个文件的未提交变更？此操作不可撤销。`,
+      `确定回滚已勾选的 ${paths.length} 个文件的未提交变更${tip}？此操作不可撤销。`,
     )
   ) {
     return;
@@ -295,7 +316,7 @@ function onCommitKeydown(event: KeyboardEvent) {
             @click="onRowClick(entry.path)"
           >
             <FileTypeIcon :path="entry.path" :size="14" />
-            <span class="status st-conflict">C</span>
+            <span class="status st-conflict" title="冲突">C</span>
             <span class="name" :title="entry.path">{{
               basename(entry.path)
             }}</span>
@@ -359,9 +380,12 @@ function onCommitKeydown(event: KeyboardEvent) {
               @change="toggleCheck(entry.path, $event)"
             />
             <FileTypeIcon :path="entry.path" :size="14" />
-            <span class="status" :class="statusClass(entry.status)">{{
-              statusLabel(entry.status)
-            }}</span>
+            <span
+              class="status"
+              :class="statusClass(entry.status)"
+              :title="statusTitle(entry.status)"
+              >{{ statusLabel(entry.status) }}</span
+            >
             <span class="name" :title="entry.path">{{
               basename(entry.path)
             }}</span>
@@ -729,7 +753,7 @@ function onCommitKeydown(event: KeyboardEvent) {
   color: var(--warning);
 }
 .st-untracked {
-  color: var(--text-muted);
+  color: var(--success);
 }
 .st-deleted {
   color: var(--danger);

@@ -10,6 +10,8 @@
 - Git Log：完整 commit id、过滤、加载更多、真 Revert Commit、Interactive Rebase from Here、Checkout / New Branch / Diff
 - 交互式 Rebase 对话框（pick/reword/squash/fix/drop + 拖拽排序）；冲突 Continue / Skip / Abort
 - 冲突解决：填入 Base、冲突标记导航、批量接受、状态栏跳转；rebase 冲突进入同一解决流
+- 编辑器右键：有 Git 变更时支持「显示 Diff / 回滚变更」
+- 资源管理器等文件图标对齐 VS Code **Material Icon Theme**（`material-icon-theme`）
 
 ### 变更
 
@@ -21,6 +23,8 @@
 - 拉取/推送 HTTPS 认证：走系统 git credential helper；失败时弹出账号密码框（可记住），对齐 WebStorm
 - 「记住密码」改为写入 `~/.mirocode/git-credentials.json`（并尽力同步系统 helper）；此前仅依赖系统钥匙串，在 App 内常写不进去导致反复弹窗
 - Log 操作此前使用短 hash 可能导致 cherry-pick/reset 失败，改为完整 OID
+- Git 回滚后同步重载编辑器缓冲区（此前仅磁盘还原，打开中的标签仍显示旧内容）
+- 状态栏长分支名省略号截断，避免布局错位
 
 ## [0.1.1] - 2026-07-28
 

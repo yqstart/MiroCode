@@ -5,6 +5,7 @@ import {
   languageFromPath,
   pathExists,
   readTextFile,
+  toAbsolutePath,
   writeTextFile,
 } from "@/shared/fs";
 import { isRasterImagePath } from "@/shared/media";
@@ -201,6 +202,54 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
+  /**
+   * Git 回滚后强制同步编辑器：磁盘已还原/删除，缓冲区必须跟上，
+   * 否则会出现「列表已干净、编辑器仍是旧内容」。
+   */
+  async function reloadAfterDiscard(repoRelativePaths: string[]) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath || !repoRelativePaths.length) return;
+    const root = workspace.rootPath;
+
+    const absList = repoRelativePaths.map((p) => toAbsolutePath(root, p));
+    const relSet = new Set(
+      repoRelativePaths.map((p) => p.replace(/\\/g, "/")),
+    );
+
+    for (const abs of absList) {
+      const tab = tabs.value.find((t) => t.path === abs);
+      if (!tab) continue;
+      try {
+        const exists = await pathExists(root, abs);
+        if (!exists) {
+          await closeTab(abs);
+          continue;
+        }
+        if (isRasterImagePath(abs)) {
+          tab.previewNonce = Date.now();
+          continue;
+        }
+        const disk = await readTextFile(root, abs);
+        tab.content = disk;
+        tab.original = disk;
+        tab.previewNonce = Date.now();
+      } catch (error) {
+        workspace.showNotice(
+          error instanceof Error ? error.message : String(error),
+          3200,
+        );
+      }
+    }
+
+    const compare = useCompareStore();
+    for (const tab of [...compare.tabs]) {
+      const norm = tab.path.replace(/\\/g, "/");
+      if (relSet.has(norm)) {
+        compare.closeTab(tab.id);
+      }
+    }
+  }
+
   function setCursor(path: string, line: number, column: number) {
     const tab = tabs.value.find((t) => t.path === path);
     if (!tab) return;
@@ -351,6 +400,7 @@ export const useEditorStore = defineStore("editor", () => {
     openFileAt,
     setContent,
     syncExternalChanges,
+    reloadAfterDiscard,
     setCursor,
     activate,
     saveActive,
