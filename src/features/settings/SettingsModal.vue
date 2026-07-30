@@ -257,6 +257,57 @@ function onOverlayClick(event: MouseEvent) {
                   <option :value="5000">{{ t("settings.delay5") }}</option>
                 </select>
               </label>
+              <div class="save-row">
+                <div class="save-copy">
+                  <span class="field-label">{{ t("settings.formatOnSave") }}</span>
+                  <p class="desc">
+                    {{ t("settings.formatOnSaveDesc") }}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="ui-toggle"
+                  role="switch"
+                  :aria-checked="editor.formatOnSave"
+                  :data-on="editor.formatOnSave"
+                  :title="editor.formatOnSave ? t('settings.enabled') : t('settings.disabled')"
+                  @click="settings.patchEditor({ formatOnSave: !editor.formatOnSave })"
+                />
+              </div>
+            </div>
+
+            <div class="ui-card section">
+              <h3>{{ t("settings.tooling") }}</h3>
+              <div class="save-row">
+                <div class="save-copy">
+                  <span class="field-label">{{ t("settings.eslintEnabled") }}</span>
+                  <p class="desc">{{ t("settings.eslintDesc") }}</p>
+                </div>
+                <button
+                  type="button"
+                  class="ui-toggle"
+                  role="switch"
+                  :aria-checked="editor.eslintEnabled"
+                  :data-on="editor.eslintEnabled"
+                  :title="editor.eslintEnabled ? t('settings.enabled') : t('settings.disabled')"
+                  @click="settings.patchEditor({ eslintEnabled: !editor.eslintEnabled })"
+                />
+              </div>
+              <div class="save-row">
+                <div class="save-copy">
+                  <span class="field-label">{{ t("settings.prettierEnabled") }}</span>
+                  <p class="desc">{{ t("settings.prettierDesc") }}</p>
+                </div>
+                <button
+                  type="button"
+                  class="ui-toggle"
+                  role="switch"
+                  :aria-checked="editor.prettierEnabled"
+                  :data-on="editor.prettierEnabled"
+                  :title="editor.prettierEnabled ? t('settings.enabled') : t('settings.disabled')"
+                  @click="settings.patchEditor({ prettierEnabled: !editor.prettierEnabled })"
+                />
+              </div>
             </div>
 
             <div class="ui-card section">
@@ -404,6 +455,9 @@ function onOverlayClick(event: MouseEvent) {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* grid/flex 子项默认 min-height:auto，不设 0 则 overflow 无法收缩滚动 */
+  min-height: 0;
+  overflow: hidden;
   background: var(--bg-panel);
 }
 
@@ -440,6 +494,7 @@ function onOverlayClick(event: MouseEvent) {
 
 .scroll {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 12px 24px 24px;
   display: flex;

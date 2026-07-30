@@ -64,6 +64,26 @@ export async function sftpUpload(
   return invoke("sftp_upload", { id, localPath, remotePath });
 }
 
+export async function sftpMkdir(id: string, path: string): Promise<void> {
+  return invoke("sftp_mkdir", { id, path });
+}
+
+export async function sftpCreateFile(id: string, path: string): Promise<void> {
+  return invoke("sftp_create_file", { id, path });
+}
+
+export async function sftpRename(
+  id: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  return invoke("sftp_rename", { id, from, to });
+}
+
+export async function sftpRemove(id: string, path: string): Promise<void> {
+  return invoke("sftp_remove", { id, path });
+}
+
 export async function sftpClose(id: string): Promise<void> {
   return invoke("sftp_close", { id });
 }

@@ -12,6 +12,12 @@ export interface EditorPreferences {
   autoSave: boolean;
   /** 自动保存延迟（毫秒） */
   autoSaveDelayMs: number;
+  /** 启用工作区 ESLint 诊断（需项目已安装 eslint） */
+  eslintEnabled: boolean;
+  /** 启用工作区 Prettier（需项目已安装 prettier） */
+  prettierEnabled: boolean;
+  /** 保存时用 Prettier 格式化（需同时开启 prettier） */
+  formatOnSave: boolean;
 }
 
 /** 历史兼容：曾用底栏 Git Log 高度；现 Git Log 为编辑区标签，open 不再驱动布局 */
@@ -46,6 +52,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     lineNumbers: true,
     autoSave: true,
     autoSaveDelayMs: 1000,
+    eslintEnabled: false,
+    prettierEnabled: false,
+    formatOnSave: false,
   },
   layout: {
     sidebarCollapsed: false,

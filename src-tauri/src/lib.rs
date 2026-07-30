@@ -258,7 +258,13 @@ pub fn run() {
             commands::ssh::sftp_list,
             commands::ssh::sftp_pwd,
             commands::ssh::sftp_upload,
+            commands::ssh::sftp_mkdir,
+            commands::ssh::sftp_create_file,
+            commands::ssh::sftp_rename,
+            commands::ssh::sftp_remove,
             commands::ssh::sftp_close,
+            commands::tooling::format_with_prettier,
+            commands::tooling::lint_with_eslint,
             commands::window_chrome::set_titlebar_background,
             commands::window_chrome::sync_traffic_lights,
         ])

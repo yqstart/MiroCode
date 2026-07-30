@@ -10,14 +10,19 @@ import {
 import { useI18n } from "@/i18n";
 import {
   sftpClose,
+  sftpCreateFile,
   sftpList,
+  sftpMkdir,
   sftpPwd,
+  sftpRemove,
+  sftpRename,
   sftpUpload,
   type SftpEntry,
   type SshConnectConfig,
 } from "@/shared/sshApi";
 import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { basename } from "@/shared/fs";
+import { promptInput } from "@/shared/promptDialog";
 
 const props = defineProps<{
   sessionId: string;
@@ -36,6 +41,19 @@ const loading = ref(false);
 const uploading = ref(false);
 const notice = ref("");
 const error = ref("");
+const selectedPath = ref<string | null>(null);
+
+type MenuState = {
+  x: number;
+  y: number;
+  /** 右键空白处时为当前目录；右键条目时为该路径 */
+  path: string;
+  isDir: boolean;
+  /** 针对条目还是空白/当前目录 */
+  onEntry: boolean;
+};
+
+const menu = ref<MenuState | null>(null);
 
 const parentPath = computed(() => {
   if (!cwd.value || cwd.value === "/") return null;
@@ -45,6 +63,18 @@ const parentPath = computed(() => {
   return trimmed.slice(0, idx) || "/";
 });
 
+function joinRemote(parent: string, name: string) {
+  if (parent === "/" || !parent) return `/${name}`;
+  return `${parent.replace(/\/+$/, "")}/${name}`;
+}
+
+function flash(msg: string) {
+  notice.value = msg;
+  window.setTimeout(() => {
+    if (notice.value === msg) notice.value = "";
+  }, 2400);
+}
+
 function formatSize(size: number, isDir: boolean) {
   if (isDir) return "—";
   if (size < 1024) return `${size} B`;
@@ -52,13 +82,21 @@ function formatSize(size: number, isDir: boolean) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function closeMenu() {
+  menu.value = null;
+}
+
 async function loadDir(path: string) {
   loading.value = true;
   error.value = "";
+  closeMenu();
   try {
     const list = await sftpList(props.sessionId, path);
     entries.value = list;
     cwd.value = path === "." ? await sftpPwd(props.sessionId) : path;
+    if (selectedPath.value && !list.some((e) => e.path === selectedPath.value)) {
+      selectedPath.value = null;
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -66,14 +104,123 @@ async function loadDir(path: string) {
   }
 }
 
+function selectEntry(entry: SftpEntry) {
+  selectedPath.value = entry.path;
+}
+
 async function openEntry(entry: SftpEntry) {
-  if (!entry.isDir) return;
+  if (!entry.isDir) {
+    selectedPath.value = entry.path;
+    return;
+  }
+  selectedPath.value = null;
   await loadDir(entry.path);
 }
 
 async function goParent() {
   if (!parentPath.value) return;
+  selectedPath.value = null;
   await loadDir(parentPath.value);
+}
+
+function onContextBlank(event: MouseEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+  const menuWidth = 180;
+  const menuHeight = 200;
+  const x = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
+  const y = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
+  menu.value = {
+    x: Math.max(8, x),
+    y: Math.max(8, y),
+    path: cwd.value,
+    isDir: true,
+    onEntry: false,
+  };
+}
+
+function onContextEntry(event: MouseEvent, entry: SftpEntry) {
+  event.preventDefault();
+  event.stopPropagation();
+  selectedPath.value = entry.path;
+  const menuWidth = 180;
+  const menuHeight = 220;
+  const x = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
+  const y = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
+  menu.value = {
+    x: Math.max(8, x),
+    y: Math.max(8, y),
+    path: entry.path,
+    isDir: entry.isDir,
+    onEntry: true,
+  };
+}
+
+async function runMenu(action: string) {
+  if (!menu.value) return;
+  const { path, isDir, onEntry } = menu.value;
+  const parent = onEntry && !isDir ? path.replace(/\/[^/]+$/, "") || "/" : path;
+  const createParent = onEntry && isDir ? path : onEntry ? parent : cwd.value;
+  closeMenu();
+
+  try {
+    if (action === "refresh") {
+      await loadDir(cwd.value);
+      return;
+    }
+    if (action === "new-file") {
+      const name = await promptInput({
+        title: t("sftp.newFileTitle"),
+        label: t("sftp.namePrompt"),
+        placeholder: "file.txt",
+      });
+      if (!name?.trim()) return;
+      const remote = joinRemote(createParent, name.trim());
+      await sftpCreateFile(props.sessionId, remote);
+      flash(t("sftp.created", { name: name.trim() }));
+      await loadDir(cwd.value);
+      return;
+    }
+    if (action === "new-folder") {
+      const name = await promptInput({
+        title: t("sftp.newFolderTitle"),
+        label: t("sftp.namePrompt"),
+        placeholder: "folder",
+      });
+      if (!name?.trim()) return;
+      const remote = joinRemote(createParent, name.trim());
+      await sftpMkdir(props.sessionId, remote);
+      flash(t("sftp.created", { name: name.trim() }));
+      await loadDir(cwd.value);
+      return;
+    }
+    if (action === "rename" && onEntry) {
+      const oldName = basename(path);
+      const name = await promptInput({
+        title: t("sftp.renameTitle"),
+        label: t("sftp.namePrompt"),
+        defaultValue: oldName,
+      });
+      if (!name?.trim() || name.trim() === oldName) return;
+      const destParent = path.replace(/\/[^/]+$/, "") || "/";
+      const to = joinRemote(destParent, name.trim());
+      await sftpRename(props.sessionId, path, to);
+      flash(t("sftp.renamed"));
+      selectedPath.value = to;
+      await loadDir(cwd.value);
+      return;
+    }
+    if (action === "delete" && onEntry) {
+      const name = basename(path);
+      if (!window.confirm(t("sftp.deleteConfirm", { name }))) return;
+      await sftpRemove(props.sessionId, path);
+      flash(t("sftp.deleted", { name }));
+      selectedPath.value = null;
+      await loadDir(cwd.value);
+    }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
 }
 
 async function onUpload() {
@@ -94,10 +241,7 @@ async function onUpload() {
       await sftpUpload(props.sessionId, local, remote);
       ok += 1;
     }
-    notice.value = t("sftp.uploaded", { count: ok });
-    window.setTimeout(() => {
-      notice.value = "";
-    }, 2400);
+    flash(t("sftp.uploaded", { count: ok }));
     await loadDir(cwd.value);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -111,7 +255,12 @@ async function onDisconnect() {
   emit("disconnected");
 }
 
+function onDocClick() {
+  closeMenu();
+}
+
 onMounted(async () => {
+  document.addEventListener("click", onDocClick);
   try {
     const pwd = await sftpPwd(props.sessionId);
     await loadDir(pwd || "/");
@@ -122,12 +271,13 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener("click", onDocClick);
   void sftpClose(props.sessionId);
 });
 </script>
 
 <template>
-  <div class="sftp">
+  <div class="sftp" @contextmenu="onContextBlank">
     <header class="toolbar">
       <div class="path" :title="cwd">{{ cwd }}</div>
       <div class="actions">
@@ -181,9 +331,11 @@ onBeforeUnmount(() => {
         :key="entry.path"
         type="button"
         class="row"
+        :class="{ selected: selectedPath === entry.path }"
         :title="entry.path"
-        @click="openEntry(entry)"
+        @click="selectEntry(entry)"
         @dblclick="openEntry(entry)"
+        @contextmenu="onContextEntry($event, entry)"
       >
         <FileTypeIcon
           :path="entry.path"
@@ -205,11 +357,40 @@ onBeforeUnmount(() => {
         })
       }}
     </footer>
+
+    <div
+      v-if="menu"
+      class="menu"
+      :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
+      @click.stop
+      @contextmenu.prevent
+    >
+      <button type="button" @click="runMenu('new-file')">
+        {{ t("sftp.newFile") }}
+      </button>
+      <button type="button" @click="runMenu('new-folder')">
+        {{ t("sftp.newFolder") }}
+      </button>
+      <template v-if="menu.onEntry">
+        <hr />
+        <button type="button" @click="runMenu('rename')">
+          {{ t("sftp.rename") }}
+        </button>
+        <button type="button" class="danger" @click="runMenu('delete')">
+          {{ t("sftp.delete") }}
+        </button>
+      </template>
+      <hr />
+      <button type="button" @click="runMenu('refresh')">
+        {{ t("sftp.refreshMenu") }}
+      </button>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .sftp {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -329,6 +510,11 @@ onBeforeUnmount(() => {
   background: var(--accent-soft);
 }
 
+.row.selected {
+  background: var(--accent-soft);
+  outline: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
 .folder {
   color: var(--accent);
 }
@@ -358,6 +544,44 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--border-subtle);
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 160px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.menu button {
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.menu button:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.menu button.danger:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.menu hr {
+  margin: 4px 6px;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .spin {

@@ -5,14 +5,17 @@ import {
   languageFromPath,
   pathExists,
   readTextFile,
+  relativeToRoot,
   toAbsolutePath,
   writeTextFile,
 } from "@/shared/fs";
 import { isRasterImagePath } from "@/shared/media";
+import { formatWithPrettier } from "@/shared/toolingApi";
 import type { EditorJumpTarget, EditorOpenAt } from "@/shared/types";
 import { useCompareStore } from "@/stores/compare";
 import { useGitStore } from "@/stores/git";
 import { useSessionsStore } from "@/stores/sessions";
+import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 export interface EditorTab {
@@ -271,9 +274,31 @@ export const useEditorStore = defineStore("editor", () => {
     workspace.revealPath(path);
   }
 
+  async function maybeFormatTab(
+    root: string,
+    tab: EditorTab,
+  ): Promise<string> {
+    const settings = useSettingsStore();
+    if (!settings.editor.formatOnSave || !settings.editor.prettierEnabled) {
+      return tab.content;
+    }
+    try {
+      const rel = relativeToRoot(root, tab.path);
+      const formatted = await formatWithPrettier(root, rel, tab.content);
+      if (formatted !== tab.content) {
+        tab.content = formatted;
+      }
+      return formatted;
+    } catch {
+      // 格式化失败不阻断保存
+      return tab.content;
+    }
+  }
+
   async function saveActive(options?: { quiet?: boolean }) {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
+    const settings = useSettingsStore();
     if (!workspace.rootPath || !activeTab.value) {
       if (!options?.quiet) {
         workspace.showNotice("当前无活动文件可保存");
@@ -282,11 +307,18 @@ export const useEditorStore = defineStore("editor", () => {
     }
     const tab = activeTab.value;
     if (isRasterImagePath(tab.path)) return;
-    if (tab.content === tab.original) return;
+
+    let content = tab.content;
+    const wantFormat =
+      settings.editor.formatOnSave && settings.editor.prettierEnabled;
+    if (wantFormat) {
+      content = await maybeFormatTab(workspace.rootPath, tab);
+    }
+    if (content === tab.original) return;
     try {
       workspace.markSelfWrite(tab.path);
-      await writeTextFile(workspace.rootPath, tab.path, tab.content);
-      tab.original = tab.content;
+      await writeTextFile(workspace.rootPath, tab.path, content);
+      tab.original = content;
       if (!options?.quiet) {
         workspace.showNotice(`已保存 ${tab.name}`);
       }
@@ -304,7 +336,17 @@ export const useEditorStore = defineStore("editor", () => {
   async function saveAll(options?: { quiet?: boolean }) {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
+    const settings = useSettingsStore();
     if (!workspace.rootPath) return;
+    const wantFormat =
+      settings.editor.formatOnSave && settings.editor.prettierEnabled;
+    // 先格式化，再筛脏文件
+    if (wantFormat) {
+      for (const tab of tabs.value) {
+        if (isRasterImagePath(tab.path)) continue;
+        await maybeFormatTab(workspace.rootPath, tab);
+      }
+    }
     const dirty = tabs.value.filter(
       (t) => !isRasterImagePath(t.path) && t.content !== t.original,
     );

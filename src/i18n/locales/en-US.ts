@@ -87,7 +87,17 @@ export const enUS = {
     autoSaveDelay: "Auto Save Delay (ms)",
     autoSaveDesc:
       "Save to disk after a delay. Also flushes when the window hides or quits.",
+    formatOnSave: "Format on Save",
+    formatOnSaveDesc:
+      "Run Prettier before saving (requires Prettier below and a project install).",
     fileSave: "File Save",
+    tooling: "Tooling",
+    eslintEnabled: "ESLint",
+    eslintDesc:
+      "Show workspace ESLint diagnostics for JS/TS/Vue (project eslint required).",
+    prettierEnabled: "Prettier",
+    prettierDesc:
+      "Enable Prettier; format-on-save depends on this. Project prettier required.",
     delay: "Delay",
     delay05: "0.5 s",
     delay1: "1 s",
@@ -521,6 +531,19 @@ export const enUS = {
     disconnect: "Disconnect",
     empty: "Empty directory",
     itemCount: "{user}@{host} · {count} item(s)",
+    newFile: "New File",
+    newFolder: "New Folder",
+    rename: "Rename",
+    delete: "Delete",
+    refreshMenu: "Refresh",
+    namePrompt: "Name",
+    newFileTitle: "New remote file",
+    newFolderTitle: "New remote folder",
+    renameTitle: "Rename",
+    deleteConfirm: "Delete “{name}”? Folders are removed recursively.",
+    created: "Created {name}",
+    renamed: "Renamed",
+    deleted: "Deleted {name}",
   },
   packageScripts: {
     title: "Scripts",

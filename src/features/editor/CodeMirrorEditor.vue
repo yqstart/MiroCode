@@ -35,6 +35,7 @@ import {
 import { storeToRefs } from "pinia";
 import { createCompletionExtension } from "@/features/editor/completions";
 import { createDiagnosticsExtension } from "@/features/editor/diagnostics";
+import { createEslintScheduler } from "@/features/editor/eslintLinter";
 import { languageExtensionForPath } from "@/features/editor/languages";
 import {
   createNavigationExtension,
@@ -63,6 +64,15 @@ const themeComp = new Compartment();
 const langComp = new Compartment();
 const prefsComp = new Compartment();
 let applyingExternal = false;
+
+const eslint = createEslintScheduler(
+  () => view,
+  {
+    filePath: () => props.path,
+    workspaceRoot: () => workspace.rootPath,
+    enabled: () => editor.value.eslintEnabled,
+  },
+);
 
 const navHandlers = {
   onNavigate: (path: string, line: number, column: number) => {
@@ -158,6 +168,7 @@ function createEditor() {
           if (!view) return;
           if (update.docChanged && !applyingExternal) {
             editorStore.setContent(props.path, update.state.doc.toString());
+            eslint.schedule();
           }
           if (update.selectionSet || update.docChanged) {
             emitCursor(view);
@@ -167,6 +178,7 @@ function createEditor() {
     }),
   });
   emitCursor(view);
+  eslint.schedule();
 }
 
 onMounted(() => {
@@ -174,6 +186,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  eslint.dispose();
   view?.destroy();
   view = null;
 });
@@ -181,6 +194,7 @@ onBeforeUnmount(() => {
 watch(
   () => props.path,
   () => {
+    eslint.dispose();
     view?.destroy();
     view = null;
     createEditor();
@@ -218,8 +232,16 @@ watch(
     view?.dispatch({
       effects: prefsComp.reconfigure(buildPrefs()),
     });
+    eslint.schedule();
   },
   { deep: true },
+);
+
+watch(
+  () => editor.value.eslintEnabled,
+  () => {
+    void eslint.runNow();
+  },
 );
 
 defineExpose({ scrollTo });

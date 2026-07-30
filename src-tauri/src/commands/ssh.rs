@@ -427,6 +427,93 @@ pub fn sftp_upload(
 }
 
 #[tauri::command]
+pub fn sftp_mkdir(state: State<'_, SshState>, id: String, path: String) -> CmdResult<()> {
+    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
+    let session = sftps
+        .get(&id)
+        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
+    session
+        .sftp
+        .mkdir(Path::new(path.trim()), 0o755)
+        .map_err(|e| format!("创建目录失败: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn sftp_create_file(state: State<'_, SshState>, id: String, path: String) -> CmdResult<()> {
+    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
+    let session = sftps
+        .get(&id)
+        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
+    // create 会截断已存在文件；调用方应保证路径不冲突
+    let _file = session
+        .sftp
+        .create(Path::new(path.trim()))
+        .map_err(|e| format!("创建文件失败: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn sftp_rename(
+    state: State<'_, SshState>,
+    id: String,
+    from: String,
+    to: String,
+) -> CmdResult<()> {
+    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
+    let session = sftps
+        .get(&id)
+        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
+    session
+        .sftp
+        .rename(Path::new(from.trim()), Path::new(to.trim()), None)
+        .map_err(|e| format!("重命名失败: {e}"))?;
+    Ok(())
+}
+
+fn sftp_remove_recursive(sftp: &Sftp, path: &Path) -> CmdResult<()> {
+    let meta = sftp
+        .stat(path)
+        .map_err(|e| format!("读取远程路径失败: {e}"))?;
+    if meta.is_dir() {
+        let base = path.to_string_lossy().to_string();
+        let entries = sftp
+            .readdir(path)
+            .map_err(|e| format!("读取目录失败: {e}"))?;
+        for (child, _) in entries {
+            let name = child
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if name.is_empty() || name == "." || name == ".." {
+                continue;
+            }
+            let full = PathBuf::from(join_remote(&base, &name));
+            sftp_remove_recursive(sftp, &full)?;
+        }
+        sftp.rmdir(path)
+            .map_err(|e| format!("删除目录失败: {e}"))?;
+    } else {
+        sftp.unlink(path)
+            .map_err(|e| format!("删除文件失败: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn sftp_remove(state: State<'_, SshState>, id: String, path: String) -> CmdResult<()> {
+    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
+    let session = sftps
+        .get(&id)
+        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
+    let remote = path.trim();
+    if remote.is_empty() || remote == "/" {
+        return Err("不能删除根目录".into());
+    }
+    sftp_remove_recursive(&session.sftp, Path::new(remote))
+}
+
+#[tauri::command]
 pub fn sftp_close(state: State<'_, SshState>, id: String) -> CmdResult<()> {
     let mut sftps = state.sftps.lock().map_err(|e| e.to_string())?;
     sftps.remove(&id);

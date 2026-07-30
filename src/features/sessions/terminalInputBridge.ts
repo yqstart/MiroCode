@@ -9,6 +9,11 @@ function isWhitespaceOnly(data: string): boolean {
   return /^[\s\u00a0\u3000]+$/.test(data);
 }
 
+/** 拼音音节分隔符 / 弯撇号：中英切换时常被 IME 误提交（main → mai'n） */
+function isImeApostrophe(data: string): boolean {
+  return data === "'" || data === "\u2019" || data === "\u02bc";
+}
+
 /**
  * 修复 macOS WKWebView + 中文输入法下 xterm 的输入缺陷：
  * 1. 组字中按退格时，xterm 会 finalize 并把拼音甩进 PTY → 看起来像删不掉、乱出字
@@ -16,6 +21,7 @@ function isWhitespaceOnly(data: string): boolean {
  * 3. 中文标点（Shift+数字）在 commit-first 顺序下会被 `_keyDownSeen` 门控丢掉
  * 4. 配对标点 IME 合成的 ArrowLeft 会把真光标拽乱；方向键还会把 textarea 残值甩进终端
  * 5. 中文切英文后 IME 常误插间隔符 / 重复提交 → 空格变双倍、英文内容翻倍
+ * 6. 中文切英文后 IME 常甩进音节撇号 → main 变成 mai'n
  *
  * @returns dispose
  */
@@ -77,11 +83,21 @@ export function attachTerminalInputBridge(
   }
 
   const dataDisp = term.onData((data) => {
+    const now = performance.now();
     // 组字结束后极短窗口内的纯空白：IME 误插，丢弃
     if (
       isWhitespaceOnly(data) &&
-      (performance.now() - ime.lastCompositionEndAt < 220 ||
-        performance.now() - ime.lastDeleteAt < 140)
+      (now - ime.lastCompositionEndAt < 220 ||
+        now - ime.lastDeleteAt < 140)
+    ) {
+      return;
+    }
+    // 中英切换 / 组字结束窗口内的孤立撇号（mai'n）
+    if (
+      isImeApostrophe(data) &&
+      (ime.composing ||
+        now - ime.lastCompositionEndAt < 450 ||
+        now - ime.last229At < 450)
     ) {
       return;
     }
@@ -111,7 +127,7 @@ export function attachTerminalInputBridge(
       if (ev.target !== textarea) return;
       const ie = ev as InputEvent;
       if (ie.inputType !== "insertText" || !ie.data || ie.isComposing) return;
-      if (isWhitespaceOnly(ie.data)) {
+      if (isWhitespaceOnly(ie.data) || isImeApostrophe(ie.data)) {
         ev.stopPropagation();
         textarea.value = "";
         return;
@@ -133,13 +149,20 @@ export function attachTerminalInputBridge(
     );
   }
 
-  // 拦截「删成空格」与「组字结束后误插间隔符」
+  // 拦截「删成空格 / 组字后误插间隔符 / 中英切换撇号」
   const onBeforeInput = (ev: InputEvent) => {
     if (ev.isComposing || ime.composing) return;
     if (ev.inputType !== "insertText" || !ev.data) return;
-    if (!isWhitespaceOnly(ev.data)) return;
     const afterDelete = performance.now() - ime.lastDeleteAt < 140;
-    const afterComposition = performance.now() - ime.lastCompositionEndAt < 220;
+    const afterComposition = performance.now() - ime.lastCompositionEndAt < 450;
+    const after229 = performance.now() - ime.last229At < 450;
+    if (isImeApostrophe(ev.data) && (afterComposition || after229)) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      textarea.value = "";
+      return;
+    }
+    if (!isWhitespaceOnly(ev.data)) return;
     if (afterDelete || afterComposition) {
       ev.preventDefault();
       ev.stopImmediatePropagation();
