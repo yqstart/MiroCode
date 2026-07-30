@@ -91,8 +91,8 @@ onBeforeUnmount(() => {
       <div class="list">
         <div v-if="loading" class="empty">加载未推送提交…</div>
         <div v-else-if="!commits.length" class="empty">没有待推送的提交</div>
-        <div v-for="c in commits" :key="c.id" class="row">
-          <span class="id">{{ c.id }}</span>
+        <div v-for="c in commits" :key="c.id" class="row" :title="c.id">
+          <span class="id">{{ c.id.slice(0, 7) }}</span>
           <span class="summary">{{ c.summary }}</span>
           <span class="author">{{ c.author }}</span>
         </div>
@@ -173,25 +173,37 @@ onBeforeUnmount(() => {
 }
 .row {
   display: grid;
-  grid-template-columns: 64px 1fr auto;
-  gap: 8px;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
   padding: 8px 10px;
   font-size: 12px;
   border-bottom: 1px solid var(--border-subtle);
 }
+.row:last-child {
+  border-bottom: none;
+}
 .id {
   font-family: var(--font-mono);
   color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .summary {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
 }
 .author {
-  color: var(--text-muted);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-muted);
+  text-align: right;
 }
 .check {
   display: flex;
