@@ -4,27 +4,32 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-30
+
 ### 新增
 
-- Git Branches：Compare / Set Upstream / 删远程 / Interactive Rebase 入口；修复 Footer 误删
-- Git Log：完整 commit id、过滤、加载更多、真 Revert Commit、Interactive Rebase from Here、Checkout / New Branch / Diff
-- 交互式 Rebase 对话框（pick/reword/squash/fix/drop + 拖拽排序）；冲突 Continue / Skip / Abort
-- 冲突解决：填入 Base、冲突标记导航、批量接受、状态栏跳转；rebase 冲突进入同一解决流
-- 编辑器右键：有 Git 变更时支持「显示 Diff / 回滚变更」
-- 资源管理器等文件图标对齐 VS Code **Material Icon Theme**（`material-icon-theme`）
+- Git 对标 WebStorm **New UI 完全体主路径**
+  - 左侧 Commit：勾选 Changelist、Amend、Commit / Commit and Push；⌘K
+  - Push 对话框、Update Project（Merge / Rebase）、Fetch、Stash
+  - Branches 弹层：Compare / Set Upstream / 删远程 / Interactive Rebase 等
+  - 底栏 Git Log：过滤、加载更多、完整 commit id；Revert / Cherry-pick / Checkout / New Branch / Diff / Interactive Rebase from Here
+  - 交互式 Rebase 对话框（pick / reword / squash / fixup / drop + 拖拽排序）；冲突 Continue / Skip / Abort
+  - 冲突解决：填入 Base、冲突标记导航、批量接受、状态栏跳转
+  - HTTPS 登录弹窗（可记住至 `~/.mirocode/git-credentials.json`）
+- 点选变更文件在**编辑区**打开分栏 Diff；编辑器右键支持「显示 Diff / 回滚变更」
+- 资源管理器 / Commit / 快速打开 / SFTP：文件与文件夹图标对齐 VS Code **Material Icon Theme**
+- Commit 变更状态字母：未跟踪显示绿色 **N**（New）；悬停有中文说明
 
 ### 变更
 
-- Git 对标 WebStorm **New UI 完全体主路径**：左侧 Commit（Amend）、Push 对话框、Update Project（Merge/Rebase）、Branches 弹层（本地/远程）、Fetch、Log、HTTPS 登录弹窗、交互 Rebase
-- Commit 侧栏去掉内嵌 Diff 预览；点选变更文件一律在编辑区打开 Diff
+- Commit 侧栏**移除**内嵌 Diff 预览（过小难读、与编辑区 Diff 重复）；点选即开编辑区 Diff
 
 ### 修复
 
-- 拉取/推送 HTTPS 认证：走系统 git credential helper；失败时弹出账号密码框（可记住），对齐 WebStorm
-- 「记住密码」改为写入 `~/.mirocode/git-credentials.json`（并尽力同步系统 helper）；此前仅依赖系统钥匙串，在 App 内常写不进去导致反复弹窗
-- Log 操作此前使用短 hash 可能导致 cherry-pick/reset 失败，改为完整 OID
-- Git 回滚后同步重载编辑器缓冲区（此前仅磁盘还原，打开中的标签仍显示旧内容）
+- Git 回滚后强制同步编辑器缓冲区（此前仅磁盘还原，打开中的标签仍显示旧内容）
 - 状态栏长分支名省略号截断，避免布局错位
+- 拉取/推送 HTTPS 认证：走系统 git credential helper；失败时弹出账号密码框
+- Log 等操作改用完整 OID，避免短 hash 导致 cherry-pick / reset 失败
 
 ## [0.1.1] - 2026-07-28
 
@@ -59,6 +64,7 @@
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/yqstart/MiroCode/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/yqstart/MiroCode/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.0

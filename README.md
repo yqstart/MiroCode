@@ -8,12 +8,13 @@
 
 ## 功能概览
 
-- 打开项目 / 资源树 / CodeMirror 多标签编辑存盘
+- 打开项目 / 资源树（**Material Icon Theme** 文件图标）/ CodeMirror 多标签编辑存盘
 - ⌘P 文件查找、⌘⇧F 全局搜索替换
-- Git 日常闭环 + 冲突解决 + 危险操作确认
-- 多语法高亮 / 本地补全 / 跳转 / Markdown 预览
+- Git 对标 WebStorm New UI：左侧 Commit、底栏 Log、Branches、交互 Rebase、冲突分栏、HTTPS 登录
+- 多语法高亮 / 本地补全 / 跳转 / Markdown / 图片预览
 - 本地终端与 SSH（终端 + SFTP）
 - 四套主题：`miro-dark` / `dawn` / `midnight` / `cyberpunk`
+- 应用内检查更新（GitHub Release）
 
 ## 环境要求
 

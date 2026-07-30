@@ -155,7 +155,7 @@ MiroCode/
 | Explorer | 树渲染、右键菜单、过滤 UI | 目录枚举、CRUD、gitignore/忽略规则 |
 | Editor | CM6 实例、标签、预览、主题绑定 | 文件读写、变更监听 |
 | Search | 文件查找 / 内容搜索 UI、历史 | 遍历、匹配、替换落盘 |
-| Git | 左侧 Commit 工具窗口、底栏 Git Log、勾选提交、编辑区 Diff | status / stage / commit / branch / pull / push |
+| Git | 左侧 Commit、底栏 Git Log、勾选提交、编辑区 Diff、回滚同步缓冲区 | status / stage / commit / branch / pull / push / rebase / discard |
 | Settings | 主题、字号、Tab、换行等 | 配置持久化 |
 | Theme | CSS 变量切换、编辑器主题同步 | 无 |
 
