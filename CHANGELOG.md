@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-03
+
 ### 新增
 
 - 设置可开关 **ESLint** / **Prettier**；**保存时格式化**（依赖 Prettier，调用项目本地 `npx`）
@@ -23,6 +25,7 @@
 ### 修复
 
 - Vue SFC 中 `<style lang="less|scss|sass">` 无语法高亮（此前仅识别空 lang / `css`）；独立 `.less` / `.scss` / `.sass` 改用对应语言包
+- Branches 弹层长分支名 / 上游名折行撑高行高；改为单行省略并略加宽面板
 - 终端 macOS 输入：退格无效、空格双写、方向键带出残字符、中英切换重复输入、中英切换误插音节撇号（`mai'n`）
 - Push 对话框提交行完整 hash 溢出叠字
 - Markdown 文件首次打开默认预览模式
@@ -87,7 +90,8 @@
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/yqstart/MiroCode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/yqstart/MiroCode/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/yqstart/MiroCode/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.0
