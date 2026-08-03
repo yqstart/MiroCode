@@ -94,7 +94,7 @@ export const enUS = {
     tooling: "Tooling",
     eslintEnabled: "ESLint",
     eslintDesc:
-      "Show workspace ESLint diagnostics for JS/TS/Vue (project eslint required).",
+      "Show workspace ESLint diagnostics for JS/TS/Vue. Project eslint required.",
     prettierEnabled: "Prettier",
     prettierDesc:
       "Enable Prettier; format-on-save depends on this. Project prettier required.",

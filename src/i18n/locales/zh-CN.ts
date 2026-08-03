@@ -91,7 +91,7 @@ export const zhCN = {
     fileSave: "文件保存",
     tooling: "代码工具",
     eslintEnabled: "ESLint",
-    eslintDesc: "对 JS/TS/Vue 等显示工作区 ESLint 诊断（需项目已安装 eslint）。",
+    eslintDesc: "对 JS/TS/Vue 等显示工作区 ESLint 诊断。需项目已安装 eslint。",
     prettierEnabled: "Prettier",
     prettierDesc: "启用 Prettier；保存时格式化依赖此项。需项目已安装 prettier。",
     delay: "延迟",

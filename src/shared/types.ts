@@ -12,7 +12,7 @@ export interface EditorPreferences {
   autoSave: boolean;
   /** 自动保存延迟（毫秒） */
   autoSaveDelayMs: number;
-  /** 启用工作区 ESLint 诊断（需项目已安装 eslint） */
+  /** 启用工作区 ESLint 诊断。需项目已安装 eslint */
   eslintEnabled: boolean;
   /** 启用工作区 Prettier（需项目已安装 prettier） */
   prettierEnabled: boolean;

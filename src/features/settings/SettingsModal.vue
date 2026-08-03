@@ -666,6 +666,9 @@ function onOverlayClick(event: MouseEvent) {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  &:not(:first-child) {
+    margin-top: 8px;
+  }
 }
 
 .save-copy {
