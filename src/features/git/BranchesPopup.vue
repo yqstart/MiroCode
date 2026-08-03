@@ -224,6 +224,7 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
           type="button"
           class="item"
           :class="{ head: b.isHead, selected: selected === b.name }"
+          :title="b.upstream ? `${b.name} → ${b.upstream}` : b.name"
           @click="selectRow(b.name); onCheckoutLocal(b.name)"
           @contextmenu="onCtx($event, b.name, false)"
         >
@@ -243,6 +244,7 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
           type="button"
           class="item"
           :class="{ selected: selected === b.name }"
+          :title="b.name"
           @click="selectRow(b.name); onCheckoutRemote(b.name)"
           @contextmenu="onCtx($event, b.name, true)"
         >
@@ -331,7 +333,7 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
   position: fixed;
   left: 12px;
   bottom: calc(var(--status-bar-height, 24px) + 8px);
-  width: min(360px, calc(100vw - 24px));
+  width: min(420px, calc(100vw - 24px));
   max-height: min(480px, 60vh);
   display: flex;
   flex-direction: column;
@@ -389,6 +391,8 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
   text-align: left;
   font-size: 12px;
   color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
 }
 .item:hover,
 .item.selected {
@@ -399,14 +403,22 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
   font-weight: 600;
 }
 .name {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .up {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 48%;
   margin-left: auto;
   font-size: 11px;
   color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .empty {
   margin: 0;

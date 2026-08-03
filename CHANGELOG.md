@@ -22,6 +22,7 @@
 
 ### 修复
 
+- Vue SFC 中 `<style lang="less|scss|sass">` 无语法高亮（此前仅识别空 lang / `css`）；独立 `.less` / `.scss` / `.sass` 改用对应语言包
 - 终端 macOS 输入：退格无效、空格双写、方向键带出残字符、中英切换重复输入、中英切换误插音节撇号（`mai'n`）
 - Push 对话框提交行完整 hash 溢出叠字
 - Markdown 文件首次打开默认预览模式
