@@ -10,6 +10,23 @@ export interface SshConnectConfig {
   password?: string;
   privateKeyPath?: string;
   passphrase?: string;
+  /** 用户已确认信任未知主机密钥 */
+  acceptUnknownHostKey?: boolean;
+}
+
+/** 解析后端 `SSH_HOST_KEY_UNKNOWN|指纹|host:port`（允许外层包一层错误文案） */
+export function parseHostKeyUnknown(
+  message: string,
+): { fingerprint: string; endpoint: string } | null {
+  const marker = "SSH_HOST_KEY_UNKNOWN|";
+  const idx = message.indexOf(marker);
+  if (idx < 0) return null;
+  const parts = message.slice(idx).split("|");
+  if (parts.length < 3) return null;
+  const fingerprint = parts[1]?.trim();
+  const endpoint = parts.slice(2).join("|").trim();
+  if (!fingerprint || !endpoint) return null;
+  return { fingerprint, endpoint };
 }
 
 export interface SftpEntry {

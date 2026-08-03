@@ -38,6 +38,8 @@ let term: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
 let disposed = false;
 let connected = false;
+/** 已通过 failed 上报，避免再走 closed 造成双重清理 */
+let failedReported = false;
 let resizeObserver: ResizeObserver | null = null;
 let unlistenData: UnlistenFn | null = null;
 let unlistenExit: UnlistenFn | null = null;
@@ -79,12 +81,15 @@ async function boot() {
       term.write(event.payload);
     });
     unlistenError = await listen<string>(`ssh://error/${props.sessionId}`, (event) => {
-      if (!term || disposed) return;
+      if (!term || disposed || failedReported) return;
+      failedReported = true;
+      connected = false;
       term.writeln(`\r\n\x1b[31m${event.payload}\x1b[0m`);
       emit("failed", event.payload);
     });
     unlistenExit = await listen(`ssh://exit/${props.sessionId}`, () => {
       connected = false;
+      if (failedReported || disposed) return;
       term?.writeln("\r\n\x1b[90m[远程会话已结束]\x1b[0m");
       emit("closed");
     });
@@ -100,7 +105,11 @@ async function boot() {
 
     detachInput = attachTerminalInputBridge(term, (data) => {
       if (!connected) return;
-      void sshShellWrite(props.sessionId, data).catch(() => undefined);
+      void sshShellWrite(props.sessionId, data).catch((err) => {
+        if (!term || disposed) return;
+        const message = err instanceof Error ? err.message : String(err);
+        term.writeln(`\r\n\x1b[31m写入失败: ${message}\x1b[0m`);
+      });
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

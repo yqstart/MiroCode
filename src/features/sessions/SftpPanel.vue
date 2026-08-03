@@ -68,6 +68,22 @@ function joinRemote(parent: string, name: string) {
   return `${parent.replace(/\/+$/, "")}/${name}`;
 }
 
+/** 拒绝路径穿越与多段名 */
+function assertSafeBaseName(name: string): string {
+  const trimmed = name.trim();
+  if (
+    !trimmed ||
+    trimmed === "." ||
+    trimmed === ".." ||
+    trimmed.includes("/") ||
+    trimmed.includes("\\") ||
+    trimmed.includes("\0")
+  ) {
+    throw new Error(t("sftp.invalidName"));
+  }
+  return trimmed;
+}
+
 function flash(msg: string) {
   notice.value = msg;
   window.setTimeout(() => {
@@ -175,9 +191,10 @@ async function runMenu(action: string) {
         placeholder: "file.txt",
       });
       if (!name?.trim()) return;
-      const remote = joinRemote(createParent, name.trim());
+      const safe = assertSafeBaseName(name);
+      const remote = joinRemote(createParent, safe);
       await sftpCreateFile(props.sessionId, remote);
-      flash(t("sftp.created", { name: name.trim() }));
+      flash(t("sftp.created", { name: safe }));
       await loadDir(cwd.value);
       return;
     }
@@ -188,9 +205,10 @@ async function runMenu(action: string) {
         placeholder: "folder",
       });
       if (!name?.trim()) return;
-      const remote = joinRemote(createParent, name.trim());
+      const safe = assertSafeBaseName(name);
+      const remote = joinRemote(createParent, safe);
       await sftpMkdir(props.sessionId, remote);
-      flash(t("sftp.created", { name: name.trim() }));
+      flash(t("sftp.created", { name: safe }));
       await loadDir(cwd.value);
       return;
     }
@@ -202,8 +220,9 @@ async function runMenu(action: string) {
         defaultValue: oldName,
       });
       if (!name?.trim() || name.trim() === oldName) return;
+      const safe = assertSafeBaseName(name);
       const destParent = path.replace(/\/[^/]+$/, "") || "/";
-      const to = joinRemote(destParent, name.trim());
+      const to = joinRemote(destParent, safe);
       await sftpRename(props.sessionId, path, to);
       flash(t("sftp.renamed"));
       selectedPath.value = to;

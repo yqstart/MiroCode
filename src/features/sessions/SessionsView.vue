@@ -7,7 +7,12 @@ import PackageScriptsMenu from "@/features/sessions/PackageScriptsMenu.vue";
 import RemoteTerminal from "@/features/sessions/RemoteTerminal.vue";
 import SftpPanel from "@/features/sessions/SftpPanel.vue";
 import SshHostsView from "@/features/sessions/SshHostsView.vue";
-import { sftpClose, sftpOpen, type SshConnectConfig } from "@/shared/sshApi";
+import {
+  parseHostKeyUnknown,
+  sftpClose,
+  sftpOpen,
+  type SshConnectConfig,
+} from "@/shared/sshApi";
 import {
   sftpSessionId,
   useSessionsStore,
@@ -69,16 +74,40 @@ function onRemoteConnect(config: SshConnectConfig) {
 }
 
 function onRemoteFailed(id: string, message: string) {
+  const session = remoteSessions.value.find((t) => t.id === id);
+  const unknown = parseHostKeyUnknown(message);
+  if (unknown && session) {
+    const ok = window.confirm(
+      t("sessions.hostKeyUnknownConfirm", {
+        endpoint: unknown.endpoint,
+        fingerprint: unknown.fingerprint,
+      }),
+    );
+    const config = { ...session.config };
+    void closeRemoteFully(id, { keepError: false });
+    if (ok) {
+      onRemoteConnect({ ...config, acceptUnknownHostKey: true });
+    } else {
+      remoteError.value = t("sessions.hostKeyRejected");
+      sshSurface.value = "hosts";
+    }
+    return;
+  }
+
+  // 先切回主机列表并保留错误；close 触发的 watch 不得清掉本条错误
   remoteError.value = message;
-  void closeRemoteFully(id);
   sshSurface.value = "hosts";
+  void closeRemoteFully(id, { keepError: true });
 }
 
 function onRemoteClosed(id: string) {
   void closeRemoteFully(id);
 }
 
-async function closeRemoteFully(id: string) {
+async function closeRemoteFully(
+  id: string,
+  opts: { keepError?: boolean } = {},
+) {
   const session = remoteSessions.value.find((t) => t.id === id);
   if (session?.sftpOpened) {
     try {
@@ -90,6 +119,10 @@ async function closeRemoteFully(id: string) {
   sessions.closeRemoteSession(id);
   if (!remoteSessions.value.length) {
     sshSurface.value = "hosts";
+    if (!opts.keepError) {
+      remoteError.value = "";
+      sftpError.value = "";
+    }
   }
 }
 
@@ -153,8 +186,6 @@ watch(
 watch(remoteSessions, (list) => {
   if (!list.length) {
     sshSurface.value = "hosts";
-    remoteError.value = "";
-    sftpError.value = "";
   }
 });
 </script>

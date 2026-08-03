@@ -14,8 +14,11 @@ import type { SshConnectConfig } from "@/shared/sshApi";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import {
   createEmptyProfile,
+  getSshSecret,
   loadSshProfiles,
   removeSshProfile,
+  removeSshSecret,
+  setSshSecret,
   upsertSshProfile,
   type SshProfile,
 } from "@/shared/sshProfiles";
@@ -36,7 +39,8 @@ const editingId = ref<string | null>(null);
 const form = ref<SshProfile>(createEmptyProfile());
 const password = ref("");
 const passphrase = ref("");
-const remember = ref(true);
+/** 记住密码 / 私钥口令 */
+const rememberSecret = ref(true);
 const unlockId = ref<string | null>(null);
 const unlockPassword = ref("");
 const unlockPassphrase = ref("");
@@ -44,6 +48,7 @@ const showFormPassword = ref(false);
 const showPassphrase = ref(false);
 const showUnlockPassword = ref(false);
 const showUnlockPassphrase = ref(false);
+const formError = ref("");
 
 const editorTitle = computed(() =>
   editingId.value ? t("sessions.editHost") : t("sessions.addHost"),
@@ -83,18 +88,21 @@ function openAdd() {
   form.value = createEmptyProfile();
   password.value = "";
   passphrase.value = "";
-  remember.value = true;
+  rememberSecret.value = true;
+  formError.value = "";
   unlockId.value = null;
   showEditor.value = true;
 }
 
-function openEdit(profile: SshProfile, event: MouseEvent) {
+async function openEdit(profile: SshProfile, event: MouseEvent) {
   event.stopPropagation();
   editingId.value = profile.id;
   form.value = { ...profile };
-  password.value = "";
-  passphrase.value = "";
-  remember.value = true;
+  const secret = await getSshSecret(profile.id);
+  password.value = secret?.password ?? "";
+  passphrase.value = secret?.passphrase ?? "";
+  rememberSecret.value = profile.rememberSecret !== false;
+  formError.value = "";
   unlockId.value = null;
   showEditor.value = true;
 }
@@ -102,6 +110,7 @@ function openEdit(profile: SshProfile, event: MouseEvent) {
 function closeEditor() {
   showEditor.value = false;
   editingId.value = null;
+  formError.value = "";
 }
 
 function onDeleteProfile(profile: SshProfile, event: MouseEvent) {
@@ -112,10 +121,25 @@ function onDeleteProfile(profile: SshProfile, event: MouseEvent) {
   refreshProfiles();
 }
 
-function saveProfileFromForm(): SshProfile | null {
+async function persistSecret(profile: SshProfile, pwd: string, pass: string) {
+  if (rememberSecret.value) {
+    await setSshSecret(profile.id, {
+      password: profile.authKind === "password" ? pwd : undefined,
+      passphrase: profile.authKind === "key" ? pass : undefined,
+    });
+  } else {
+    await removeSshSecret(profile.id);
+  }
+}
+
+/** 「仅保存 / 保存并连接」一律写入主机列表 */
+async function saveProfileFromForm(): Promise<SshProfile | null> {
   const host = form.value.host.trim();
   const username = form.value.username.trim();
-  if (!host || !username) return null;
+  if (!host || !username) {
+    formError.value = t("sessions.hostRequired");
+    return null;
+  }
   const profile: SshProfile = {
     ...form.value,
     id: editingId.value || form.value.id || `profile-${Date.now()}`,
@@ -123,11 +147,13 @@ function saveProfileFromForm(): SshProfile | null {
     host,
     username,
     port: Number(form.value.port) || 22,
+    privateKeyPath: form.value.privateKeyPath?.trim() || "~/.ssh/id_ed25519",
+    rememberSecret: rememberSecret.value,
   };
-  if (remember.value || editingId.value) {
-    upsertSshProfile(profile);
-    refreshProfiles();
-  }
+  upsertSshProfile(profile);
+  await persistSecret(profile, password.value, passphrase.value);
+  refreshProfiles();
+  formError.value = "";
   return profile;
 }
 
@@ -145,11 +171,10 @@ function emitConnect(profile: SshProfile, pwd: string, pass: string) {
   emit("connect", config);
 }
 
-function onSaveAndConnect() {
-  const profile = saveProfileFromForm();
+async function onSaveAndConnect() {
+  const profile = await saveProfileFromForm();
   if (!profile) return;
   if (profile.authKind === "password" && !password.value) {
-    // 保存后仍需密码才能连
     closeEditor();
     unlockId.value = profile.id;
     unlockPassword.value = "";
@@ -159,35 +184,48 @@ function onSaveAndConnect() {
   closeEditor();
 }
 
-function onSaveOnly() {
-  const profile = saveProfileFromForm();
+async function onSaveOnly() {
+  const profile = await saveProfileFromForm();
   if (!profile) return;
   closeEditor();
 }
 
-function onCardClick(profile: SshProfile) {
+async function onCardClick(profile: SshProfile) {
   if (props.connecting) return;
+  const secret = await getSshSecret(profile.id);
+  showEditor.value = false;
+
   if (profile.authKind === "password") {
+    const saved = secret?.password ?? "";
+    if (saved) {
+      emitConnect(profile, saved, "");
+      return;
+    }
+    rememberSecret.value = profile.rememberSecret !== false;
     unlockId.value = profile.id;
     unlockPassword.value = "";
     unlockPassphrase.value = "";
-    showEditor.value = false;
     return;
   }
-  if (profile.authKind === "key") {
-    // 有口令时弹出解锁，否则直接连
-    unlockId.value = profile.id;
-    unlockPassword.value = "";
-    unlockPassphrase.value = "";
-    showEditor.value = false;
-    return;
-  }
+
+  // 私钥：多数无口令；有已存口令则带上直连
+  emitConnect(profile, "", secret?.passphrase ?? "");
 }
 
-function confirmUnlock() {
+async function confirmUnlock() {
   const profile = profiles.value.find((p) => p.id === unlockId.value);
   if (!profile) return;
   if (profile.authKind === "password" && !unlockPassword.value) return;
+  if (rememberSecret.value || profile.rememberSecret) {
+    await setSshSecret(profile.id, {
+      password:
+        profile.authKind === "password" ? unlockPassword.value : undefined,
+      passphrase:
+        profile.authKind === "key" ? unlockPassphrase.value : undefined,
+    });
+    upsertSshProfile({ ...profile, rememberSecret: true });
+    refreshProfiles();
+  }
   emitConnect(profile, unlockPassword.value, unlockPassphrase.value);
   unlockId.value = null;
 }
@@ -236,7 +274,7 @@ const unlocking = computed(() =>
             <span
               class="icon-hit"
               :title="t('sessions.edit')"
-              @click="openEdit(profile, $event)"
+              @click="void openEdit(profile, $event)"
             >
               <Pencil :size="13" />
             </span>
@@ -333,7 +371,7 @@ const unlocking = computed(() =>
             </select>
           </label>
           <label v-if="form.authKind === 'password'" class="field">
-            <span>{{ t("sessions.passwordConnectHint") }}</span>
+            <span>{{ t("sessions.password") }}</span>
             <div class="password-field">
               <input
                 v-model="password"
@@ -395,10 +433,11 @@ const unlocking = computed(() =>
               </div>
             </label>
           </template>
-          <label v-if="!editingId" class="check">
-            <input v-model="remember" type="checkbox" />
-            <span>{{ t("sessions.rememberHost") }}</span>
+          <label class="check">
+            <input v-model="rememberSecret" type="checkbox" />
+            <span>{{ t("sessions.rememberSecret") }}</span>
           </label>
+          <p v-if="formError" class="form-error">{{ formError }}</p>
         </div>
         <footer class="sheet-foot">
           <button type="button" class="ghost" @click="closeEditor">
@@ -499,6 +538,10 @@ const unlocking = computed(() =>
                 <Eye v-else :size="14" />
               </button>
             </div>
+          </label>
+          <label class="check">
+            <input v-model="rememberSecret" type="checkbox" />
+            <span>{{ t("sessions.rememberSecret") }}</span>
           </label>
         </div>
         <footer class="sheet-foot">
@@ -874,5 +917,11 @@ const unlocking = computed(() =>
   margin: 0;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.form-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
 }
 </style>

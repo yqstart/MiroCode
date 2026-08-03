@@ -51,8 +51,9 @@ Git（`features/git`）对标 **VS Code Source Control + Git Graph**：左侧 Co
 会话视图（`features/sessions`）以编辑区标签打开：本地终端 / SSH（主机卡片列表 + 终端/SFTP）。
 - 本地终端：随工作区切换重建（cwd = 项目根），并强制切回「本地终端」子视图
 - package.json scripts：活动栏终端上方 Package 入口 + 本地终端顶栏快捷芯片；点击后在本地终端注入 `pnpm/npm/yarn/bun run …`
-- SSH 主机配置：应用级全局（`localStorage`），与项目无关，切换项目不丢失；密码不落盘
-- SSH 活跃连接：切换项目时强制关闭本窗口全部远程 Shell / SFTP
+- SSH 主机配置：应用级全局（`localStorage`），与项目无关；可选「记住密码」写入 `~/.mirocode/ssh-credentials.json`（0600）
+- SSH 主机密钥：校验 `~/.ssh/known_hosts` + `~/.mirocode/known_hosts`；未知密钥需用户确认（TOFU）
+- SSH 活跃连接：切换项目时强制关闭本窗口全部远程 Shell / SFTP；SFTP 优先复用同一 Shell Session
 
 ## 命名规范
 
