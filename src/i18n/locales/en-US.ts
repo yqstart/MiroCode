@@ -203,7 +203,7 @@ export const enUS = {
     matchCount: "{count} matches",
     noMatch: "No matches",
     findEmptyHint: "Enter a keyword and press Enter or click Find",
-    styleHint: "WebStorm-style · {shortcut}",
+    styleHint: "{shortcut}",
     resultNavHint: "↑↓ select · Enter open · {shortcut} open and keep open",
     replaceConfirm:
       "Replace {replacements} occurrence(s) in {files} file(s). Continue?",

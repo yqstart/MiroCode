@@ -199,7 +199,7 @@ export const zhCN = {
     matchCount: "{count} 条匹配",
     noMatch: "无匹配结果",
     findEmptyHint: "输入关键词后按 Enter 或点击「查找」",
-    styleHint: "WebStorm 风格 · {shortcut}",
+    styleHint: "{shortcut}",
     resultNavHint: "↑↓ 选择 · Enter 打开 · {shortcut} 打开并保持窗口",
     replaceConfirm:
       "将替换 {replacements} 处，涉及 {files} 个文件。确定继续？",
