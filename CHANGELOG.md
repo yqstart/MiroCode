@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-03
+
 ### 新增
 
 - 发现新版本时右上角显示「更新」入口；下载过程展示进度；完成后确认是否立即重启（取消则下次启动应用）
@@ -96,7 +98,8 @@
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/yqstart/MiroCode/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/yqstart/MiroCode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/yqstart/MiroCode/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/yqstart/MiroCode/compare/v0.1.0...v0.1.1
