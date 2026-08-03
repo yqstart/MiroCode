@@ -28,6 +28,8 @@ export interface EditorTab {
   cursor: { line: number; column: number };
   /** 图片预览缓存破坏（外部变更时递增） */
   previewNonce: number;
+  /** 固定标签：关闭其它/左/右/全部时保留 */
+  pinned: boolean;
 }
 
 export const useEditorStore = defineStore("editor", () => {
@@ -110,6 +112,7 @@ export const useEditorStore = defineStore("editor", () => {
         language: languageFromPath(path),
         cursor: { line: 1, column: 1 },
         previewNonce: Date.now(),
+        pinned: false,
       });
       activePath.value = path;
       workspace.selectPath(path);
@@ -388,6 +391,58 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
+  /** 固定标签排到左侧，组内保持相对顺序 */
+  function reorderPinnedFirst() {
+    const pinned = tabs.value.filter((t) => t.pinned);
+    const rest = tabs.value.filter((t) => !t.pinned);
+    tabs.value = [...pinned, ...rest];
+  }
+
+  function togglePin(path: string) {
+    const tab = tabs.value.find((t) => t.path === path);
+    if (!tab) return;
+    tab.pinned = !tab.pinned;
+    reorderPinnedFirst();
+  }
+
+  async function closeTabsByPaths(paths: string[]) {
+    for (const path of paths) {
+      await closeTab(path);
+    }
+  }
+
+  async function closeOtherTabs(path: string) {
+    const victims = tabs.value
+      .filter((t) => t.path !== path && !t.pinned)
+      .map((t) => t.path);
+    await closeTabsByPaths(victims);
+  }
+
+  async function closeTabsToTheLeft(path: string) {
+    const idx = tabs.value.findIndex((t) => t.path === path);
+    if (idx <= 0) return;
+    const victims = tabs.value
+      .slice(0, idx)
+      .filter((t) => !t.pinned)
+      .map((t) => t.path);
+    await closeTabsByPaths(victims);
+  }
+
+  async function closeTabsToTheRight(path: string) {
+    const idx = tabs.value.findIndex((t) => t.path === path);
+    if (idx < 0 || idx >= tabs.value.length - 1) return;
+    const victims = tabs.value
+      .slice(idx + 1)
+      .filter((t) => !t.pinned)
+      .map((t) => t.path);
+    await closeTabsByPaths(victims);
+  }
+
+  async function closeAllTabs() {
+    const victims = tabs.value.filter((t) => !t.pinned).map((t) => t.path);
+    await closeTabsByPaths(victims);
+  }
+
   function renameTabPath(from: string, to: string) {
     const tab = tabs.value.find((t) => t.path === from);
     if (!tab) return;
@@ -454,6 +509,11 @@ export const useEditorStore = defineStore("editor", () => {
     saveActive,
     saveAll,
     closeTab,
+    togglePin,
+    closeOtherTabs,
+    closeTabsToTheLeft,
+    closeTabsToTheRight,
+    closeAllTabs,
     renameTabPath,
     closeTabsUnder,
     confirmDiscardForWorkspaceSwitch,

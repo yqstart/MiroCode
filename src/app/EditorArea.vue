@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Columns2, Eye, FileCode, GitCommitHorizontal, TerminalSquare, X } from "lucide-vue-next";
+import { Columns2, Eye, FileCode, GitCommitHorizontal, Pin, TerminalSquare, X } from "lucide-vue-next";
 import { marked } from "marked";
 import { storeToRefs } from "pinia";
 import CodeMirrorEditor from "@/features/editor/CodeMirrorEditor.vue";
@@ -11,6 +11,7 @@ import SessionsView from "@/features/sessions/SessionsView.vue";
 import { basename, relativeToRoot } from "@/shared/fs";
 import { isRasterImagePath, isSvgPath } from "@/shared/media";
 import { formatShortcut } from "@/shared/platform";
+import { revealInOsExplorer } from "@/shared/revealInOs";
 import { useCompareStore } from "@/stores/compare";
 import { useEditorStore } from "@/stores/editor";
 import { useGitLogStore } from "@/stores/gitLog";
@@ -237,6 +238,103 @@ function onTabsWheel(event: WheelEvent) {
 }
 
 const editorCtx = ref<{ x: number; y: number; absPath: string } | null>(null);
+const tabCtx = ref<{ x: number; y: number; path: string } | null>(null);
+
+const tabCtxIndex = computed(() => {
+  if (!tabCtx.value) return -1;
+  return tabs.value.findIndex((t) => t.path === tabCtx.value!.path);
+});
+
+const tabCtxPinned = computed(() => {
+  if (!tabCtx.value) return false;
+  return Boolean(tabs.value.find((t) => t.path === tabCtx.value!.path)?.pinned);
+});
+
+const tabCtxCanCloseLeft = computed(() => {
+  const idx = tabCtxIndex.value;
+  if (idx <= 0) return false;
+  return tabs.value.slice(0, idx).some((t) => !t.pinned);
+});
+
+const tabCtxCanCloseRight = computed(() => {
+  const idx = tabCtxIndex.value;
+  if (idx < 0 || idx >= tabs.value.length - 1) return false;
+  return tabs.value.slice(idx + 1).some((t) => !t.pinned);
+});
+
+const tabCtxCanCloseOthers = computed(() => {
+  if (!tabCtx.value) return false;
+  return tabs.value.some(
+    (t) => t.path !== tabCtx.value!.path && !t.pinned,
+  );
+});
+
+const tabCtxCanCloseAll = computed(() =>
+  tabs.value.some((t) => !t.pinned),
+);
+
+function clampMenuPos(x: number, y: number, width = 180, height = 220) {
+  const pad = 8;
+  const maxX = Math.max(pad, window.innerWidth - width - pad);
+  const maxY = Math.max(pad, window.innerHeight - height - pad);
+  return {
+    x: Math.min(Math.max(pad, x), maxX),
+    y: Math.min(Math.max(pad, y), maxY),
+  };
+}
+
+function onTabContextMenu(event: MouseEvent, path: string) {
+  event.preventDefault();
+  event.stopPropagation();
+  editorCtx.value = null;
+  const pos = clampMenuPos(event.clientX, event.clientY);
+  tabCtx.value = { x: pos.x, y: pos.y, path };
+  activateFile(path);
+}
+
+async function runTabMenu(
+  action:
+    | "pin"
+    | "close"
+    | "closeOthers"
+    | "closeLeft"
+    | "closeRight"
+    | "closeAll"
+    | "revealInOs",
+) {
+  const path = tabCtx.value?.path;
+  tabCtx.value = null;
+  if (!path) return;
+  if (action === "pin") {
+    editor.togglePin(path);
+    return;
+  }
+  if (action === "revealInOs") {
+    await revealInOsExplorer(path, (message, ms) =>
+      workspace.showNotice(message, ms),
+    );
+    return;
+  }
+  if (action === "close") {
+    await editor.closeTab(path);
+    return;
+  }
+  if (action === "closeOthers") {
+    await editor.closeOtherTabs(path);
+    return;
+  }
+  if (action === "closeLeft") {
+    await editor.closeTabsToTheLeft(path);
+    return;
+  }
+  if (action === "closeRight") {
+    await editor.closeTabsToTheRight(path);
+    return;
+  }
+  if (action === "closeAll") {
+    await editor.closeAllTabs();
+  }
+}
 
 const editorCtxRelPath = computed(() => {
   if (!editorCtx.value || !rootPath.value) return null;
@@ -290,6 +388,7 @@ async function showDiffFromEditor() {
 
 function onDocClick() {
   editorCtx.value = null;
+  tabCtx.value = null;
 }
 
 onMounted(() => window.addEventListener("click", onDocClick));
@@ -305,18 +404,25 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
           :key="tab.path"
           type="button"
           class="tab"
-          :class="{ active: showFileEditor && tab.path === activePath }"
+          :class="{
+            active: showFileEditor && tab.path === activePath,
+            pinned: tab.pinned,
+          }"
           @click="activateFile(tab.path)"
           @auxclick.middle.prevent="editor.closeTab(tab.path)"
+          @contextmenu="onTabContextMenu($event, tab.path)"
         >
           <span class="dot" :class="{ dirty: editor.isDirty(tab.path) }" />
           <span class="name">{{ tab.name }}</span>
-          <span
-            class="close"
-            :title="t('editor.close')"
-            @click.stop="editor.closeTab(tab.path)"
-          >
-            <X :size="12" />
+          <span class="tab-trailing">
+            <Pin v-if="tab.pinned" :size="11" class="pin-icon" />
+            <span
+              class="close"
+              :title="t('editor.close')"
+              @click.stop="editor.closeTab(tab.path)"
+            >
+              <X :size="12" />
+            </span>
           </span>
         </button>
 
@@ -444,6 +550,55 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
         </div>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="tabCtx"
+        class="tab-ctx"
+        :style="{ left: `${tabCtx.x}px`, top: `${tabCtx.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+      >
+        <button type="button" @click="runTabMenu('pin')">
+          {{ tabCtxPinned ? t("editor.unpin") : t("editor.pin") }}
+        </button>
+        <button type="button" @click="runTabMenu('revealInOs')">
+          {{ t("explorer.revealInOs") }}
+        </button>
+        <hr />
+        <button type="button" @click="runTabMenu('close')">
+          {{ t("editor.close") }}
+        </button>
+        <button
+          type="button"
+          :disabled="!tabCtxCanCloseOthers"
+          @click="runTabMenu('closeOthers')"
+        >
+          {{ t("editor.closeOthers") }}
+        </button>
+        <button
+          type="button"
+          :disabled="!tabCtxCanCloseLeft"
+          @click="runTabMenu('closeLeft')"
+        >
+          {{ t("editor.closeToTheLeft") }}
+        </button>
+        <button
+          type="button"
+          :disabled="!tabCtxCanCloseRight"
+          @click="runTabMenu('closeRight')"
+        >
+          {{ t("editor.closeToTheRight") }}
+        </button>
+        <button
+          type="button"
+          :disabled="!tabCtxCanCloseAll"
+          @click="runTabMenu('closeAll')"
+        >
+          {{ t("editor.closeAll") }}
+        </button>
+      </div>
+    </Teleport>
 
     <Teleport to="body">
       <div
@@ -592,6 +747,43 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
   color: var(--accent);
 }
 
+/* 固定槽位：钉与关闭重叠，悬停只切换透明度，避免跳动 */
+.tab-trailing {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.tab-trailing .pin-icon,
+.tab-trailing .close {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+
+.pin-icon {
+  color: var(--accent);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.tab.pinned .close {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tab.pinned:hover .close,
+.tab.pinned.active:hover .close {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.tab.pinned:hover .pin-icon,
+.tab.pinned.active:hover .pin-icon {
+  opacity: 0;
+}
+
 .canvas {
   flex: 1;
   min-height: 0;
@@ -723,5 +915,42 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
 
 .editor-ctx .danger {
   color: var(--danger);
+}
+
+.tab-ctx {
+  position: fixed;
+  z-index: 80;
+  min-width: 168px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-ctx button {
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.tab-ctx button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tab-ctx button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tab-ctx hr {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 4px 0;
 }
 </style>

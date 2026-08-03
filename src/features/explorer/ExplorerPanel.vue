@@ -18,6 +18,7 @@ import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { basename, dirname, relativeToRoot } from "@/shared/fs";
 import { openFolderInNewWindow } from "@/shared/openWorkspace";
 import { formatShortcut } from "@/shared/platform";
+import { revealInOsExplorer } from "@/shared/revealInOs";
 import { useI18n } from "@/i18n";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
@@ -294,6 +295,12 @@ async function runMenu(action: string) {
       const rel = relativeToRoot(rootPath.value, path);
       await writeClipboard(rel);
       workspace.showNotice(t("explorer.copiedRelPath"));
+      return;
+    }
+    if (action === "reveal-in-os") {
+      await revealInOsExplorer(path, (message, ms) =>
+        workspace.showNotice(message, ms),
+      );
     }
   } catch (error) {
     workspace.showNotice(
@@ -540,6 +547,10 @@ defineExpose({ locateActiveFile });
       </button>
       <button type="button" @click="runMenu('copy-rel-path')">
         {{ t("explorer.copyRelPath") }}
+      </button>
+      <hr />
+      <button type="button" @click="runMenu('reveal-in-os')">
+        {{ t("explorer.revealInOs") }}
       </button>
     </div>
   </div>
