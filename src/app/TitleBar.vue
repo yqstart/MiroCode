@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, computed, ref } from "vue";
 import { PanelLeft, PanelLeftClose } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
+import UpdateBadge from "@/app/UpdateBadge.vue";
 import { formatShortcut, isMacOS } from "@/shared/platform";
 import { useSettingsStore } from "@/stores/settings";
 import { useI18n } from "@/i18n";
@@ -93,6 +94,7 @@ onUnmounted(() => {
       <PanelLeft v-else :size="15" :stroke-width="1.75" />
     </button>
     <div class="drag-fill" data-tauri-drag-region />
+    <UpdateBadge />
   </header>
 </template>
 

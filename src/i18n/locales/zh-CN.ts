@@ -115,7 +115,7 @@ export const zhCN = {
     checkingUpdate: "检查中…",
     autoCheckUpdates: "启动时自动检查",
     autoCheckUpdatesDesc:
-      "启动约 4 秒后静默检查 GitHub Release；仅有新版本时提示，确认后下载安装并重启。",
+      "启动约 4 秒后静默检查 GitHub Release；发现新版本时右上角显示「更新」，并可选择立即下载安装。",
     shortcutsTitle: "常用快捷键",
     shortcutOpenFolder: "打开文件夹",
     shortcutQuickOpen: "快速打开文件",
@@ -542,6 +542,30 @@ export const zhCN = {
     loading: "读取 scripts…",
     noPackageJson: "当前项目无 package.json",
     noScripts: "package.json 中没有 scripts",
+  },
+  update: {
+    badge: "更新",
+    badgeTitle: "下载并安装 {version}",
+    browserPreview: "当前为浏览器预览，无法检查更新",
+    checking: "正在检查更新…",
+    latest: "已是最新版本",
+    foundTitle: "发现新版本",
+    foundMessage:
+      "发现新版本 {version}（当前 {current}）。是否立即下载并安装？",
+    foundMessageWithNotes:
+      "发现新版本 {version}（当前 {current}）\n\n{notes}",
+    later: "稍后",
+    installNow: "立即更新",
+    downloadingTitle: "正在下载更新",
+    downloadingMessage: "正在下载 Miro Code {version}…",
+    downloading: "下载中…",
+    readyTitle: "更新已就绪",
+    readyMessage:
+      "新版本 {version} 已下载安装完成。是否立即重启以应用更新？\n取消则下次启动时应用。",
+    willApplyOnNextLaunch: "更新将在下次启动时应用",
+    noPending: "当前没有可安装的更新",
+    checkFailed: "检查更新失败：{message}",
+    installFailed: "安装更新失败：{message}",
   },
   dialog: {
     ok: "确定",

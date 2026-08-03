@@ -119,7 +119,7 @@ export const enUS = {
     checkingUpdate: "Checking…",
     autoCheckUpdates: "Check on startup",
     autoCheckUpdatesDesc:
-      "Silently checks GitHub Releases ~4s after launch; prompts only when a new version is available.",
+      "Silently checks GitHub Releases ~4s after launch; shows Update in the top-right when a new version is available.",
     shortcutsTitle: "Keyboard Shortcuts",
     shortcutOpenFolder: "Open Folder",
     shortcutQuickOpen: "Quick Open",
@@ -551,6 +551,30 @@ export const enUS = {
     loading: "Reading scripts…",
     noPackageJson: "No package.json in this project",
     noScripts: "No scripts in package.json",
+  },
+  update: {
+    badge: "Update",
+    badgeTitle: "Download and install {version}",
+    browserPreview: "Browser preview cannot check for updates",
+    checking: "Checking for updates…",
+    latest: "You're up to date",
+    foundTitle: "Update Available",
+    foundMessage:
+      "Version {version} is available (current {current}). Download and install now?",
+    foundMessageWithNotes:
+      "Version {version} is available (current {current})\n\n{notes}",
+    later: "Later",
+    installNow: "Update Now",
+    downloadingTitle: "Downloading Update",
+    downloadingMessage: "Downloading Miro Code {version}…",
+    downloading: "Downloading…",
+    readyTitle: "Update Ready",
+    readyMessage:
+      "Version {version} has been downloaded and installed. Restart now to apply it?\nCancel to apply on next launch.",
+    willApplyOnNextLaunch: "Update will apply on next launch",
+    noPending: "No update ready to install",
+    checkFailed: "Update check failed: {message}",
+    installFailed: "Failed to install update: {message}",
   },
   dialog: {
     ok: "OK",

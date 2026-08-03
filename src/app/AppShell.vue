@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import ActivityBar from "@/app/ActivityBar.vue";
 import SideBar from "@/app/SideBar.vue";
 import TitleBar from "@/app/TitleBar.vue";
+import UpdateBadge from "@/app/UpdateBadge.vue";
 import EditorArea from "@/app/EditorArea.vue";
 import StatusBar from "@/app/StatusBar.vue";
 import FindInFilesDialog from "@/features/search/FindInFilesDialog.vue";
@@ -13,12 +14,14 @@ import SettingsModal from "@/features/settings/SettingsModal.vue";
 import ChoiceDialog from "@/shared/ChoiceDialog.vue";
 import GitAuthDialog from "@/shared/GitAuthDialog.vue";
 import PromptDialog from "@/shared/PromptDialog.vue";
+import UpdateProgressDialog from "@/shared/UpdateProgressDialog.vue";
 import PushDialog from "@/features/git/PushDialog.vue";
 import UpdateProjectDialog from "@/features/git/UpdateProjectDialog.vue";
 import InteractiveRebaseDialog from "@/features/git/InteractiveRebaseDialog.vue";
 import { basename } from "@/shared/fs";
 import { setupAutoSave } from "@/features/editor/autoSave";
 import { checkForAppUpdate } from "@/shared/appUpdate";
+import { isMacOS } from "@/shared/platform";
 import { readBootFolder } from "@/shared/openWorkspace";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
@@ -28,6 +31,9 @@ import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { t } from "@/i18n";
+
+/** macOS 标题栏已挂更新入口；其它平台用右上角浮动徽章 */
+const showFloatingUpdateBadge = !isMacOS();
 
 const ui = useUiStore();
 const workspace = useWorkspaceStore();
@@ -205,6 +211,12 @@ onUnmounted(() => {
 <template>
   <div class="shell">
     <TitleBar />
+    <div
+      v-if="showFloatingUpdateBadge"
+      class="floating-update"
+    >
+      <UpdateBadge />
+    </div>
     <div class="main">
       <ActivityBar />
       <SideBar />
@@ -217,6 +229,7 @@ onUnmounted(() => {
     <FindInFilesDialog />
     <PromptDialog />
     <ChoiceDialog />
+    <UpdateProgressDialog />
     <GitAuthDialog />
     <PushDialog />
     <UpdateProjectDialog />
@@ -233,6 +246,19 @@ onUnmounted(() => {
   flex-direction: column;
   background: var(--bg-app);
   color: var(--text-primary);
+  position: relative;
+}
+
+.floating-update {
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.floating-update :deep(.update-badge) {
+  pointer-events: auto;
 }
 
 .main {
