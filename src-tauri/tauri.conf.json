@@ -44,6 +44,10 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "publisher": "Miro Code",
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "resources": [
       "../LICENSE",
       "../THIRD-PARTY-NOTICES.md"

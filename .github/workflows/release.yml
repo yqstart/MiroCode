@@ -81,6 +81,52 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # 可选：配置 Windows 代码签名证书后，Release 构建会自动 Authenticode 签名，消除 SmartScreen「不安全」提示
+      - name: Import Windows code signing certificate
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE) {
+            Write-Host "未配置 WINDOWS_CERTIFICATE，跳过 Windows 代码签名"
+            exit 0
+          }
+          New-Item -ItemType Directory -Force -Path certificate | Out-Null
+          Set-Content -Path certificate/tempCert.txt -Value $env:WINDOWS_CERTIFICATE
+          certutil -decode certificate/tempCert.txt certificate/certificate.pfx
+          Remove-Item certificate/tempCert.txt
+          Import-PfxCertificate `
+            -FilePath certificate/certificate.pfx `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -Password (ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText)
+          if (-not $env:WINDOWS_CERTIFICATE_THUMBPRINT) {
+            $env:WINDOWS_CERTIFICATE_THUMBPRINT = (
+              Get-ChildItem Cert:\CurrentUser\My |
+              Sort-Object NotAfter -Descending |
+              Select-Object -First 1
+            ).Thumbprint
+          }
+          "WINDOWS_SIGNING_ENABLED=true" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "WINDOWS_CERTIFICATE_THUMBPRINT=$env:WINDOWS_CERTIFICATE_THUMBPRINT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Enable Windows code signing in tauri.conf.json
+        if: matrix.platform == 'windows-latest' && env.WINDOWS_SIGNING_ENABLED == 'true'
+        shell: node
+        run: |
+          const fs = require('fs');
+          const path = 'src-tauri/tauri.conf.json';
+          const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+          config.bundle.windows = {
+            ...(config.bundle.windows ?? {}),
+            certificateThumbprint: process.env.WINDOWS_CERTIFICATE_THUMBPRINT,
+            digestAlgorithm: 'sha256',
+            timestampUrl: 'http://timestamp.digicert.com',
+          };
+          fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+
       # 若该 tag 已有 Release（如已手建的 v0.1.0），会把产物挂上去；
       # 若没有，则自动创建同名 Release。
       - name: Build and upload to Release
@@ -101,7 +147,8 @@ jobs:
             - Linux：`.deb` / `.AppImage`
 
             应用内可通过「设置 → 关于 → 检查更新」或启动时自动检查升级。
-            未做代码签名/公证时，系统可能提示「未验证开发者」或 SmartScreen 警告，属预期。
+            macOS 已 ad-hoc 签名；若仍提示「未验证开发者」，请右键 → 打开。首次安装若见「已损坏」，见 [多平台发布.md](https://github.com/yqstart/MiroCode/blob/master/docs/多平台发布.md#macos安装后提示已损坏无法打开)。
+            Windows 若 SmartScreen 提示「已保护你的电脑」，见 [多平台发布.md · Windows](https://github.com/yqstart/MiroCode/blob/master/docs/多平台发布.md#windowssmartscreen-提示已保护你的电脑)（更多信息 → 仍要运行）。
             详见仓库 [CHANGELOG.md](https://github.com/yqstart/MiroCode/blob/master/CHANGELOG.md)。
           # 已发布的 Release 须为 false；若希望先审再发，可改为 true（且勿对手动已发布 tag 再跑）
           releaseDraft: false

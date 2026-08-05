@@ -50,6 +50,26 @@ pnpm release
 
 多平台安装包（无需 Windows/Linux 机器）：打 `v*` 标签或 Actions 手动触发，见 [多平台发布](docs/多平台发布.md)。
 
+### macOS 安装提示「已损坏」
+
+从 Release 安装后若系统提示「Miro Code 已损坏，无法打开」，在终端执行：
+
+```bash
+xattr -cr "/Applications/Miro Code.app"
+```
+
+然后双击或右键 → **打开** 即可。原因与后续发版说明见 [多平台发布 · macOS 故障排除](docs/多平台发布.md#macos安装后提示已损坏无法打开)。
+
+### Windows 安装提示「已保护你的电脑」
+
+从 Release 下载后若 SmartScreen 拦截，在安装界面点 **更多信息** → **仍要运行** 即可；或在 PowerShell 中解除下载标记：
+
+```powershell
+Unblock-File -LiteralPath "$env:USERPROFILE\Downloads\Miro Code_*.msi"
+```
+
+说明见 [多平台发布 · Windows SmartScreen](docs/多平台发布.md#windowssmartscreen-提示已保护你的电脑)。要彻底消除提示需配置 Windows 代码签名证书（见同文档维护者侧说明）。
+
 ## 文档
 
 | 文档 | 说明 |
