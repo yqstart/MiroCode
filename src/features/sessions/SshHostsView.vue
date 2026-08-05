@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
   Eye,
   EyeOff,
@@ -33,7 +33,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const profiles = ref<SshProfile[]>(loadSshProfiles());
+const profiles = ref<SshProfile[]>([]);
 const showEditor = ref(false);
 const editingId = ref<string | null>(null);
 const form = ref<SshProfile>(createEmptyProfile());
@@ -80,8 +80,14 @@ function avatarLetter(profile: SshProfile): string {
 }
 
 function refreshProfiles() {
-  profiles.value = loadSshProfiles();
+  void loadSshProfiles().then((list) => {
+    profiles.value = list;
+  });
 }
+
+onMounted(() => {
+  refreshProfiles();
+});
 
 function openAdd() {
   editingId.value = null;
@@ -115,21 +121,32 @@ function closeEditor() {
 
 function onDeleteProfile(profile: SshProfile, event: MouseEvent) {
   event.stopPropagation();
-  removeSshProfile(profile.id);
-  if (editingId.value === profile.id) closeEditor();
-  if (unlockId.value === profile.id) unlockId.value = null;
-  refreshProfiles();
+  void removeSshProfile(profile.id).then(() => {
+    if (editingId.value === profile.id) closeEditor();
+    if (unlockId.value === profile.id) unlockId.value = null;
+    refreshProfiles();
+  });
 }
 
 async function persistSecret(profile: SshProfile, pwd: string, pass: string) {
-  if (rememberSecret.value) {
-    await setSshSecret(profile.id, {
-      password: profile.authKind === "password" ? pwd : undefined,
-      passphrase: profile.authKind === "key" ? pass : undefined,
-    });
-  } else {
+  if (!rememberSecret.value) {
     await removeSshSecret(profile.id);
+    return;
   }
+  const existing = await getSshSecret(profile.id);
+  const nextPassword =
+    profile.authKind === "password"
+      ? pwd || existing?.password || undefined
+      : existing?.password;
+  const nextPassphrase =
+    profile.authKind === "key"
+      ? pass || existing?.passphrase || undefined
+      : existing?.passphrase;
+  if (!nextPassword && !nextPassphrase) return;
+  await setSshSecret(profile.id, {
+    password: nextPassword,
+    passphrase: nextPassphrase,
+  });
 }
 
 /** 「仅保存 / 保存并连接」一律写入主机列表 */
@@ -150,7 +167,7 @@ async function saveProfileFromForm(): Promise<SshProfile | null> {
     privateKeyPath: form.value.privateKeyPath?.trim() || "~/.ssh/id_ed25519",
     rememberSecret: rememberSecret.value,
   };
-  upsertSshProfile(profile);
+  await upsertSshProfile(profile);
   await persistSecret(profile, password.value, passphrase.value);
   refreshProfiles();
   formError.value = "";
@@ -175,6 +192,12 @@ async function onSaveAndConnect() {
   const profile = await saveProfileFromForm();
   if (!profile) return;
   if (profile.authKind === "password" && !password.value) {
+    const secret = await getSshSecret(profile.id);
+    if (secret?.password) {
+      emitConnect(profile, secret.password, "");
+      closeEditor();
+      return;
+    }
     closeEditor();
     unlockId.value = profile.id;
     unlockPassword.value = "";
@@ -212,20 +235,35 @@ async function onCardClick(profile: SshProfile) {
   emitConnect(profile, "", secret?.passphrase ?? "");
 }
 
-async function confirmUnlock() {
-  const profile = profiles.value.find((p) => p.id === unlockId.value);
-  if (!profile) return;
-  if (profile.authKind === "password" && !unlockPassword.value) return;
-  if (rememberSecret.value || profile.rememberSecret) {
+async function persistUnlockCredentials(profile: SshProfile) {
+  if (rememberSecret.value) {
     await setSshSecret(profile.id, {
       password:
         profile.authKind === "password" ? unlockPassword.value : undefined,
       passphrase:
         profile.authKind === "key" ? unlockPassphrase.value : undefined,
     });
-    upsertSshProfile({ ...profile, rememberSecret: true });
-    refreshProfiles();
+    await upsertSshProfile({ ...profile, rememberSecret: true });
+  } else {
+    await removeSshSecret(profile.id);
+    await upsertSshProfile({ ...profile, rememberSecret: false });
   }
+  refreshProfiles();
+}
+
+async function saveUnlock() {
+  const profile = profiles.value.find((p) => p.id === unlockId.value);
+  if (!profile) return;
+  if (profile.authKind === "password" && !unlockPassword.value) return;
+  await persistUnlockCredentials(profile);
+  unlockId.value = null;
+}
+
+async function confirmUnlock() {
+  const profile = profiles.value.find((p) => p.id === unlockId.value);
+  if (!profile) return;
+  if (profile.authKind === "password" && !unlockPassword.value) return;
+  await persistUnlockCredentials(profile);
   emitConnect(profile, unlockPassword.value, unlockPassphrase.value);
   unlockId.value = null;
 }
@@ -547,6 +585,14 @@ const unlocking = computed(() =>
         <footer class="sheet-foot">
           <button type="button" class="ghost" @click="cancelUnlock">
             {{ t("common.cancel") }}
+          </button>
+          <button
+            type="button"
+            class="ghost"
+            :disabled="unlocking.authKind === 'password' && !unlockPassword"
+            @click="saveUnlock"
+          >
+            {{ t("sessions.save") }}
           </button>
           <button
             type="button"

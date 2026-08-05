@@ -254,6 +254,8 @@ pub fn run() {
             commands::ssh::ssh_shell_write,
             commands::ssh::ssh_shell_resize,
             commands::ssh::ssh_shell_close,
+            commands::ssh::ssh_profiles_load,
+            commands::ssh::ssh_profiles_save,
             commands::ssh::ssh_secret_get,
             commands::ssh::ssh_secret_set,
             commands::ssh::ssh_secret_remove,

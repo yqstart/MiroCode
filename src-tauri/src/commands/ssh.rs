@@ -408,6 +408,48 @@ fn with_sftp_io<R>(backend: &SftpBackend, f: impl FnOnce(&Sftp) -> CmdResult<R>)
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshProfileStored {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_kind: String,
+    pub private_key_path: String,
+    pub remember_secret: Option<bool>,
+}
+
+fn ssh_profiles_path() -> Option<PathBuf> {
+    Some(miro_dir()?.join("ssh-profiles.json"))
+}
+
+#[tauri::command]
+pub fn ssh_profiles_load() -> CmdResult<Vec<SshProfileStored>> {
+    let path = ssh_profiles_path().ok_or_else(|| "无法定位配置目录".to_string())?;
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let profiles: Vec<SshProfileStored> =
+        serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    Ok(profiles)
+}
+
+#[tauri::command]
+pub fn ssh_profiles_save(profiles: Vec<SshProfileStored>) -> CmdResult<()> {
+    let path = ssh_profiles_path().ok_or_else(|| "无法定位配置目录".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let trimmed: Vec<_> = profiles.into_iter().take(20).collect();
+    let raw = serde_json::to_string_pretty(&trimmed).map_err(|e| e.to_string())?;
+    std::fs::write(&path, raw).map_err(|e| e.to_string())?;
+    set_file_private(&path);
+    Ok(())
+}
+
 // ==================== SSH 凭据（磁盘 0600） ====================
 
 #[tauri::command]
@@ -447,7 +489,15 @@ pub fn ssh_secret_set(profile_id: String, secret: SshSecretStored) -> CmdResult<
     if next.password.is_none() && next.passphrase.is_none() {
         map.remove(&profile_id);
     } else {
-        map.insert(profile_id, next);
+        let merged = if let Some(existing) = map.remove(&profile_id) {
+            SshSecretStored {
+                password: next.password.or(existing.password),
+                passphrase: next.passphrase.or(existing.passphrase),
+            }
+        } else {
+            next
+        };
+        map.insert(profile_id, merged);
     }
     let raw = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
     std::fs::write(&path, raw).map_err(|e| e.to_string())?;

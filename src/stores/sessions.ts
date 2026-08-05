@@ -159,9 +159,8 @@ export const useSessionsStore = defineStore("sessions", () => {
   /**
    * 打开/切换工作区时：
    * - 本地终端一律重建
-   * - 强制切回「本地终端」子视图
-   * - 强制断开本窗口全部 SSH/SFTP 远程连接
-   * 已保存的 SSH 主机配置（全局 localStorage）不受影响。
+   * - 强制断开本窗口全部 SSH/SFTP 远程连接（活跃会话）
+   * - 保留当前子视图（本地 / SSH）；已保存 SSH 主机为全局配置（~/.mirocode/），不随项目切换
    */
   async function resetLocalForWorkspace(cwd: string | null) {
     const remotes = remoteSessions.value.slice();
@@ -183,9 +182,10 @@ export const useSessionsStore = defineStore("sessions", () => {
     const keepUiOpen = open.value;
     const wasDormant = dormant.value;
     const hadLocal = localTerminals.value.length > 0;
+    const keepSubView = subView.value;
     localTerminals.value = [];
     activeLocalId.value = null;
-    subView.value = "local";
+    subView.value = keepSubView;
     dormant.value = false;
 
     if (keepUiOpen || wasDormant || hadLocal) {
