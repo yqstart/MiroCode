@@ -4,9 +4,26 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-05
+
+### 新增
+
+- 文件内查找/替换：VS Code 风格右上角悬浮控件（匹配计数、Aa / 正则 / 全词切换、可展开替换行；⌘⌥F 打开替换）
+- SSH 主机列表持久化至 `~/.mirocode/ssh-profiles.json`（应用级全局，多窗口/切换项目共享）
+- SSH 连接解锁弹窗：「保存」仅存凭据、「连接」保存并连接
+- Release 工作流预留 Windows 代码签名（配置 Secrets 后 CI 自动 Authenticode 签名）
+- macOS 构建启用 ad-hoc 签名，减轻从 GitHub 下载后的「已损坏」误报
+
+### 变更
+
+- 切换项目时保留 SSH 子视图；仅断开活跃远程连接，已保存主机不受影响
+- 发版说明与 README 补充 macOS / Windows 安装安全提示与绕过方式
+
 ### 修复
 
-- 应用内检查更新：修复异步上下文无法写入 Pinia 导致静默失败；设置页内联显示检查结果（不再仅依赖被遮罩挡住的状态栏提示）
+- 应用内检查更新：修复异步上下文无法写入 Pinia 导致静默失败；设置页内联显示检查结果
+- SSH「记住密码」：编辑时空密码不再清掉已存凭据；解锁框支持仅保存
+- 左下角 Branches 弹层：分支较多时右键菜单自动上翻/贴边，避免被遮挡
 
 ## [0.4.0] - 2026-08-03
 
@@ -102,7 +119,8 @@
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/yqstart/MiroCode/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/yqstart/MiroCode/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/yqstart/MiroCode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/yqstart/MiroCode/compare/v0.1.1...v0.2.0
