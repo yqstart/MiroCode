@@ -21,6 +21,7 @@ const { branches, snapshot, loading } = storeToRefs(git);
 
 const filter = ref("");
 const filterRef = ref<HTMLInputElement | null>(null);
+const ctxMenuRef = ref<HTMLElement | null>(null);
 const selected = ref<string | null>(null);
 const ctx = ref<{ x: number; y: number; name: string; isRemote: boolean } | null>(
   null,
@@ -73,10 +74,35 @@ async function onCheckoutRemote(name: string) {
   await git.checkoutRemote(name);
 }
 
+function clampCtxPosition(x: number, y: number, width: number, height: number) {
+  const pad = 8;
+  let nextX = x;
+  let nextY = y;
+  if (nextX + width > window.innerWidth - pad) {
+    nextX = Math.max(pad, window.innerWidth - width - pad);
+  }
+  if (nextY + height > window.innerHeight - pad) {
+    const above = y - height;
+    nextY = above >= pad ? above : Math.max(pad, window.innerHeight - height - pad);
+  }
+  return {
+    x: Math.max(pad, nextX),
+    y: Math.max(pad, nextY),
+  };
+}
+
 function onCtx(event: MouseEvent, name: string, isRemote: boolean) {
   event.preventDefault();
   selected.value = name;
   ctx.value = { x: event.clientX, y: event.clientY, name, isRemote };
+  void nextTick(() => {
+    if (!ctx.value || !ctxMenuRef.value) return;
+    const rect = ctxMenuRef.value.getBoundingClientRect();
+    const pos = clampCtxPosition(ctx.value.x, ctx.value.y, rect.width, rect.height);
+    if (pos.x !== ctx.value.x || pos.y !== ctx.value.y) {
+      ctx.value = { ...ctx.value, x: pos.x, y: pos.y };
+    }
+  });
 }
 
 async function onNew() {
@@ -266,6 +292,7 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
       <div
         v-if="ctx"
         id="miro-branches-ctx"
+        ref="ctxMenuRef"
         class="ctx"
         :style="{ left: `${ctx.x}px`, top: `${ctx.y}px` }"
         @click.stop
@@ -446,6 +473,8 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc));
   position: fixed;
   z-index: 90;
   min-width: 200px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   padding: 4px;
   border-radius: 8px;
   background: var(--bg-elevated);
