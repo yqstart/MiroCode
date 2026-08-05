@@ -580,6 +580,9 @@ export const enUS = {
       "Version {version} is available (current {current})\n\n{notes}",
     later: "Later",
     installNow: "Update Now",
+    foundHint:
+      "Version {version} is available. Use Update in the title bar or check again.",
+    pendingHint: "Version {version} is available. Click Update in the title bar.",
     downloadingTitle: "Downloading Update",
     downloadingMessage: "Downloading Miro Code {version}…",
     downloading: "Downloading…",

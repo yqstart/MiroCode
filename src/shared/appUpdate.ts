@@ -2,6 +2,7 @@ import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
 import { t } from "@/i18n";
 import { promptChoice } from "@/shared/choiceDialog";
 import { useAppUpdateStore } from "@/stores/appUpdate";
+import { pinia } from "@/stores/pinia";
 
 export type CheckUpdateMode = "auto" | "manual";
 
@@ -36,8 +37,9 @@ export async function getAppVersion(): Promise<string> {
   }
 }
 
-function store() {
-  return useAppUpdateStore();
+/** 在 await 前取得 store，避免异步上下文丢失 active Pinia */
+function updateStore() {
+  return useAppUpdateStore(pinia);
 }
 
 /**
@@ -49,6 +51,8 @@ export async function checkForAppUpdate(
   mode: CheckUpdateMode,
   notify?: NotifyFn,
 ): Promise<CheckUpdateResult> {
+  const store = updateStore();
+
   if (!isTauriRuntime()) {
     if (mode === "manual") notify?.(t("update.browserPreview"));
     return "skipped";
@@ -66,13 +70,13 @@ export async function checkForAppUpdate(
         void pendingUpdate.close().catch(() => undefined);
         pendingUpdate = null;
       }
-      store().clearAvailable();
+      store.clearAvailable();
       if (mode === "manual") notify?.(t("update.latest"));
       return "latest";
     }
 
     pendingUpdate = update;
-    store().setAvailable(update.version, update.currentVersion);
+    store.setAvailable(update.version, update.currentVersion);
 
     // 启动静默检查：只显示右上角入口
     if (mode === "auto") {
@@ -102,6 +106,12 @@ export async function checkForAppUpdate(
     });
 
     if (choice !== "install") {
+      notify?.(
+        t("update.foundHint", {
+          version: update.version,
+        }),
+        4800,
+      );
       return "available";
     }
 
@@ -126,6 +136,8 @@ export async function checkForAppUpdate(
 export async function installPendingUpdate(
   notify?: NotifyFn,
 ): Promise<CheckUpdateResult> {
+  const store = updateStore();
+
   if (!isTauriRuntime()) {
     notify?.(t("update.browserPreview"));
     return "skipped";
@@ -140,14 +152,13 @@ export async function installPendingUpdate(
   }
 
   installing = true;
-  const updateStore = store();
   const update = pendingUpdate;
   try {
-    updateStore.beginDownload();
+    store.beginDownload();
     await update.downloadAndInstall((event: DownloadEvent) => {
-      updateStore.onDownloadEvent(event);
+      store.onDownloadEvent(event);
     });
-    updateStore.endDownload();
+    store.endDownload();
 
     const choice = await promptChoice({
       title: t("update.readyTitle"),
@@ -160,7 +171,7 @@ export async function installPendingUpdate(
     });
 
     pendingUpdate = null;
-    updateStore.clearAvailable();
+    store.clearAvailable();
     void update.close().catch(() => undefined);
 
     if (choice === "now") {
@@ -176,7 +187,7 @@ export async function installPendingUpdate(
     notify?.(t("update.installFailed", { message: msg }), 4800);
     return "error";
   } finally {
-    updateStore.endDownload();
+    store.endDownload();
     installing = false;
   }
 }

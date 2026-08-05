@@ -571,6 +571,8 @@ export const zhCN = {
       "发现新版本 {version}（当前 {current}）\n\n{notes}",
     later: "稍后",
     installNow: "立即更新",
+    foundHint: "发现新版本 {version}，可点击标题栏「更新」或再次检查更新",
+    pendingHint: "新版本 {version} 可用，请点击标题栏「更新」",
     downloadingTitle: "正在下载更新",
     downloadingMessage: "正在下载 Miro Code {version}…",
     downloading: "下载中…",

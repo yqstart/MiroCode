@@ -6,6 +6,7 @@ import { THEME_LABELS } from "@/features/editor/theme";
 import { checkForAppUpdate, getAppVersion } from "@/shared/appUpdate";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { formatShortcut } from "@/shared/platform";
+import { useAppUpdateStore } from "@/stores/appUpdate";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -16,25 +17,51 @@ const { t } = useI18n();
 const settings = useSettingsStore();
 const ui = useUiStore();
 const workspace = useWorkspaceStore();
+const appUpdate = useAppUpdateStore();
 const { theme, editor, locale } = storeToRefs(settings);
+const { hasUpdate, availableVersion } = storeToRefs(appUpdate);
 
 type NavId = "editor" | "shortcuts" | "system";
 
 const activeNav = ref<NavId>("editor");
 const appVersion = ref("…");
 const checkingUpdate = ref(false);
+const updateHint = ref("");
+const updateHintKind = ref<"info" | "ok" | "err">("info");
+
+const pendingUpdateHint = computed(() => {
+  if (!hasUpdate.value || !availableVersion.value) return "";
+  return t("update.pendingHint", { version: availableVersion.value });
+});
 
 onMounted(async () => {
   appVersion.value = await getAppVersion();
 });
 
+function setUpdateHint(message: string, kind: "info" | "ok" | "err" = "info") {
+  updateHint.value = message;
+  updateHintKind.value = kind;
+}
+
 async function onCheckUpdate() {
   if (checkingUpdate.value) return;
   checkingUpdate.value = true;
+  setUpdateHint(t("settings.checkingUpdate"), "info");
   try {
-    await checkForAppUpdate("manual", (message, ms) =>
-      workspace.showNotice(message, ms),
-    );
+    const result = await checkForAppUpdate("manual", (message) => {
+      setUpdateHint(message, "info");
+      workspace.showNotice(message);
+    });
+    if (result === "available" && availableVersion.value) {
+      setUpdateHint(
+        t("update.pendingHint", { version: availableVersion.value }),
+        "ok",
+      );
+    } else if (result === "latest") {
+      setUpdateHint(t("update.latest"), "ok");
+    } else if (result === "error") {
+      updateHintKind.value = "err";
+    }
   } finally {
     checkingUpdate.value = false;
   }
@@ -370,6 +397,16 @@ function onOverlayClick(event: MouseEvent) {
                       : t("settings.checkUpdate")
                   }}
                 </button>
+                <p
+                  v-if="updateHint"
+                  class="update-hint"
+                  :class="updateHintKind"
+                >
+                  {{ updateHint }}
+                </p>
+                <p v-else-if="pendingUpdateHint" class="update-hint ok">
+                  {{ pendingUpdateHint }}
+                </p>
               </div>
             </div>
             <div class="ui-card section">
@@ -713,6 +750,21 @@ function onOverlayClick(event: MouseEvent) {
 .check-update-btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.update-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.update-hint.ok {
+  color: var(--accent);
+}
+
+.update-hint.err {
+  color: var(--danger);
 }
 
 .row-between {
