@@ -18,8 +18,8 @@ import {
   indentOnInput,
 } from "@codemirror/language";
 import { lintGutter } from "@codemirror/lint";
-import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { Compartment, EditorState } from "@codemirror/state";
+import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
+import { Compartment, EditorState, Prec } from "@codemirror/state";
 import {
   crosshairCursor,
   drawSelection,
@@ -43,6 +43,7 @@ import {
   goToDefinitionKeymap,
 } from "@/features/editor/navigation";
 import { editorThemeExtensions } from "@/features/editor/theme";
+import { createMiroFindPanel, openFindReplacePanel } from "@/features/editor/findPanel";
 import { useEditorStore } from "@/stores/editor";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -150,6 +151,7 @@ function createEditor() {
         crosshairCursor(),
         highlightActiveLine(),
         highlightSelectionMatches(),
+        search({ top: true, createPanel: createMiroFindPanel }),
         keymap.of([
           ...closeBracketsKeymap,
           ...defaultKeymap,
@@ -161,6 +163,17 @@ function createEditor() {
           goBackKeymap(navHandlers),
           indentWithTab,
         ]),
+        Prec.highest(
+          keymap.of([
+            {
+              key: "Mod-Alt-f",
+              run: (v) => {
+                openFindReplacePanel(v);
+                return true;
+              },
+            },
+          ]),
+        ),
         langComp.of(lang ? [lang] : []),
         themeComp.of(editorThemeExtensions(theme.value)),
         prefsComp.of(buildPrefs()),
@@ -253,6 +266,7 @@ defineExpose({ scrollTo });
 
 <style scoped>
 .cm-host {
+  position: relative;
   height: 100%;
   width: 100%;
   overflow: hidden;
@@ -301,5 +315,138 @@ defineExpose({ scrollTo });
 
 .cm-host :deep(.cm-completionIcon) {
   opacity: 0.7;
+}
+
+/* 文件内查找：VS Code 风格右上角悬浮 */
+.cm-host :deep(.cm-panels-top) {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 12;
+  pointer-events: none;
+}
+
+.cm-host :deep(.cm-panels-top .cm-panel) {
+  pointer-events: auto;
+}
+
+.cm-host :deep(.miro-find-panel) {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  width: min(520px, calc(100% - 28px));
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cm-host :deep(.miro-find-row),
+.cm-host :deep(.miro-find-replace-row) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cm-host :deep(.miro-find-spacer) {
+  width: 24px;
+  flex-shrink: 0;
+}
+
+.cm-host :deep(.miro-find-input) {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.cm-host :deep(.miro-find-input:focus) {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 70%, transparent);
+}
+
+.cm-host :deep(.miro-find-count) {
+  flex: 0 0 auto;
+  min-width: 52px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.cm-host :deep(.miro-find-btn) {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.cm-host :deep(.miro-find-btn:hover) {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.cm-host :deep(.miro-find-btn.active) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cm-host :deep(.miro-find-btn.toggle-replace) {
+  width: 24px;
+  font-size: 10px;
+}
+
+.cm-host :deep(.miro-find-toggle) {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.cm-host :deep(.miro-find-replace-actions) {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cm-host :deep(.miro-find-text-btn) {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.cm-host :deep(.miro-find-text-btn:hover) {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.cm-host :deep(.cm-searchMatch) {
+  background: color-mix(in srgb, var(--accent) 28%, transparent) !important;
+  border-radius: 2px;
+}
+
+.cm-host :deep(.cm-searchMatch-selected) {
+  background: color-mix(in srgb, var(--accent) 52%, transparent) !important;
+  outline: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
 }
 </style>

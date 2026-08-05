@@ -214,6 +214,17 @@ export const zhCN = {
       "将替换 {replacements} 处，涉及 {files} 个文件。确定继续？",
     previewBanner: "预览：{replacements} 处 · {files} 个文件",
   },
+  editorFind: {
+    findPlaceholder: "查找",
+    replacePlaceholder: "替换",
+    matchCount: "{current} / {total}",
+    noResults: "无结果",
+    wholeWord: "全词匹配",
+    previous: "上一处",
+    next: "下一处",
+    toggleReplace: "展开替换",
+    replaceOne: "替换",
+  },
   sessions: {
     local: "本地终端",
     remote: "SSH",

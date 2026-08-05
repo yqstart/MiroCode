@@ -218,6 +218,17 @@ export const enUS = {
       "Replace {replacements} occurrence(s) in {files} file(s). Continue?",
     previewBanner: "Preview: {replacements} · {files} file(s)",
   },
+  editorFind: {
+    findPlaceholder: "Find",
+    replacePlaceholder: "Replace",
+    matchCount: "{current} / {total}",
+    noResults: "No results",
+    wholeWord: "Whole Word",
+    previous: "Previous Match",
+    next: "Next Match",
+    toggleReplace: "Toggle Replace",
+    replaceOne: "Replace",
+  },
   sessions: {
     local: "Local Terminal",
     remote: "SSH",
