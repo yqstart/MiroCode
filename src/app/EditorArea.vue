@@ -12,6 +12,7 @@ import { basename, relativeToRoot } from "@/shared/fs";
 import { isRasterImagePath, isSvgPath } from "@/shared/media";
 import { formatShortcut } from "@/shared/platform";
 import { revealInOsExplorer } from "@/shared/revealInOs";
+import { disambiguateTabLabels, tabTooltip } from "@/shared/tabLabel";
 import { useCompareStore } from "@/stores/compare";
 import { useEditorStore } from "@/stores/editor";
 import { useGitLogStore } from "@/stores/gitLog";
@@ -144,6 +145,21 @@ const hasAnyTab = computed(
     compareTabs.value.length > 0 ||
     gitLogOpen.value,
 );
+
+const tabLabels = computed(() =>
+  disambiguateTabLabels(
+    tabs.value.map((tab) => tab.path),
+    rootPath.value,
+  ),
+);
+
+function fileTabLabel(path: string, name: string): string {
+  return tabLabels.value.get(path) ?? name;
+}
+
+function fileTabTitle(path: string): string {
+  return tabTooltip(path, rootPath.value);
+}
 
 watch(
   () => activeTab.value?.path,
@@ -423,7 +439,9 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
           @contextmenu="onTabContextMenu($event, tab.path)"
         >
           <span class="dot" :class="{ dirty: editor.isDirty(tab.path) }" />
-          <span class="name">{{ tab.name }}</span>
+          <span class="name" :class="{ disambiguated: fileTabLabel(tab.path, tab.name) !== tab.name }" :title="fileTabTitle(tab.path)">
+            {{ fileTabLabel(tab.path, tab.name) }}
+          </span>
           <span class="tab-trailing">
             <Pin v-if="tab.pinned" :size="11" class="pin-icon" />
             <span
@@ -688,7 +706,11 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   color: var(--text-muted);
   font-size: 12px;
-  max-width: 220px;
+  max-width: 240px;
+}
+
+.tab:has(.name.disambiguated) {
+  max-width: 300px;
 }
 
 .tab:hover {
