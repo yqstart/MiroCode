@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-06
+
+### 修复
+
+- **macOS 启动崩溃（严重）**：Release 包错误动态链接 Homebrew 的 `libssl` / `libcrypto`，自动更新至 0.5.0 后在未安装对应 OpenSSL 的机器上无法启动；改为 **vendored OpenSSL** 静态编入，不再依赖系统/Homebrew 库
+
 ## [0.5.0] - 2026-08-05
 
 ### 新增
@@ -119,7 +125,8 @@
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/yqstart/MiroCode/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/yqstart/MiroCode/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/yqstart/MiroCode/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/yqstart/MiroCode/compare/v0.2.0...v0.3.0

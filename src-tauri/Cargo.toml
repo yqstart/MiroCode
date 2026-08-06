@@ -1,6 +1,6 @@
 [package]
 name = "mirocode"
-version = "0.5.0"
+version = "0.5.1"
 description = "Miro Code — 轻量化桌面代码编辑器"
 authors = ["MiroCode"]
 edition = "2021"
@@ -21,12 +21,12 @@ serde_json = "1"
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-fs = { version = "2.5.1", features = ["watch"] }
 walkdir = "2.5.0"
-git2 = { version = "0.21.0", features = ["vendored-libgit2", "https", "ssh"] }
+git2 = { version = "0.21.0", features = ["vendored-libgit2", "vendored-openssl", "https", "ssh"] }
 regex = "1.13.1"
 ignore = "0.4.31"
 chrono = "0.4.45"
 tauri-plugin-pty = "0.3.1"
-ssh2 = "0.9.4"
+ssh2 = { version = "0.9.4", features = ["vendored-openssl"] }
 base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
