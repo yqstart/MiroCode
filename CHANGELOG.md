@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-06
+
+### 新增
+
+- 资源管理器：拖拽移动文件/文件夹；设置「移动时更新 import」（始终 / 询问 / 从不），可扫描并改写相对路径引用
+- 编辑器：文档符号解析，补全与跳转到定义覆盖函数/类/接口等符号
+- 欢迎页：支持单项移除与清除全部最近项目
+- 编辑区标签：同名文件自动追加父路径直至可区分（如 `components/index.vue`）
+
+### 修复
+
+- 编辑区右键「格式化文档」入口；查找面板与导航操作体验
+- 资源树格式化与快捷指令执行相关问题
+
 ## [0.5.1] - 2026-08-06
 
 ### 修复
@@ -125,7 +139,8 @@
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/yqstart/MiroCode/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/yqstart/MiroCode/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/yqstart/MiroCode/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/yqstart/MiroCode/compare/v0.3.0...v0.4.0
