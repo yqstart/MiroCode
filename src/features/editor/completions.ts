@@ -7,6 +7,7 @@ import {
   type CompletionSource,
 } from "@codemirror/autocomplete";
 import { EditorState, type Extension } from "@codemirror/state";
+import { syntaxTree } from "@codemirror/language";
 import { basename } from "@/shared/fs";
 
 const JS_KEYWORDS = [
@@ -75,61 +76,128 @@ const JS_SNIPPETS: Completion[] = [
     label: "log",
     type: "function",
     detail: "console.log",
+    boost: 2,
   }),
   snippetCompletion("console.error(${})", {
     label: "error",
     type: "function",
     detail: "console.error",
+    boost: 2,
   }),
   snippetCompletion("function ${name}(${args}) {\n  ${}\n}", {
     label: "fn",
     type: "keyword",
     detail: "function",
+    boost: 2,
   }),
   snippetCompletion("async function ${name}(${args}) {\n  ${}\n}", {
     label: "afn",
     type: "keyword",
     detail: "async function",
+    boost: 2,
   }),
   snippetCompletion("(${args}) => {\n  ${}\n}", {
     label: "af",
     type: "keyword",
     detail: "arrow function",
+    boost: 2,
   }),
   snippetCompletion("import { ${names} } from '${module}';", {
     label: "imp",
     type: "keyword",
     detail: "import named",
+    boost: 2,
   }),
   snippetCompletion("import ${name} from '${module}';", {
     label: "imd",
     type: "keyword",
     detail: "import default",
+    boost: 2,
   }),
   snippetCompletion("export default ${}", {
     label: "ed",
     type: "keyword",
     detail: "export default",
+    boost: 2,
   }),
   snippetCompletion("if (${condition}) {\n  ${}\n}", {
     label: "if",
     type: "keyword",
     detail: "if block",
+    boost: 2,
   }),
   snippetCompletion("try {\n  ${}\n} catch (${err}) {\n  \n}", {
     label: "try",
     type: "keyword",
     detail: "try/catch",
+    boost: 2,
   }),
+];
+
+const HTML_TAGS = [
+  "div",
+  "span",
+  "p",
+  "a",
+  "ul",
+  "ol",
+  "li",
+  "button",
+  "form",
+  "label",
+  "select",
+  "option",
+  "textarea",
+  "section",
+  "header",
+  "footer",
+  "nav",
+  "main",
+  "article",
+  "aside",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "td",
+  "th",
+  "template",
+  "slot",
+  "component",
+  "router-link",
+  "router-view",
+];
+
+const VOID_HTML_TAGS = ["img", "br", "hr", "meta", "link", "input"];
+
+const HTML_TAG_SNIPPETS: Completion[] = [
+  ...HTML_TAGS.map((tag) =>
+    snippetCompletion(`<${tag}>\${}</${tag}>`, {
+      label: tag,
+      type: "type",
+      detail: "HTML",
+      boost: 3,
+    }),
+  ),
+  ...VOID_HTML_TAGS.map((tag) =>
+    snippetCompletion(`<${tag} />`, {
+      label: tag,
+      type: "type",
+      detail: "HTML",
+      boost: 3,
+    }),
+  ),
 ];
 
 const CSS_PROPERTIES = [
   "display",
   "position",
-  "top",
-  "right",
-  "bottom",
-  "left",
   "width",
   "height",
   "margin",
@@ -147,7 +215,6 @@ const CSS_PROPERTIES = [
   "align-items",
   "justify-content",
   "gap",
-  "grid-template-columns",
   "overflow",
   "opacity",
   "z-index",
@@ -155,170 +222,279 @@ const CSS_PROPERTIES = [
   "transform",
   "transition",
   "cursor",
-  "object-fit",
   "text-align",
-  "white-space",
 ];
 
 const TAILWIND_CLASSES = [
   "flex",
   "grid",
   "block",
-  "inline",
   "inline-flex",
   "hidden",
   "relative",
   "absolute",
   "fixed",
-  "sticky",
   "items-center",
-  "items-start",
-  "items-end",
   "justify-center",
   "justify-between",
-  "justify-start",
-  "justify-end",
-  "gap-1",
   "gap-2",
-  "gap-3",
   "gap-4",
   "p-2",
-  "p-3",
   "p-4",
-  "px-3",
   "px-4",
-  "py-1",
   "py-2",
   "m-0",
-  "m-2",
-  "mt-2",
-  "mt-4",
-  "mb-2",
-  "mb-4",
-  "ml-auto",
-  "mr-auto",
   "w-full",
   "h-full",
   "min-h-0",
-  "min-w-0",
-  "max-w-full",
-  "text-xs",
   "text-sm",
   "text-base",
-  "text-lg",
-  "font-normal",
   "font-medium",
   "font-semibold",
-  "font-bold",
   "rounded",
   "rounded-md",
   "rounded-lg",
-  "rounded-full",
   "border",
-  "border-t",
-  "shadow",
-  "shadow-sm",
-  "shadow-md",
-  "bg-white",
-  "bg-black",
-  "bg-transparent",
-  "text-white",
-  "text-black",
   "truncate",
   "overflow-hidden",
   "overflow-auto",
-  "select-none",
-  "pointer-events-none",
-  "dark:bg-gray-900",
-  "hover:opacity-80",
-  "hover:bg-black/5",
-  "transition",
-  "transition-colors",
-  "duration-150",
   "cursor-pointer",
 ];
 
-function keywordSource(context: CompletionContext) {
-  const word = context.matchBefore(/\w*/);
-  if (!word || (word.from === word.to && !context.explicit)) return null;
-  return {
-    from: word.from,
-    options: [
-      ...JS_KEYWORDS.map((label) => ({ label, type: "keyword" as const })),
-      ...JS_SNIPPETS,
-    ],
-    validFor: /^\w*$/,
-  };
+function isInCommentOrString(context: CompletionContext): boolean {
+  const tree = syntaxTree(context.state);
+  let node = tree.resolveInner(context.pos, -1);
+  for (let i = 0; i < 4 && node; i += 1) {
+    const name = node.name;
+    if (
+      name.includes("Comment") ||
+      name.includes("comment") ||
+      name === "String" ||
+      name === "String2" ||
+      name === "TemplateString"
+    ) {
+      return true;
+    }
+    const parent = node.parent;
+    if (!parent) break;
+    node = parent;
+  }
+  return false;
 }
 
-function cssSource(context: CompletionContext) {
-  const word = context.matchBefore(/[\w-]*/);
-  if (!word || (word.from === word.to && !context.explicit)) return null;
-  return {
-    from: word.from,
-    options: CSS_PROPERTIES.map((label) => ({
-      label,
-      type: "property" as const,
-      detail: "CSS",
-    })),
-    validFor: /^[\w-]*$/,
-  };
+function isVueTemplateContext(doc: string, pos: number): boolean {
+  const before = doc.slice(0, pos);
+  const openTemplate = before.lastIndexOf("<template");
+  const closeTemplate = before.lastIndexOf("</template>");
+  if (openTemplate >= 0 && openTemplate > closeTemplate) return true;
+  const openScript = before.lastIndexOf("<script");
+  const closeScript = before.lastIndexOf("</script>");
+  if (openScript >= 0 && openScript > closeScript) return false;
+  const openStyle = before.lastIndexOf("<style");
+  const closeStyle = before.lastIndexOf("</style>");
+  if (openStyle >= 0 && openStyle > closeStyle) return false;
+  return openTemplate >= 0;
 }
 
-function tailwindSource(context: CompletionContext) {
-  const word = context.matchBefore(/[\w:-]*/);
-  if (!word || (word.from === word.to && !context.explicit)) return null;
-  return {
-    from: word.from,
-    options: TAILWIND_CLASSES.map((label) => ({
-      label,
-      type: "constant" as const,
-      detail: "Tailwind",
-    })),
-    validFor: /^[\w:-]*$/,
-  };
-}
-
-function sourcesForPath(filePath: string): CompletionSource[] {
+function isMarkupContext(context: CompletionContext, filePath: string): boolean {
   const name = basename(filePath).toLowerCase();
-  const isCode =
+  if (name.endsWith(".html") || name.endsWith(".htm")) return true;
+  if (name.endsWith(".vue")) {
+    return isVueTemplateContext(context.state.doc.toString(), context.pos);
+  }
+  return false;
+}
+
+function isScriptContext(context: CompletionContext, filePath: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  if (
     name.endsWith(".ts") ||
     name.endsWith(".tsx") ||
     name.endsWith(".js") ||
     name.endsWith(".jsx") ||
-    name.endsWith(".vue") ||
     name.endsWith(".mjs") ||
-    name.endsWith(".cjs");
-  const isMarkup =
-    name.endsWith(".html") ||
-    name.endsWith(".vue") ||
-    name.endsWith(".jsx") ||
-    name.endsWith(".tsx");
-  const isCss =
+    name.endsWith(".cjs")
+  ) {
+    return true;
+  }
+  if (name.endsWith(".vue")) {
+    const before = context.state.doc.sliceString(0, context.pos);
+    const openScript = before.lastIndexOf("<script");
+    const closeScript = before.lastIndexOf("</script>");
+    return openScript >= 0 && openScript > closeScript;
+  }
+  return false;
+}
+
+function isCssContext(context: CompletionContext, filePath: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  if (
     name.endsWith(".css") ||
     name.endsWith(".scss") ||
     name.endsWith(".sass") ||
-    name.endsWith(".less");
+    name.endsWith(".less")
+  ) {
+    return true;
+  }
+  if (name.endsWith(".vue")) {
+    const before = context.state.doc.sliceString(0, context.pos);
+    const openStyle = before.lastIndexOf("<style");
+    const closeStyle = before.lastIndexOf("</style>");
+    return openStyle >= 0 && openStyle > closeStyle;
+  }
+  return false;
+}
 
-  const sources: CompletionSource[] = [completeAnyWord];
-  if (isCode) sources.push(keywordSource);
-  if (isCss) sources.push(cssSource);
-  if (isMarkup) sources.push(tailwindSource);
+function keywordSource(context: CompletionContext): ReturnType<CompletionSource> {
+  if (isInCommentOrString(context)) return null;
+  const word = context.matchBefore(/\w*/);
+  if (!word || word.text.length < 1) return null;
+  if (word.from === word.to && !context.explicit) return null;
+
+  const typed = word.text.toLowerCase();
+  const keywords = JS_KEYWORDS.filter((k) => k.startsWith(typed)).map((label) => ({
+    label,
+    type: "keyword" as const,
+    boost: 1,
+  }));
+  const snippets = JS_SNIPPETS.filter((s) =>
+    s.label.toLowerCase().startsWith(typed),
+  );
+
+  const options = [...snippets, ...keywords].slice(0, 24);
+  if (!options.length) return null;
+
+  return {
+    from: word.from,
+    options,
+    validFor: /^\w*$/,
+  };
+}
+
+function htmlTagSource(context: CompletionContext): ReturnType<CompletionSource> {
+  const word = context.matchBefore(/[\w-]*/);
+  if (!word || word.text.length < 1) return null;
+  if (word.from === word.to && !context.explicit) return null;
+
+  const typed = word.text.toLowerCase();
+  const options = HTML_TAG_SNIPPETS.filter((s) =>
+    s.label.toLowerCase().startsWith(typed),
+  ).slice(0, 20);
+  if (!options.length) return null;
+
+  return {
+    from: word.from,
+    options,
+    validFor: /^[\w-]*$/,
+  };
+}
+
+function cssSource(context: CompletionContext): ReturnType<CompletionSource> {
+  if (isInCommentOrString(context)) return null;
+  const word = context.matchBefore(/[\w-]*/);
+  if (!word || word.text.length < 2) return null;
+  if (word.from === word.to && !context.explicit) return null;
+
+  const typed = word.text.toLowerCase();
+  const options = CSS_PROPERTIES.filter((p) => p.startsWith(typed))
+    .slice(0, 16)
+    .map((label) => ({
+      label,
+      type: "property" as const,
+      detail: "CSS",
+    }));
+  if (!options.length) return null;
+
+  return {
+    from: word.from,
+    options,
+    validFor: /^[\w-]*$/,
+  };
+}
+
+function tailwindSource(
+  context: CompletionContext,
+  filePath: string,
+): ReturnType<CompletionSource> {
+  const word = context.matchBefore(/[\w:-]*/);
+  if (!word || word.text.length < 2) return null;
+  if (word.from === word.to && !context.explicit) return null;
+
+  const before = context.state.doc.sliceString(Math.max(0, word.from - 80), word.from);
+  const inClassAttr = /class\s*=\s*["'][^"']*$/.test(before);
+  if (!inClassAttr && !isCssContext(context, filePath)) {
+    return null;
+  }
+
+  const typed = word.text.toLowerCase();
+  const options = TAILWIND_CLASSES.filter((c) => c.startsWith(typed))
+    .slice(0, 16)
+    .map((label) => ({
+      label,
+      type: "constant" as const,
+      detail: "Tailwind",
+    }));
+  if (!options.length) return null;
+
+  return {
+    from: word.from,
+    options,
+    validFor: /^[\w:-]*$/,
+  };
+}
+
+/** 仅 Ctrl+Space 时补全文档词，避免噪声 */
+function documentWordSource(context: CompletionContext): ReturnType<CompletionSource> {
+  if (!context.explicit) return null;
+  return completeAnyWord(context);
+}
+
+function sourcesForPath(filePath: string): CompletionSource[] {
+  const sources: CompletionSource[] = [];
+
+  sources.push((context) => {
+    if (isScriptContext(context, filePath)) {
+      return keywordSource(context);
+    }
+    return null;
+  });
+
+  sources.push((context) => {
+    if (isMarkupContext(context, filePath)) {
+      return htmlTagSource(context);
+    }
+    return null;
+  });
+
+  sources.push((context) => {
+    if (isCssContext(context, filePath)) {
+      return cssSource(context);
+    }
+    return null;
+  });
+
+  sources.push((context) => {
+    if (isMarkupContext(context, filePath) || isCssContext(context, filePath)) {
+      return tailwindSource(context, filePath);
+    }
+    return null;
+  });
+
+  sources.push(documentWordSource);
   return sources;
 }
 
-/** 本地语法 / 片段 / 文档词补全（无 AI、无网络） */
+/** 本地语法 / 片段补全（无 AI、无网络） */
 export function createCompletionExtension(filePath: string): Extension {
   const sources = sourcesForPath(filePath);
   return [
     autocompletion({
       activateOnTyping: true,
-      maxRenderedOptions: 32,
+      maxRenderedOptions: 18,
       icons: true,
       closeOnBlur: true,
       defaultKeymap: true,
     }),
-    // 叠加到语言自带补全上，而不是 override 替换
     EditorState.languageData.of(() =>
       sources.map((autocomplete) => ({ autocomplete })),
     ),

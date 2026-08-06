@@ -1,8 +1,6 @@
 import {
   SearchQuery,
   closeSearchPanel,
-  findNext,
-  findPrevious,
   getSearchQuery,
   openSearchPanel,
   replaceAll,
@@ -10,6 +8,7 @@ import {
   setSearchQuery,
 } from "@codemirror/search";
 import type { EditorView, Panel, ViewUpdate } from "@codemirror/view";
+import { EditorView as EV } from "@codemirror/view";
 import { runScopeHandlers } from "@codemirror/view";
 import { t } from "@/i18n";
 
@@ -35,7 +34,7 @@ function createEl<K extends keyof HTMLElementTagNameMap>(
 function bindButton(
   label: string,
   className: string,
-  onClick: () => void,
+  onClick: (e: MouseEvent) => void,
   text?: string,
 ) {
   const btn = createEl(
@@ -50,7 +49,8 @@ function bindButton(
   );
   btn.addEventListener("click", (e) => {
     e.preventDefault();
-    onClick();
+    e.stopPropagation();
+    onClick(e);
   });
   return btn;
 }
@@ -79,6 +79,66 @@ function getMatchStats(view: EditorView, query: SearchQuery) {
   return { current, total: ranges.length };
 }
 
+function revealMatch(view: EditorView, from: number, to: number) {
+  view.dispatch({
+    selection: { anchor: from, head: to },
+    effects: EV.scrollIntoView(from, { y: "center", yMargin: 72 }),
+  });
+}
+
+function findNextCentered(view: EditorView): boolean {
+  const query = getSearchQuery(view.state);
+  if (!query.valid || !query.search.trim()) return false;
+
+  const start = view.state.selection.main.to;
+  let cursor = query.getCursor(view.state, start);
+  let next = cursor.next();
+  if (next.done) {
+    cursor = query.getCursor(view.state, 0);
+    next = cursor.next();
+  }
+  if (next.done) return false;
+  revealMatch(view, next.value.from, next.value.to);
+  return true;
+}
+
+function findPreviousCentered(view: EditorView): boolean {
+  const query = getSearchQuery(view.state);
+  if (!query.valid || !query.search.trim()) return false;
+
+  const ranges: { from: number; to: number }[] = [];
+  const cursor = query.getCursor(view.state, 0);
+  for (;;) {
+    const n = cursor.next();
+    if (n.done) break;
+    ranges.push(n.value);
+    if (ranges.length >= 10000) break;
+  }
+  if (!ranges.length) return false;
+
+  const anchor = view.state.selection.main.from;
+  let pick = ranges[ranges.length - 1];
+  for (const r of ranges) {
+    if (r.from < anchor) pick = r;
+    else break;
+  }
+  revealMatch(view, pick.from, pick.to);
+  return true;
+}
+
+function revealFirstFromCursor(view: EditorView, query: SearchQuery) {
+  if (!query.valid || !query.search.trim()) return;
+  const start = view.state.selection.main.from;
+  const cursor = query.getCursor(view.state, start);
+  let next = cursor.next();
+  if (next.done) {
+    const fromStart = query.getCursor(view.state, 0);
+    next = fromStart.next();
+  }
+  if (next.done) return;
+  revealMatch(view, next.value.from, next.value.to);
+}
+
 class MiroFindPanel implements Panel {
   dom: HTMLElement;
   private view: EditorView;
@@ -92,6 +152,7 @@ class MiroFindPanel implements Panel {
   private regexBtn: HTMLButtonElement;
   private wordBtn: HTMLButtonElement;
   private showReplace = false;
+  private inputTimer: number | undefined;
 
   constructor(view: EditorView) {
     this.view = view;
@@ -131,8 +192,24 @@ class MiroFindPanel implements Panel {
       "▸",
     ) as HTMLButtonElement;
 
-    const prevBtn = bindButton(t("editorFind.previous"), "prev", () => findPrevious(view), "↑");
-    const nextBtn = bindButton(t("editorFind.next"), "next", () => findNext(view), "↓");
+    const prevBtn = bindButton(
+      t("editorFind.previous"),
+      "prev",
+      () => {
+        findPreviousCentered(view);
+        this.refreshMatchCount();
+      },
+      "↑",
+    );
+    const nextBtn = bindButton(
+      t("editorFind.next"),
+      "next",
+      () => {
+        findNextCentered(view);
+        this.refreshMatchCount();
+      },
+      "↓",
+    );
 
     this.caseBtn = this.makeToggle(
       t("search.caseSensitive"),
@@ -148,7 +225,12 @@ class MiroFindPanel implements Panel {
       "Ab",
     );
 
-    const closeBtn = bindButton(t("common.close"), "close", () => closeSearchPanel(view), "×");
+    const closeBtn = bindButton(
+      t("common.close"),
+      "close",
+      () => closeSearchPanel(view),
+      "×",
+    );
 
     const findRow = createEl("div", { class: "miro-find-row" }, [
       this.toggleReplaceBtn,
@@ -170,6 +252,7 @@ class MiroFindPanel implements Panel {
     replaceOneBtn.addEventListener("click", (e) => {
       e.preventDefault();
       replaceNext(view);
+      this.refreshMatchCount();
     });
 
     const replaceAllBtn = createEl(
@@ -180,9 +263,10 @@ class MiroFindPanel implements Panel {
     replaceAllBtn.addEventListener("click", (e) => {
       e.preventDefault();
       replaceAll(view);
+      this.refreshMatchCount();
     });
 
-    this.replaceRow = createEl("div", { class: "miro-find-replace-row", hidden: "" }, [
+    this.replaceRow = createEl("div", { class: "miro-find-replace-row is-collapsed" }, [
       createEl("span", { class: "miro-find-spacer" }),
       this.replaceField,
       createEl("div", { class: "miro-find-replace-actions" }, [replaceOneBtn, replaceAllBtn]),
@@ -194,15 +278,15 @@ class MiroFindPanel implements Panel {
     ]);
 
     this.dom.addEventListener("keydown", (e) => this.keydown(e));
-    for (const input of [this.searchField, this.replaceField]) {
-      input.addEventListener("input", () => this.commit());
-      input.addEventListener("change", () => this.commit());
-    }
+    this.searchField.addEventListener("input", () => this.scheduleCommit(true));
+    this.searchField.addEventListener("change", () => this.commit(true));
+    this.replaceField.addEventListener("input", () => this.commit(false));
+    this.replaceField.addEventListener("change", () => this.commit(false));
 
     this.refreshMatchCount();
     if (view.state.readOnly) {
       this.toggleReplaceBtn.hidden = true;
-      this.replaceRow.hidden = true;
+      this.replaceRow.classList.add("is-collapsed");
     }
     panelByView.set(view, this);
   }
@@ -226,10 +310,11 @@ class MiroFindPanel implements Panel {
     ) as HTMLButtonElement;
     btn.addEventListener("click", (e) => {
       e.preventDefault();
+      e.stopPropagation();
       const next = btn.getAttribute("aria-pressed") !== "true";
       btn.setAttribute("aria-pressed", next ? "true" : "false");
       btn.classList.toggle("active", next);
-      this.commit();
+      this.commit(true);
     });
     if (pressed) btn.classList.add("active");
     return btn;
@@ -237,9 +322,13 @@ class MiroFindPanel implements Panel {
 
   setReplaceVisible(show: boolean) {
     this.showReplace = show;
-    this.replaceRow.hidden = !show;
+    this.replaceRow.classList.toggle("is-collapsed", !show);
     this.toggleReplaceBtn.classList.toggle("expanded", show);
     this.toggleReplaceBtn.textContent = show ? "▾" : "▸";
+    this.toggleReplaceBtn.setAttribute(
+      "aria-expanded",
+      show ? "true" : "false",
+    );
   }
 
   toggleReplace(show?: boolean) {
@@ -248,10 +337,15 @@ class MiroFindPanel implements Panel {
 
   focusReplace() {
     this.setReplaceVisible(true);
-    this.replaceField.focus();
+    window.setTimeout(() => this.replaceField.focus(), 0);
   }
 
-  private commit() {
+  private scheduleCommit(reveal: boolean) {
+    window.clearTimeout(this.inputTimer);
+    this.inputTimer = window.setTimeout(() => this.commit(reveal), 120);
+  }
+
+  private commit(reveal: boolean) {
     const query = new SearchQuery({
       search: this.searchField.value,
       caseSensitive: this.caseBtn.getAttribute("aria-pressed") === "true",
@@ -264,9 +358,14 @@ class MiroFindPanel implements Panel {
       this.view.dispatch({ effects: setSearchQuery.of(query) });
     }
     this.refreshMatchCount();
+    if (reveal) {
+      revealFirstFromCursor(this.view, this.query);
+      this.refreshMatchCount();
+    }
   }
 
   private refreshMatchCount() {
+    this.query = getSearchQuery(this.view.state);
     const { current, total } = getMatchStats(this.view, this.query);
     if (!this.query.search.trim()) {
       this.matchCountEl.textContent = "—";
@@ -286,7 +385,7 @@ class MiroFindPanel implements Panel {
     }
     if (e.key === "Enter" && e.target === this.searchField) {
       e.preventDefault();
-      (e.shiftKey ? findPrevious : findNext)(this.view);
+      (e.shiftKey ? findPreviousCentered : findNextCentered)(this.view);
       this.refreshMatchCount();
       return;
     }
@@ -328,9 +427,14 @@ class MiroFindPanel implements Panel {
   mount() {
     this.searchField.focus();
     this.searchField.select();
+    if (this.query.search.trim()) {
+      revealFirstFromCursor(this.view, this.query);
+      this.refreshMatchCount();
+    }
   }
 
   destroy() {
+    window.clearTimeout(this.inputTimer);
     panelByView.delete(this.view);
   }
 
@@ -347,8 +451,16 @@ export function createMiroFindPanel(view: EditorView): Panel {
   return new MiroFindPanel(view);
 }
 
-/** ⌘⌥F / Ctrl+Alt+F：打开并展开替换行 */
+/** ⌘F / Ctrl+F：打开查找（默认隐藏替换） */
+export function openFindPanel(view: EditorView) {
+  openSearchPanel(view);
+  panelByView.get(view)?.setReplaceVisible(false);
+}
+
+/** ⌘R / Ctrl+R 或 ⌘⌥F：打开并展开替换行 */
 export function openFindReplacePanel(view: EditorView) {
   openSearchPanel(view);
   panelByView.get(view)?.focusReplace();
 }
+
+export { findNextCentered, findPreviousCentered };

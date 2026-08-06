@@ -43,7 +43,7 @@ import {
   goToDefinitionKeymap,
 } from "@/features/editor/navigation";
 import { editorThemeExtensions } from "@/features/editor/theme";
-import { createMiroFindPanel, openFindReplacePanel } from "@/features/editor/findPanel";
+import { createMiroFindPanel, openFindPanel, openFindReplacePanel } from "@/features/editor/findPanel";
 import { useEditorStore } from "@/stores/editor";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -159,12 +159,26 @@ function createEditor() {
           ...historyKeymap,
           ...foldKeymap,
           ...completionKeymap,
-          goToDefinitionKeymap(navHandlers),
+          ...goToDefinitionKeymap(navHandlers),
           goBackKeymap(navHandlers),
           indentWithTab,
         ]),
         Prec.highest(
           keymap.of([
+            {
+              key: "Mod-f",
+              run: (v) => {
+                openFindPanel(v);
+                return true;
+              },
+            },
+            {
+              key: "Mod-r",
+              run: (v) => {
+                openFindReplacePanel(v);
+                return true;
+              },
+            },
             {
               key: "Mod-Alt-f",
               run: (v) => {
@@ -345,6 +359,10 @@ defineExpose({ scrollTo });
 }
 
 .cm-host :deep(.miro-find-row),
+.cm-host :deep(.miro-find-replace-row.is-collapsed) {
+  display: none;
+}
+
 .cm-host :deep(.miro-find-replace-row) {
   display: flex;
   align-items: center;
