@@ -144,6 +144,14 @@ export const useEditorStore = defineStore("editor", () => {
     tab.content = content;
   }
 
+  /** 磁盘内容已更新（如 import 批量替换），同步缓冲区且保持干净状态 */
+  function syncFromDisk(path: string, content: string) {
+    const tab = tabs.value.find((t) => t.path === path);
+    if (!tab) return;
+    tab.content = content;
+    tab.original = content;
+  }
+
   /** 外部磁盘变更：干净标签自动重载；脏标签询问是否覆盖 */
   async function syncExternalChanges(changedPaths: string[]) {
     const workspace = useWorkspaceStore();
@@ -497,6 +505,21 @@ export const useEditorStore = defineStore("editor", () => {
     if (activePath.value === from) activePath.value = to;
   }
 
+  /** 文件夹移动后批量更新其下已打开标签路径 */
+  function renameTabsUnderPrefix(fromPrefix: string, toPrefix: string) {
+    const normFrom = fromPrefix.replace(/\\/g, "/").replace(/\/+$/, "");
+    const normTo = toPrefix.replace(/\\/g, "/").replace(/\/+$/, "");
+    for (const tab of [...tabs.value]) {
+      const normPath = tab.path.replace(/\\/g, "/");
+      if (normPath === normFrom) {
+        renameTabPath(tab.path, toPrefix);
+      } else if (normPath.startsWith(`${normFrom}/`)) {
+        const suffix = normPath.slice(normFrom.length);
+        renameTabPath(tab.path, `${normTo}${suffix}`);
+      }
+    }
+  }
+
   function closeTabsUnder(prefix: string) {
     const victims = tabs.value.filter(
       (t) =>
@@ -545,6 +568,7 @@ export const useEditorStore = defineStore("editor", () => {
     openFile,
     openFileAt,
     setContent,
+    syncFromDisk,
     syncExternalChanges,
     reloadAfterDiscard,
     setCursor,
@@ -559,6 +583,7 @@ export const useEditorStore = defineStore("editor", () => {
     closeTabsToTheRight,
     closeAllTabs,
     renameTabPath,
+    renameTabsUnderPrefix,
     closeTabsUnder,
     confirmDiscardForWorkspaceSwitch,
     clearForWorkspaceSwitch,

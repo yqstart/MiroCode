@@ -14,6 +14,7 @@ import SettingsModal from "@/features/settings/SettingsModal.vue";
 import ChoiceDialog from "@/shared/ChoiceDialog.vue";
 import GitAuthDialog from "@/shared/GitAuthDialog.vue";
 import PromptDialog from "@/shared/PromptDialog.vue";
+import MoveReferencesDialog from "@/shared/MoveReferencesDialog.vue";
 import UpdateProgressDialog from "@/shared/UpdateProgressDialog.vue";
 import PushDialog from "@/features/git/PushDialog.vue";
 import UpdateProjectDialog from "@/features/git/UpdateProjectDialog.vue";
@@ -228,6 +229,7 @@ onUnmounted(() => {
     <QuickOpen />
     <FindInFilesDialog />
     <PromptDialog />
+    <MoveReferencesDialog />
     <ChoiceDialog />
     <UpdateProgressDialog />
     <GitAuthDialog />

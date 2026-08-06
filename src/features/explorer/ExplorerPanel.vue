@@ -16,8 +16,14 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { storeToRefs } from "pinia";
 import { writeClipboard } from "@/shared/clipboard";
 import FileTypeIcon from "@/shared/FileTypeIcon.vue";
-import { basename, dirname, relativeToRoot } from "@/shared/fs";
+import { basename, dirname, normalizeAbsPath, relativeToRoot } from "@/shared/fs";
 import { isRasterImagePath } from "@/shared/media";
+import {
+  applyImportPatches,
+  scanImportReferences,
+  validateMoveTarget,
+} from "@/shared/importReferences";
+import { showMoveReferencesDialog } from "@/shared/moveReferencesDialog";
 import { openFolderInNewWindow } from "@/shared/openWorkspace";
 import { formatShortcut } from "@/shared/platform";
 import { revealInOsExplorer } from "@/shared/revealInOs";
@@ -25,7 +31,7 @@ import { useI18n } from "@/i18n";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useWorkspaceStore, type MovePathResult } from "@/stores/workspace";
 
 const { t } = useI18n();
 const workspace = useWorkspaceStore();
@@ -43,6 +49,7 @@ const {
   revealToken,
   revealTarget,
   refreshing,
+  extraIgnores,
 } = storeToRefs(workspace);
 const { activePath } = storeToRefs(editor);
 
@@ -77,6 +84,137 @@ const canFormatMenuTarget = computed(() => {
 const formatMenuDisabled = computed(
   () => !settings.editor.prettierEnabled,
 );
+
+const DND_MIME = "application/x-miro-explorer-path";
+const dragSource = ref<{ path: string; isDir: boolean } | null>(null);
+const dropHoverPath = ref<string | null>(null);
+const dropValid = ref(false);
+const moving = ref(false);
+
+function resolveDropParent(targetPath: string, targetIsDir: boolean): string {
+  return targetIsDir ? targetPath : dirname(targetPath);
+}
+
+function canDropOn(
+  source: { path: string; isDir: boolean },
+  targetPath: string,
+  targetIsDir: boolean,
+): boolean {
+  if (!rootPath.value) return false;
+  const toParent = resolveDropParent(targetPath, targetIsDir);
+  if (normalizeAbsPath(dirname(source.path)) === normalizeAbsPath(toParent)) {
+    return false;
+  }
+  return (
+    validateMoveTarget(source.path, toParent, rootPath.value, source.isDir) ===
+    null
+  );
+}
+
+function onDragStart(event: DragEvent, path: string, isDir: boolean) {
+  if (!rootPath.value) return;
+  dragSource.value = { path, isDir };
+  event.dataTransfer?.setData(DND_MIME, JSON.stringify({ path, isDir }));
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+}
+
+function onDragEnd() {
+  dragSource.value = null;
+  dropHoverPath.value = null;
+  dropValid.value = false;
+}
+
+function onDragOver(event: DragEvent, path: string, isDir: boolean) {
+  if (!dragSource.value || moving.value) return;
+  event.preventDefault();
+  const valid = canDropOn(dragSource.value, path, isDir);
+  dropHoverPath.value = path;
+  dropValid.value = valid;
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = valid ? "move" : "none";
+  }
+}
+
+function onDragLeaveRow(path: string) {
+  if (dropHoverPath.value === path) {
+    dropHoverPath.value = null;
+    dropValid.value = false;
+  }
+}
+
+async function afterMove(result: MovePathResult) {
+  if (result.isDir) {
+    editor.renameTabsUnderPrefix(result.from, result.to);
+  } else {
+    editor.renameTabPath(result.from, result.to);
+  }
+  void git.refresh();
+
+  const mode = settings.editor.updateImportsOnMove;
+  if (mode === "never" || !rootPath.value) return;
+
+  const patches = await scanImportReferences(
+    rootPath.value,
+    result.from,
+    result.to,
+    result.isDir,
+    extraIgnores.value,
+  );
+  if (!patches.length) return;
+
+  let toApply = patches;
+  if (mode === "prompt") {
+    const picked = await showMoveReferencesDialog({
+      title: t("moveReferences.title"),
+      hint: t("moveReferences.hint"),
+      confirmText: t("moveReferences.confirm"),
+      cancelText: t("moveReferences.cancel"),
+      patches,
+    });
+    if (!picked?.length) return;
+    toApply = picked;
+  }
+
+  const count = await applyImportPatches(
+    rootPath.value,
+    toApply,
+    (path, content) => editor.syncFromDisk(path, content),
+    (path) => workspace.markSelfWrite(path),
+  );
+  if (count > 0) {
+    workspace.showNotice(t("moveReferences.applied", { count }));
+    void git.refresh();
+  }
+}
+
+async function onDrop(event: DragEvent, path: string, isDir: boolean) {
+  event.preventDefault();
+  event.stopPropagation();
+  dropHoverPath.value = null;
+  dropValid.value = false;
+
+  let source = dragSource.value;
+  if (!source) {
+    try {
+      const raw = event.dataTransfer?.getData(DND_MIME);
+      if (raw) source = JSON.parse(raw) as { path: string; isDir: boolean };
+    } catch {
+      // ignore
+    }
+  }
+  dragSource.value = null;
+  if (!source || moving.value) return;
+  if (!canDropOn(source, path, isDir)) return;
+
+  const toParent = resolveDropParent(path, isDir);
+  moving.value = true;
+  try {
+    const result = await workspace.movePath(source.path, toParent, source.isDir);
+    if (result) await afterMove(result);
+  } finally {
+    moving.value = false;
+  }
+}
 
 /** 工具栏新建：优先落在选中目录，否则落在选中文件的父目录 / 根目录 */
 function resolveCreateParent(): string | null {
@@ -529,6 +667,7 @@ defineExpose({ locateActiveFile });
       <template v-else>
         <div
           class="tree"
+          :title="t('explorer.dragMoveHint')"
           @contextmenu="onContext($event, rootPath, true)"
         >
           <button
@@ -536,14 +675,25 @@ defineExpose({ locateActiveFile });
             :key="node.path"
             type="button"
             class="row"
+            draggable="true"
             :class="{
               active: selectedPath === node.path,
               dirty: dirtySet.has(node.path),
+              dragging: dragSource?.path === node.path,
+              'drop-into': dropHoverPath === node.path && dropValid && node.isDir,
+              'drop-sibling':
+                dropHoverPath === node.path && dropValid && !node.isDir,
+              'drop-invalid': dropHoverPath === node.path && !dropValid,
             }"
             :data-tree-path="node.path"
             :style="{ paddingLeft: `${10 + node.depth * 14}px` }"
             @click="onRowClick(node.path, node.isDir)"
             @contextmenu="onContext($event, node.path, node.isDir)"
+            @dragstart="onDragStart($event, node.path, node.isDir)"
+            @dragend="onDragEnd"
+            @dragover="onDragOver($event, node.path, node.isDir)"
+            @dragleave="onDragLeaveRow(node.path)"
+            @drop="onDrop($event, node.path, node.isDir)"
           >
             <span class="twist">
               <template v-if="node.isDir">
@@ -1033,6 +1183,24 @@ defineExpose({ locateActiveFile });
 
 .row:hover {
   background: var(--accent-soft);
+}
+
+.row.dragging {
+  opacity: 0.45;
+}
+
+.row.drop-into {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.row.drop-sibling {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.row.drop-invalid {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger, #e5484d) 55%, transparent);
 }
 
 .row.active {

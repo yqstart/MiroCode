@@ -78,7 +78,7 @@ export function dirname(path: string): string {
   return path.slice(0, idx);
 }
 
-  /** 相对工作区根的路径；根自身返回 `.` */
+/** 相对工作区根的路径；根自身返回 `.` */
 export function relativeToRoot(root: string, absPath: string): string {
   const normRoot = root.replace(/[/\\]+$/, "");
   if (absPath === normRoot) return ".";
@@ -93,6 +93,37 @@ export function relativeToRoot(root: string, absPath: string): string {
 export function toAbsolutePath(root: string, path: string): string {
   if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return path;
   return joinPath(root, path);
+}
+
+/** 计算 from 目录到 to 路径的相对 import 路径（使用 `/` 分隔） */
+export function relativePath(fromDir: string, toAbs: string): string {
+  const split = (p: string) =>
+    p.replace(/\\/g, "/").replace(/\/+$/, "").split("/").filter(Boolean);
+  const fromParts = split(fromDir);
+  const toParts = split(toAbs);
+  let i = 0;
+  while (
+    i < fromParts.length &&
+    i < toParts.length &&
+    fromParts[i].toLowerCase() === toParts[i].toLowerCase()
+  ) {
+    i += 1;
+  }
+  const ups = fromParts.length - i;
+  const down = toParts.slice(i);
+  const parts = [...Array(Math.max(0, ups)).fill(".."), ...down];
+  return parts.length ? parts.join("/") : ".";
+}
+
+export function normalizeAbsPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+/** to 是否在 prefix 目录下（含自身） */
+export function isPathUnder(prefix: string, target: string): boolean {
+  const p = normalizeAbsPath(prefix);
+  const t = normalizeAbsPath(target);
+  return t === p || t.startsWith(`${p}/`);
 }
 
 export function languageFromPath(path: string): string {

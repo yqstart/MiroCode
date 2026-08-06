@@ -335,6 +335,19 @@ function onOverlayClick(event: MouseEvent) {
                   @click="settings.patchEditor({ prettierEnabled: !editor.prettierEnabled })"
                 />
               </div>
+              <label class="field delay-field">
+                <span class="field-label">{{ t("settings.updateImportsOnMove") }}</span>
+                <p class="desc">{{ t("settings.updateImportsOnMoveDesc") }}</p>
+                <select
+                  class="ui-select"
+                  :value="editor.updateImportsOnMove"
+                  @change="settings.patchEditor({ updateImportsOnMove: ($event.target as HTMLSelectElement).value as 'always' | 'prompt' | 'never' })"
+                >
+                  <option value="prompt">{{ t("settings.updateImportsOnMovePrompt") }}</option>
+                  <option value="always">{{ t("settings.updateImportsOnMoveAlways") }}</option>
+                  <option value="never">{{ t("settings.updateImportsOnMoveNever") }}</option>
+                </select>
+              </label>
             </div>
 
             <div class="ui-card section">

@@ -101,6 +101,12 @@ export const zhCN = {
     eslintDesc: "对 JS/TS/Vue 等显示工作区 ESLint 诊断。需项目已安装 eslint。",
     prettierEnabled: "Prettier",
     prettierDesc: "启用 Prettier；保存时格式化依赖此项。需项目已安装 prettier。",
+    updateImportsOnMove: "移动时更新 import",
+    updateImportsOnMoveDesc:
+      "拖拽或移动文件/文件夹后，扫描并更新项目内相对路径 import（不含 npm 包名与 @ 别名）。",
+    updateImportsOnMovePrompt: "每次询问",
+    updateImportsOnMoveAlways: "自动更新",
+    updateImportsOnMoveNever: "不更新",
     delay: "延迟",
     delay05: "0.5 秒",
     delay1: "1 秒",
@@ -185,6 +191,9 @@ export const zhCN = {
     cannotCutRoot: "不能剪切工作区根目录",
     copiedAbsPath: "已复制绝对路径",
     copiedRelPath: "已复制相对路径",
+    dragMoveHint: "拖到文件夹上可移动",
+    dropIntoFolder: "移入此文件夹",
+    dropInvalid: "无法移入此位置",
   },
   search: {
     quickOpenTitle: "快速打开",
@@ -601,6 +610,17 @@ export const zhCN = {
   dialog: {
     ok: "确定",
     cancel: "取消",
+  },
+  moveReferences: {
+    title: "更新 import 引用",
+    hint: "以下相对路径 import 将随文件移动而更新。不含 npm 包名、@ 别名或动态路径。",
+    confirm: "应用所选",
+    cancel: "跳过",
+    selectAll: "全选",
+    deselectAll: "取消全选",
+    count: "已选 {count} 处",
+    line: "第 {line} 行",
+    applied: "已更新 {count} 处 import 引用",
   },
   notice: {
     noActiveFile: "当前没有打开的文件",

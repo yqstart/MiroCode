@@ -105,6 +105,12 @@ export const enUS = {
     prettierEnabled: "Prettier",
     prettierDesc:
       "Enable Prettier; format-on-save depends on this. Project prettier required.",
+    updateImportsOnMove: "Update imports on move",
+    updateImportsOnMoveDesc:
+      "After drag-move, scan and update relative import paths (not npm packages or @ aliases).",
+    updateImportsOnMovePrompt: "Ask every time",
+    updateImportsOnMoveAlways: "Always update",
+    updateImportsOnMoveNever: "Never",
     delay: "Delay",
     delay05: "0.5 s",
     delay1: "1 s",
@@ -189,6 +195,9 @@ export const enUS = {
     cannotCutRoot: "Cannot cut the workspace root",
     copiedAbsPath: "Absolute path copied",
     copiedRelPath: "Relative path copied",
+    dragMoveHint: "Drag onto a folder to move",
+    dropIntoFolder: "Move into this folder",
+    dropInvalid: "Cannot drop here",
   },
   search: {
     quickOpenTitle: "Quick Open",
@@ -611,6 +620,18 @@ export const enUS = {
   dialog: {
     ok: "OK",
     cancel: "Cancel",
+  },
+  moveReferences: {
+    title: "Update Import References",
+    hint:
+      "These relative import paths will be updated after the move. npm packages, @ aliases, and dynamic paths are not included.",
+    confirm: "Apply Selected",
+    cancel: "Skip",
+    selectAll: "Select All",
+    deselectAll: "Deselect All",
+    count: "{count} selected",
+    line: "Line {line}",
+    applied: "Updated {count} import reference(s)",
   },
   notice: {
     noActiveFile: "No active file",

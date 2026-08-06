@@ -10,10 +10,12 @@ import {
   dirname,
   joinPath,
   listDir,
+  normalizeAbsPath,
   pathExists,
   renameEntry,
   type DirEntryInfo,
 } from "@/shared/fs";
+import { validateMoveTarget } from "@/shared/importReferences";
 import {
   clearRecentFolders as clearRecentFoldersStorage,
   loadRecentFolders,
@@ -48,6 +50,12 @@ export interface TreeNode extends DirEntryInfo {
   expanded?: boolean;
   loaded?: boolean;
   children?: TreeNode[];
+}
+
+export interface MovePathResult {
+  from: string;
+  to: string;
+  isDir: boolean;
 }
 
 export const useWorkspaceStore = defineStore("workspace", () => {
@@ -488,6 +496,44 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (to) await loadChildren(dirname(to));
   }
 
+  /** 将文件/文件夹移动到目标目录下（保留 basename） */
+  async function movePath(
+    from: string,
+    toParent: string,
+    isDir: boolean,
+  ): Promise<MovePathResult | null> {
+    if (!rootPath.value) return null;
+    const root = rootPath.value;
+    const err = validateMoveTarget(from, toParent, root, isDir);
+    if (err) {
+      if (normalizeAbsPath(dirname(from)) !== normalizeAbsPath(toParent)) {
+        showNotice(err, 3200);
+      }
+      return null;
+    }
+    const dest = joinPath(toParent, basename(from));
+    if (await pathExists(root, dest)) {
+      showNotice(`目标位置已存在「${basename(from)}」`, 3200);
+      return null;
+    }
+    try {
+      markSelfWrite(from);
+      markSelfWrite(dest);
+      markSelfWrite(toParent);
+      markSelfWrite(dirname(from));
+      await renameEntry(root, from, dest);
+      await loadChildren(toParent);
+      await loadChildren(dirname(from));
+      expanded.value = new Set([...expanded.value, toParent]);
+      selectedPath.value = dest;
+      showNotice(`已移动 ${basename(from)}`);
+      return { from, to: dest, isDir };
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : String(error), 3200);
+      return null;
+    }
+  }
+
   function selectPath(path: string | null) {
     selectedPath.value = path;
   }
@@ -618,6 +664,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     removePath,
     setClipboard,
     pasteInto,
+    movePath,
     selectPath,
     revealPath,
     loadChildren,

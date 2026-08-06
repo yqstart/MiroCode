@@ -1,41 +1,10 @@
 import { EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
-import { dirname, joinPath } from "@/shared/fs";
-
-const IMPORT_RE =
-  /(?:import\s+(?:[\w*{}\s,]+\s+from\s+|)|require\s*\(\s*|from\s+)['"]([^'"]+)['"]/g;
-const PATH_RE = /['"](\.{1,2}\/[^'"]+)['"]/g;
-
-function resolveImport(
-  workspaceRoot: string | null,
-  currentFile: string,
-  spec: string,
-): string | null {
-  if (!workspaceRoot || !spec.startsWith(".")) return null;
-  const base = dirname(currentFile);
-  let target = joinPath(base, spec);
-
-  const extensions = [
-    "",
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".vue",
-    ".json",
-    "/index.ts",
-    "/index.js",
-  ];
-  for (const ext of extensions) {
-    const candidate = ext.startsWith("/")
-      ? `${target}${ext}`
-      : `${target}${ext}`;
-    if (candidate.startsWith(workspaceRoot)) return candidate;
-  }
-
-  if (target.startsWith(workspaceRoot)) return target;
-  return null;
-}
+import {
+  IMPORT_RE,
+  PATH_RE,
+  resolveImportCandidate,
+} from "@/shared/importReferences";
 
 function findTargetAtPos(
   doc: string,
@@ -51,7 +20,7 @@ function findTargetAtPos(
       const end = start + match[0].length;
       if (pos >= start && pos <= end) {
         const spec = match[1];
-        const resolved = resolveImport(workspaceRoot, currentFile, spec);
+        const resolved = resolveImportCandidate(workspaceRoot, currentFile, spec);
         if (resolved) {
           return { path: resolved, line: 1, column: 1 };
         }
