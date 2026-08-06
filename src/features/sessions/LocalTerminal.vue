@@ -155,6 +155,7 @@ watch(
       term?.focus();
     }
   },
+  { immediate: true },
 );
 </script>
 

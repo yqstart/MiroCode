@@ -10,12 +10,14 @@ import {
   FolderPlus,
   FolderInput,
   RefreshCw,
+  X,
 } from "lucide-vue-next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { storeToRefs } from "pinia";
 import { writeClipboard } from "@/shared/clipboard";
 import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { basename, dirname, relativeToRoot } from "@/shared/fs";
+import { isRasterImagePath } from "@/shared/media";
 import { openFolderInNewWindow } from "@/shared/openWorkspace";
 import { formatShortcut } from "@/shared/platform";
 import { revealInOsExplorer } from "@/shared/revealInOs";
@@ -67,6 +69,13 @@ const panelTitle = computed(() =>
 );
 const switchCandidates = computed(() =>
   recentFolders.value.filter((p) => p !== rootPath.value),
+);
+const canFormatMenuTarget = computed(() => {
+  if (!menu.value || menu.value.isDir || !rootPath.value) return false;
+  return !isRasterImagePath(menu.value.path);
+});
+const formatMenuDisabled = computed(
+  () => !settings.editor.prettierEnabled,
 );
 
 /** 工具栏新建：优先落在选中目录，否则落在选中文件的父目录 / 根目录 */
@@ -192,6 +201,18 @@ async function onOpenRecent(path: string) {
   requestOpenPath(path);
 }
 
+function removeRecent(path: string, event: MouseEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+  workspace.removeRecentFolder(path);
+}
+
+function clearAllRecent(event: MouseEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+  workspace.clearRecentFolders();
+}
+
 async function onRowClick(path: string, isDir: boolean) {
   workspace.selectPath(path);
   if (isDir) {
@@ -301,6 +322,11 @@ async function runMenu(action: string) {
       await revealInOsExplorer(path, (message, ms) =>
         workspace.showNotice(message, ms),
       );
+      return;
+    }
+    if (action === "format-document") {
+      if (isDir || isRasterImagePath(path)) return;
+      await editor.formatDocument(path);
     }
   } catch (error) {
     workspace.showNotice(
@@ -333,18 +359,40 @@ defineExpose({ locateActiveFile });
           </button>
           <template v-if="switchCandidates.length">
             <div class="project-sep" />
-            <p class="project-label">{{ t("explorer.recentProjects") }}</p>
-            <button
+            <div class="project-label-row">
+              <p class="project-label">{{ t("explorer.recentProjects") }}</p>
+              <button
+                type="button"
+                class="project-clear"
+                :title="t('explorer.clearRecentProjects')"
+                @click="clearAllRecent"
+              >
+                {{ t("explorer.clearRecentProjects") }}
+              </button>
+            </div>
+            <div
               v-for="item in switchCandidates"
               :key="item"
-              type="button"
-              class="project-item"
-              :title="item"
-              @click="requestOpenPath(item)"
+              class="project-item-wrap"
             >
-              <span class="project-name">{{ basename(item) }}</span>
-              <span class="project-path">{{ item }}</span>
-            </button>
+              <button
+                type="button"
+                class="project-item"
+                :title="item"
+                @click="requestOpenPath(item)"
+              >
+                <span class="project-name">{{ basename(item) }}</span>
+                <span class="project-path">{{ item }}</span>
+              </button>
+              <button
+                type="button"
+                class="project-remove"
+                :title="t('explorer.removeRecentProject')"
+                @click="removeRecent(item, $event)"
+              >
+                <X :size="12" />
+              </button>
+            </div>
           </template>
         </div>
       </div>
@@ -441,17 +489,39 @@ defineExpose({ locateActiveFile });
             {{ t("explorer.openFolder") }}
           </button>
           <div v-if="recentFolders.length" class="recent">
-            <p class="recent-title">{{ t("explorer.recentOpened") }}</p>
-            <button
+            <div class="recent-head">
+              <p class="recent-title">{{ t("explorer.recentOpened") }}</p>
+              <button
+                type="button"
+                class="recent-clear"
+                :title="t('explorer.clearRecentProjects')"
+                @click="clearAllRecent"
+              >
+                {{ t("explorer.clearRecentProjects") }}
+              </button>
+            </div>
+            <div
               v-for="item in recentFolders"
               :key="item"
-              type="button"
-              class="recent-item"
-              :title="item"
-              @click="onOpenRecent(item)"
+              class="recent-row"
             >
-              {{ basename(item) }}
-            </button>
+              <button
+                type="button"
+                class="recent-item"
+                :title="item"
+                @click="onOpenRecent(item)"
+              >
+                {{ basename(item) }}
+              </button>
+              <button
+                type="button"
+                class="recent-remove"
+                :title="t('explorer.removeRecentProject')"
+                @click="removeRecent(item, $event)"
+              >
+                <X :size="12" />
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -547,6 +617,14 @@ defineExpose({ locateActiveFile });
       </button>
       <button type="button" @click="runMenu('copy-rel-path')">
         {{ t("explorer.copyRelPath") }}
+      </button>
+      <hr />
+      <button
+        type="button"
+        :disabled="!canFormatMenuTarget || formatMenuDisabled"
+        @click="runMenu('format-document')"
+      >
+        {{ t("editor.formatDocument") }}
       </button>
       <hr />
       <button type="button" @click="runMenu('reveal-in-os')">
@@ -666,16 +744,62 @@ defineExpose({ locateActiveFile });
   gap: 2px;
 }
 
+.project-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 2px 10px 4px;
+}
+
+.project-label {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.project-clear {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.project-clear:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.project-item-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.project-item-wrap .project-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-remove {
+  flex-shrink: 0;
+  width: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-muted);
+}
+
+.project-remove:hover {
+  color: var(--danger, #e5484d);
+  background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
+}
+
 .project-sep {
   height: 1px;
   margin: 4px 2px;
   background: var(--border-subtle);
-}
-
-.project-label {
-  margin: 2px 10px 4px;
-  font-size: 11px;
-  color: var(--text-muted);
 }
 
 .mode-overlay {
@@ -825,15 +949,42 @@ defineExpose({ locateActiveFile });
   text-align: left;
 }
 
+.recent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
 .recent-title {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 11px;
   color: var(--text-muted);
 }
 
+.recent-clear {
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.recent-clear:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.recent-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .recent-item {
+  flex: 1;
+  min-width: 0;
   display: block;
-  width: 100%;
   text-align: left;
   padding: 6px 8px;
   border-radius: 6px;
@@ -841,6 +992,21 @@ defineExpose({ locateActiveFile });
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.recent-remove {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-muted);
+}
+
+.recent-remove:hover {
+  color: var(--danger, #e5484d);
+  background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
 }
 
 .recent-item:hover {

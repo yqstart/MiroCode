@@ -73,6 +73,7 @@ export const zhCN = {
       "确定回滚「{name}」的未提交变更？此操作不可撤销。",
     discardUntrackedConfirm:
       "「{name}」是未跟踪的新文件，回滚将删除该文件。此操作不可撤销。确定？",
+    formatDocument: "格式化文档",
   },
   settings: {
     title: "设置",
@@ -172,6 +173,8 @@ export const zhCN = {
     openNewProjectDialog: "打开新项目",
     recentProjects: "最近项目",
     recentOpened: "最近打开",
+    clearRecentProjects: "清除全部",
+    removeRecentProject: "从最近项目中移除",
     openInThisWindow: "在本窗口打开",
     openInNewWindow: "在新窗口打开",
     openedInNewWindow: "已在新窗口打开 {name}",

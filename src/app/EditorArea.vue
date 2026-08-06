@@ -16,6 +16,7 @@ import { useCompareStore } from "@/stores/compare";
 import { useEditorStore } from "@/stores/editor";
 import { useGitLogStore } from "@/stores/gitLog";
 import { useGitStore } from "@/stores/git";
+import { useSettingsStore } from "@/stores/settings";
 import { useSessionsStore } from "@/stores/sessions";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useI18n } from "@/i18n";
@@ -36,6 +37,7 @@ const compare = useCompareStore();
 const gitLog = useGitLogStore();
 const workspace = useWorkspaceStore();
 const git = useGitStore();
+const settings = useSettingsStore();
 const { tabs, activePath, activeTab } = storeToRefs(editor);
 const { rootPath } = storeToRefs(workspace);
 const {
@@ -351,19 +353,27 @@ const canDiscardActive = computed(
   () => Boolean(editorCtxGitEntry.value) && !editorCtxGitEntry.value?.conflicted,
 );
 
+const formatDocumentDisabled = computed(
+  () => !settings.editor.prettierEnabled,
+);
+
 function onEditorContextMenu(event: MouseEvent) {
-  if (!activeTab.value || !showFileEditor.value) return;
+  if (!activeTab.value || !rootPath.value) return;
   if (sessionsFocused.value || compareFocused.value || gitLogFocused.value) return;
-  if (!rootPath.value) return;
-  const rel = relativeToRoot(rootPath.value, activeTab.value.path);
-  const entry = git.statusMap.get(rel);
-  if (!entry || entry.conflicted) return;
+  if (isRasterImagePath(activeTab.value.path)) return;
   event.preventDefault();
+  tabCtx.value = null;
+  const pos = clampMenuPos(event.clientX, event.clientY);
   editorCtx.value = {
-    x: event.clientX,
-    y: event.clientY,
+    x: pos.x,
+    y: pos.y,
     absPath: activeTab.value.path,
   };
+}
+
+async function formatFromEditor() {
+  editorCtx.value = null;
+  await editor.formatDocument();
 }
 
 async function discardFromEditor() {
@@ -602,15 +612,26 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
 
     <Teleport to="body">
       <div
-        v-if="editorCtx && showFileEditor && canDiscardActive"
+        v-if="editorCtx"
         class="editor-ctx"
         :style="{ left: `${editorCtx.x}px`, top: `${editorCtx.y}px` }"
         @click.stop
+        @contextmenu.prevent
       >
-        <button type="button" @click="showDiffFromEditor">{{ t("editor.showDiff") }}</button>
-        <button type="button" class="danger" @click="discardFromEditor">
-          {{ t("editor.discardChanges") }}
+        <button
+          type="button"
+          :disabled="formatDocumentDisabled"
+          @click="formatFromEditor"
+        >
+          {{ t("editor.formatDocument") }}
         </button>
+        <template v-if="canDiscardActive">
+          <hr />
+          <button type="button" @click="showDiffFromEditor">{{ t("editor.showDiff") }}</button>
+          <button type="button" class="danger" @click="discardFromEditor">
+            {{ t("editor.discardChanges") }}
+          </button>
+        </template>
       </div>
     </Teleport>
   </section>
@@ -909,8 +930,19 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
   color: var(--text-primary);
 }
 
-.editor-ctx button:hover {
+.editor-ctx button:hover:not(:disabled) {
   background: var(--accent-soft);
+}
+
+.editor-ctx button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.editor-ctx hr {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 4px 0;
 }
 
 .editor-ctx .danger {

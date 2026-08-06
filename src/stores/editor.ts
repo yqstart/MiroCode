@@ -277,6 +277,49 @@ export const useEditorStore = defineStore("editor", () => {
     workspace.revealPath(path);
   }
 
+  async function formatDocument(path?: string) {
+    const workspace = useWorkspaceStore();
+    const settings = useSettingsStore();
+    if (!workspace.rootPath) return;
+    if (!settings.editor.prettierEnabled) {
+      workspace.showNotice("请先在设置中启用 Prettier");
+      return;
+    }
+    const targetPath = path ?? activePath.value;
+    if (!targetPath) {
+      workspace.showNotice("当前无活动文件可格式化");
+      return;
+    }
+    if (isRasterImagePath(targetPath)) return;
+
+    let tab = tabs.value.find((t) => t.path === targetPath) ?? null;
+    if (!tab) {
+      await openFile(targetPath);
+      tab = tabs.value.find((t) => t.path === targetPath) ?? null;
+    }
+    if (!tab) return;
+
+    try {
+      const rel = relativeToRoot(workspace.rootPath, tab.path);
+      const formatted = await formatWithPrettier(
+        workspace.rootPath,
+        rel,
+        tab.content,
+      );
+      if (formatted !== tab.content) {
+        tab.content = formatted;
+        workspace.showNotice(`已格式化 ${tab.name}`);
+      } else {
+        workspace.showNotice("无需格式化");
+      }
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
   async function maybeFormatTab(
     root: string,
     tab: EditorTab,
@@ -508,6 +551,7 @@ export const useEditorStore = defineStore("editor", () => {
     activate,
     saveActive,
     saveAll,
+    formatDocument,
     closeTab,
     togglePin,
     closeOtherTabs,

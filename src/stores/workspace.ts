@@ -14,7 +14,12 @@ import {
   renameEntry,
   type DirEntryInfo,
 } from "@/shared/fs";
-import { loadRecentFolders, pushRecentFolder } from "@/shared/path";
+import {
+  clearRecentFolders as clearRecentFoldersStorage,
+  loadRecentFolders,
+  pushRecentFolder,
+  removeRecentFolder as removeRecentFolderStorage,
+} from "@/shared/path";
 import { promptInput } from "@/shared/promptDialog";
 import { searchFiles, type FileSearchHit } from "@/shared/searchApi";
 import { useCompareStore } from "@/stores/compare";
@@ -573,6 +578,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     expanded.value = new Set([rootPath.value]);
   }
 
+  function removeRecentFolder(path: string) {
+    recentFolders.value = removeRecentFolderStorage(path);
+  }
+
+  function clearRecentFolders() {
+    recentFolders.value = clearRecentFoldersStorage();
+  }
+
   return {
     rootPath,
     rootName,
@@ -613,5 +626,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     setFilter,
     clearFilter,
     collapseAll,
+    removeRecentFolder,
+    clearRecentFolders,
   };
 });

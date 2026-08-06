@@ -73,6 +73,7 @@ export const enUS = {
       "Discard uncommitted changes to “{name}”? This cannot be undone.",
     discardUntrackedConfirm:
       "“{name}” is untracked. Discarding will delete the file. This cannot be undone. Continue?",
+    formatDocument: "Format Document",
   },
   settings: {
     title: "Settings",
@@ -176,6 +177,8 @@ export const enUS = {
     openNewProjectDialog: "Open New Project",
     recentProjects: "Recent",
     recentOpened: "Recent",
+    clearRecentProjects: "Clear All",
+    removeRecentProject: "Remove from Recent",
     openInThisWindow: "Open in This Window",
     openInNewWindow: "Open in New Window",
     openedInNewWindow: "Opened {name} in a new window",
