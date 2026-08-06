@@ -73,7 +73,7 @@ export const zhCN = {
       "确定回滚「{name}」的未提交变更？此操作不可撤销。",
     discardUntrackedConfirm:
       "「{name}」是未跟踪的新文件，回滚将删除该文件。此操作不可撤销。确定？",
-    formatDocument: "格式化文档",
+    formatDocument: "格式化",
   },
   settings: {
     title: "设置",

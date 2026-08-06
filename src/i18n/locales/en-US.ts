@@ -73,7 +73,7 @@ export const enUS = {
       "Discard uncommitted changes to “{name}”? This cannot be undone.",
     discardUntrackedConfirm:
       "“{name}” is untracked. Discarding will delete the file. This cannot be undone. Continue?",
-    formatDocument: "Format Document",
+    formatDocument: "Format",
   },
   settings: {
     title: "Settings",

@@ -362,12 +362,15 @@ const editorCtxRelPath = computed(() => {
 const editorCtxGitEntry = computed(() => {
   const rel = editorCtxRelPath.value;
   if (!rel || rel === ".") return null;
-  return git.statusMap.get(rel) ?? null;
+  const norm = rel.replace(/\\/g, "/");
+  return git.statusMap.get(rel) ?? git.statusMap.get(norm) ?? null;
 });
 
 const canDiscardActive = computed(
   () => Boolean(editorCtxGitEntry.value) && !editorCtxGitEntry.value?.conflicted,
 );
+
+const hasGitMenu = computed(() => canDiscardActive.value);
 
 const formatDocumentDisabled = computed(
   () => !settings.editor.prettierEnabled,
@@ -378,6 +381,7 @@ function onEditorContextMenu(event: MouseEvent) {
   if (sessionsFocused.value || compareFocused.value || gitLogFocused.value) return;
   if (isRasterImagePath(activeTab.value.path)) return;
   event.preventDefault();
+  event.stopPropagation();
   tabCtx.value = null;
   const pos = clampMenuPos(event.clientX, event.clientY);
   editorCtx.value = {
@@ -528,7 +532,7 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
       </button>
     </div>
 
-    <div class="canvas" @contextmenu="onEditorContextMenu">
+    <div class="canvas">
       <SessionsView v-if="sessionsMounted" v-show="sessionsFocused" />
 
       <GitLogPanel v-if="gitLogOpen" v-show="gitLogFocused" />
@@ -553,11 +557,13 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
           :key="activeTab.path"
           :path="activeTab.path"
           :content="activeTab.content"
+          @contextmenu="onEditorContextMenu"
         />
         <div
           v-else-if="markdownPreview && isMarkdown"
           class="md-preview"
           v-html="previewHtml"
+          @contextmenu="onEditorContextMenu"
         />
       </template>
 
@@ -643,7 +649,7 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
         >
           {{ t("editor.formatDocument") }}
         </button>
-        <template v-if="canDiscardActive">
+        <template v-if="hasGitMenu">
           <hr />
           <button type="button" @click="showDiffFromEditor">{{ t("editor.showDiff") }}</button>
           <button type="button" class="danger" @click="discardFromEditor">

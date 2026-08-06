@@ -53,6 +53,10 @@ const props = defineProps<{
   content: string;
 }>();
 
+const emit = defineEmits<{
+  contextmenu: [event: MouseEvent];
+}>();
+
 const host = ref<HTMLDivElement | null>(null);
 const editorStore = useEditorStore();
 const settings = useSettingsStore();
@@ -147,6 +151,12 @@ function createEditor() {
         createCompletionExtension(props.path),
         ...createDiagnosticsExtension(props.path),
         createNavigationExtension(navHandlers),
+        EditorView.domEventHandlers({
+          contextmenu(event) {
+            emit("contextmenu", event);
+            return false;
+          },
+        }),
         rectangularSelection(),
         crosshairCursor(),
         highlightActiveLine(),
