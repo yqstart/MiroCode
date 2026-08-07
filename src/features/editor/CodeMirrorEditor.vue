@@ -461,13 +461,19 @@ defineExpose({ scrollTo });
   color: var(--text-primary);
 }
 
+/* 查找匹配弱于当前选中匹配；选区本身由 theme.selection 控制且应最亮 */
+.cm-host :deep(.cm-selectionMatch) {
+  background-color: color-mix(in srgb, var(--accent) 16%, transparent) !important;
+  border-radius: 2px;
+}
+
 .cm-host :deep(.cm-searchMatch) {
-  background: color-mix(in srgb, var(--accent) 28%, transparent) !important;
+  background: color-mix(in srgb, var(--accent) 22%, transparent) !important;
   border-radius: 2px;
 }
 
 .cm-host :deep(.cm-searchMatch-selected) {
-  background: color-mix(in srgb, var(--accent) 52%, transparent) !important;
-  outline: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--accent) 55%, transparent) !important;
+  outline: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
 }
 </style>

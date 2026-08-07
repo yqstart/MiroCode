@@ -10,7 +10,10 @@ interface ThemePalette {
   gutter: string;
   gutterFg: string;
   activeLine: string;
+  /** 当前选区：应明显亮于 selectionMatch */
   selection: string;
+  /** 与选区相同文本的其它出现：弱提示，不可压过选区 */
+  selectionMatch: string;
   caret: string;
   isDark: boolean;
   highlight: HighlightStyle;
@@ -149,7 +152,8 @@ const PALETTES: Record<ThemeId, ThemePalette> = {
     gutter: "#16161a",
     gutterFg: "#a1a1aa",
     activeLine: "rgba(139,92,246,0.08)",
-    selection: "rgba(139,92,246,0.28)",
+    selection: "rgba(167,139,250,0.55)",
+    selectionMatch: "rgba(167,139,250,0.18)",
     caret: "#8b5cf6",
     isDark: true,
     highlight: darkHighlight,
@@ -160,7 +164,8 @@ const PALETTES: Record<ThemeId, ThemePalette> = {
     gutter: "#fafbfc",
     gutterFg: "#71717a",
     activeLine: "rgba(37,99,235,0.06)",
-    selection: "rgba(37,99,235,0.18)",
+    selection: "rgba(37,99,235,0.35)",
+    selectionMatch: "rgba(37,99,235,0.12)",
     caret: "#2563eb",
     isDark: false,
     highlight: lightHighlight,
@@ -171,7 +176,8 @@ const PALETTES: Record<ThemeId, ThemePalette> = {
     gutter: "#0f172a",
     gutterFg: "#94a3b8",
     activeLine: "rgba(56,189,248,0.08)",
-    selection: "rgba(56,189,248,0.24)",
+    selection: "rgba(56,189,248,0.48)",
+    selectionMatch: "rgba(56,189,248,0.16)",
     caret: "#38bdf8",
     isDark: true,
     highlight: midnightHighlight,
@@ -182,7 +188,8 @@ const PALETTES: Record<ThemeId, ThemePalette> = {
     gutter: "#1a1020",
     gutterFg: "#c4b5fd",
     activeLine: "rgba(244,114,182,0.1)",
-    selection: "rgba(34,211,238,0.22)",
+    selection: "rgba(34,211,238,0.45)",
+    selectionMatch: "rgba(34,211,238,0.16)",
     caret: "#22d3ee",
     isDark: true,
     highlight: cyberHighlight,
@@ -222,6 +229,14 @@ function uiTheme(palette: ThemePalette): Extension {
         color: palette.fg,
       },
       "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection":
+        {
+          backgroundColor: palette.selection,
+        },
+      /* 相同文本其它出现：弱于当前选区，避免「选中反而更暗」 */
+      ".cm-selectionMatch": {
+        backgroundColor: palette.selectionMatch,
+      },
+      ".cm-selectionMatch.cm-selectionBackground, &.cm-focused .cm-selectionMatch.cm-selectionBackground":
         {
           backgroundColor: palette.selection,
         },
