@@ -11,6 +11,7 @@ import SessionsView from "@/features/sessions/SessionsView.vue";
 import { basename, relativeToRoot } from "@/shared/fs";
 import { isRasterImagePath, isSvgPath } from "@/shared/media";
 import { formatShortcut } from "@/shared/platform";
+import { parseRemoteFileUri } from "@/shared/remoteFile";
 import { revealInOsExplorer } from "@/shared/revealInOs";
 import { disambiguateTabLabels, tabTooltip } from "@/shared/tabLabel";
 import { useCompareStore } from "@/stores/compare";
@@ -158,6 +159,8 @@ function fileTabLabel(path: string, name: string): string {
 }
 
 function fileTabTitle(path: string): string {
+  const remote = parseRemoteFileUri(path);
+  if (remote) return remote.remotePath;
   return tabTooltip(path, rootPath.value);
 }
 
@@ -205,8 +208,9 @@ function activateGitLog() {
   gitLog.focusLog();
 }
 
-function closeSessionsTab() {
-  sessions.closeSessions();
+async function closeSessionsTab() {
+  const ok = await sessions.closeSessions();
+  if (!ok) return;
   if (gitLogOpen.value && !editor.activePath && !compareTabs.value.length) {
     gitLog.focusLog();
     return;

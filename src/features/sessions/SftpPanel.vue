@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   ArrowUp,
+  Download,
   Folder,
   RefreshCw,
   Upload,
@@ -11,6 +12,7 @@ import { useI18n } from "@/i18n";
 import {
   sftpClose,
   sftpCreateFile,
+  sftpDownload,
   sftpList,
   sftpMkdir,
   sftpPwd,
@@ -22,7 +24,9 @@ import {
 } from "@/shared/sshApi";
 import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { basename } from "@/shared/fs";
+import { isEditableRemoteFile } from "@/shared/remoteFile";
 import { promptInput } from "@/shared/promptDialog";
+import { useEditorStore } from "@/stores/editor";
 
 const props = defineProps<{
   sessionId: string;
@@ -35,10 +39,12 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const editor = useEditorStore();
 const cwd = ref("/");
 const entries = ref<SftpEntry[]>([]);
 const loading = ref(false);
 const uploading = ref(false);
+const downloading = ref(false);
 const notice = ref("");
 const error = ref("");
 const selectedPath = ref<string | null>(null);
@@ -54,6 +60,14 @@ type MenuState = {
 };
 
 const menu = ref<MenuState | null>(null);
+
+const selectedEntry = computed(() =>
+  entries.value.find((e) => e.path === selectedPath.value) ?? null,
+);
+
+const canDownload = computed(
+  () => Boolean(selectedEntry.value && !selectedEntry.value.isDir),
+);
 
 const parentPath = computed(() => {
   if (!cwd.value || cwd.value === "/") return null;
@@ -124,13 +138,51 @@ function selectEntry(entry: SftpEntry) {
   selectedPath.value = entry.path;
 }
 
+async function openRemoteEditor(entry: SftpEntry) {
+  await editor.openRemoteFile(props.sessionId, entry.path, {
+    host: props.config.host,
+    username: props.config.username,
+    displayName: props.config.displayName,
+  });
+}
+
+async function downloadEntry(entry: SftpEntry) {
+  if (entry.isDir) return;
+  const local = await save({
+    defaultPath: entry.name,
+    title: t("sftp.selectDownload"),
+  });
+  if (!local) return;
+  downloading.value = true;
+  error.value = "";
+  try {
+    await sftpDownload(props.sessionId, entry.path, local);
+    flash(t("sftp.downloaded", { name: entry.name }));
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    downloading.value = false;
+  }
+}
+
+async function onDownloadSelected() {
+  const entry = selectedEntry.value;
+  if (!entry || entry.isDir) return;
+  await downloadEntry(entry);
+}
+
 async function openEntry(entry: SftpEntry) {
-  if (!entry.isDir) {
-    selectedPath.value = entry.path;
+  if (entry.isDir) {
+    selectedPath.value = null;
+    await loadDir(entry.path);
     return;
   }
-  selectedPath.value = null;
-  await loadDir(entry.path);
+  selectedPath.value = entry.path;
+  if (isEditableRemoteFile(entry)) {
+    await openRemoteEditor(entry);
+  } else {
+    await downloadEntry(entry);
+  }
 }
 
 async function goParent() {
@@ -210,6 +262,23 @@ async function runMenu(action: string) {
       await sftpMkdir(props.sessionId, remote);
       flash(t("sftp.created", { name: safe }));
       await loadDir(cwd.value);
+      return;
+    }
+    if (action === "edit" && onEntry && !isDir) {
+      const entry = entries.value.find((e) => e.path === path);
+      if (!entry) return;
+      if (!isEditableRemoteFile(entry)) {
+        error.value = t("sftp.notEditable");
+        await downloadEntry(entry);
+        return;
+      }
+      await openRemoteEditor(entry);
+      return;
+    }
+    if (action === "download" && onEntry && !isDir) {
+      const entry = entries.value.find((e) => e.path === path);
+      if (!entry) return;
+      await downloadEntry(entry);
       return;
     }
     if (action === "rename" && onEntry) {
@@ -320,6 +389,16 @@ onBeforeUnmount(() => {
         </button>
         <button
           type="button"
+          class="cta secondary"
+          :disabled="downloading || !canDownload"
+          :title="t('sftp.download')"
+          @click="onDownloadSelected"
+        >
+          <Download :size="14" />
+          {{ downloading ? t("sftp.downloading") : t("sftp.download") }}
+        </button>
+        <button
+          type="button"
           class="cta"
           :disabled="uploading"
           @click="onUpload"
@@ -368,13 +447,14 @@ onBeforeUnmount(() => {
     </div>
 
     <footer class="footer">
-      {{
+      <span>{{
         t("sftp.itemCount", {
           user: config.username,
           host: config.host,
           count: entries.length,
         })
-      }}
+      }}</span>
+      <span class="hint">{{ t("sftp.hint") }}</span>
     </footer>
 
     <div
@@ -391,13 +471,22 @@ onBeforeUnmount(() => {
         {{ t("sftp.newFolder") }}
       </button>
       <template v-if="menu.onEntry">
-        <hr />
+        <template v-if="!menu.isDir">
+          <button type="button" @click="runMenu('edit')">
+            {{ t("sftp.edit") }}
+          </button>
+          <button type="button" @click="runMenu('download')">
+            {{ t("sftp.download") }}
+          </button>
+          <hr />
+        </template>
         <button type="button" @click="runMenu('rename')">
           {{ t("sftp.rename") }}
         </button>
         <button type="button" class="danger" @click="runMenu('delete')">
           {{ t("sftp.delete") }}
         </button>
+        <hr />
       </template>
       <hr />
       <button type="button" @click="runMenu('refresh')">
@@ -475,6 +564,18 @@ onBeforeUnmount(() => {
 .cta {
   background: var(--accent);
   color: var(--accent-fg);
+}
+
+.cta.secondary {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.cta.secondary:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .cta:disabled {
@@ -563,6 +664,15 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--border-subtle);
   font-size: 11px;
   color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.footer .hint {
+  color: var(--text-muted);
+  opacity: 0.85;
 }
 
 .menu {

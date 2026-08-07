@@ -122,11 +122,57 @@ export const useSessionsStore = defineStore("sessions", () => {
     focused.value = false;
   }
 
-  /** 关闭终端标签：卸载视图并结束保活（PTY 随组件卸载退出） */
-  function closeSessions() {
+  /** 主动断开远程 SSH/SFTP，并关闭对应远程编辑标签 */
+  async function disconnectRemoteSession(
+    id: string,
+    options?: { forceCloseEditorTabs?: boolean },
+  ): Promise<boolean> {
+    const session = remoteSessions.value.find((t) => t.id === id);
+    if (!session) return true;
+
+    const sid = sftpSessionId(id);
+    const { useEditorStore } = await import("@/stores/editor");
+    const editor = useEditorStore();
+    const tabsOk = await editor.closeRemoteTabsForSftpSession(sid, {
+      force: options?.forceCloseEditorTabs,
+    });
+    if (!tabsOk) return false;
+
+    try {
+      await sshShellClose(id);
+    } catch {
+      // 已断开则忽略
+    }
+    try {
+      await sftpClose(sid);
+    } catch {
+      // 未打开 SFTP 则忽略
+    }
+    return true;
+  }
+
+  async function disconnectAllRemotes(
+    options?: { forceCloseEditorTabs?: boolean },
+  ): Promise<boolean> {
+    for (const session of remoteSessions.value.slice()) {
+      const ok = await disconnectRemoteSession(session.id, options);
+      if (!ok) return false;
+    }
+    return true;
+  }
+
+  /** 关闭终端标签：断开远程连接、卸载视图并结束保活（PTY 随组件卸载退出） */
+  async function closeSessions(): Promise<boolean> {
+    const ok = await disconnectAllRemotes();
+    if (!ok) return false;
+    remoteSessions.value = [];
+    activeRemoteId.value = null;
+    localTerminals.value = [];
+    activeLocalId.value = null;
     open.value = false;
     focused.value = false;
     dormant.value = false;
+    return true;
   }
 
   function setSubView(view: SessionSubView) {
@@ -164,7 +210,12 @@ export const useSessionsStore = defineStore("sessions", () => {
    */
   async function resetLocalForWorkspace(cwd: string | null) {
     const remotes = remoteSessions.value.slice();
+    const { useEditorStore } = await import("@/stores/editor");
+    const editor = useEditorStore();
     for (const session of remotes) {
+      await editor.closeRemoteTabsForSftpSession(sftpSessionId(session.id), {
+        force: true,
+      });
       try {
         await sshShellClose(session.id);
       } catch {
@@ -206,7 +257,7 @@ export const useSessionsStore = defineStore("sessions", () => {
       activeLocalId.value = next?.id ?? null;
     }
     if (localTerminals.value.length === 0 && remoteSessions.value.length === 0) {
-      closeSessions();
+      void closeSessions();
     }
   }
 
@@ -236,9 +287,11 @@ export const useSessionsStore = defineStore("sessions", () => {
     return id;
   }
 
-  function closeRemoteSession(id: string) {
+  async function closeRemoteSession(id: string): Promise<boolean> {
+    const ok = await disconnectRemoteSession(id);
+    if (!ok) return false;
     const idx = remoteSessions.value.findIndex((t) => t.id === id);
-    if (idx < 0) return;
+    if (idx < 0) return true;
     remoteSessions.value.splice(idx, 1);
     if (activeRemoteId.value === id) {
       const next =
@@ -246,8 +299,9 @@ export const useSessionsStore = defineStore("sessions", () => {
       activeRemoteId.value = next?.id ?? null;
     }
     if (localTerminals.value.length === 0 && remoteSessions.value.length === 0) {
-      closeSessions();
+      await closeSessions();
     }
+    return true;
   }
 
   function activateRemote(id: string) {
@@ -319,6 +373,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     closeLocalTerminal,
     activateLocal,
     addRemoteSession,
+    disconnectRemoteSession,
     closeRemoteSession,
     activateRemote,
     setRemotePane,

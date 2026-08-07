@@ -9,7 +9,6 @@ import SftpPanel from "@/features/sessions/SftpPanel.vue";
 import SshHostsView from "@/features/sessions/SshHostsView.vue";
 import {
   parseHostKeyUnknown,
-  sftpClose,
   sftpOpen,
   type SshConnectConfig,
 } from "@/shared/sshApi";
@@ -108,15 +107,8 @@ async function closeRemoteFully(
   id: string,
   opts: { keepError?: boolean } = {},
 ) {
-  const session = remoteSessions.value.find((t) => t.id === id);
-  if (session?.sftpOpened) {
-    try {
-      await sftpClose(sftpSessionId(id));
-    } catch {
-      // 忽略已断开
-    }
-  }
-  sessions.closeRemoteSession(id);
+  const ok = await sessions.closeRemoteSession(id);
+  if (!ok) return;
   if (!remoteSessions.value.length) {
     sshSurface.value = "hosts";
     if (!opts.keepError) {

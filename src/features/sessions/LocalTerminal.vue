@@ -186,7 +186,12 @@ watch(
   padding: 0 2px;
 }
 
-.terminal-host :deep(.xterm-helper-textarea) {
+.terminal-host.tui-mode :deep(.xterm-helper-textarea) {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.terminal-host:not(.tui-mode) :deep(.xterm-helper-textarea) {
   user-select: text !important;
   -webkit-user-select: text !important;
 }

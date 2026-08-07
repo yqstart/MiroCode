@@ -912,6 +912,119 @@ pub fn sftp_upload(
 }
 
 #[tauri::command]
+pub fn sftp_download(
+    state: State<'_, SshState>,
+    id: String,
+    remote_path: String,
+    local_path: String,
+) -> CmdResult<()> {
+    validate_remote_path_str(&remote_path)?;
+    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
+    let session = sftps
+        .get(&id)
+        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
+
+    with_sftp_io(&session.backend, |sftp| {
+        let mut remote = sftp
+            .open(Path::new(remote_path.trim()))
+            .map_err(|e| format!("打开远程文件失败: {e}"))?;
+        let mut local =
+            std::fs::File::create(&local_path).map_err(|e| format!("创建本地文件失败: {e}"))?;
+
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            let n = remote
+                .read(&mut buf)
+                .map_err(|e| format!("读取远程文件失败: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            local
+                .write_all(&buf[..n])
+                .map_err(|e| format!("写入本地文件失败: {e}"))?;
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn sftp_read(
+    state: State<'_, SshState>,
+    id: String,
+    path: String,
+    max_bytes: Option<u64>,
+) -> CmdResult<String> {
+    let remote = validate_remote_path(&path)?.to_path_buf();
+    let limit = max_bytes.unwrap_or(2 * 1024 * 1024);
+    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
+    let session = sftps
+        .get(&id)
+        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
+
+    with_sftp_io(&session.backend, |sftp| {
+        let meta = sftp
+            .stat(&remote)
+            .map_err(|e| format!("读取远程文件失败: {e}"))?;
+        if meta.is_dir() {
+            return Err("目标是目录，不是文件".into());
+        }
+        let size = meta.size.unwrap_or(0);
+        if size > limit {
+            return Err(format!(
+                "文件过大（{} 字节），请使用下载；上限 {limit} 字节",
+                size
+            ));
+        }
+
+        let mut remote_file = sftp
+            .open(&remote)
+            .map_err(|e| format!("打开远程文件失败: {e}"))?;
+        let mut data = Vec::new();
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            let n = remote_file
+                .read(&mut buf)
+                .map_err(|e| format!("读取远程文件失败: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            data.extend_from_slice(&buf[..n]);
+            if data.len() as u64 > limit {
+                return Err(format!("文件过大，请使用下载；上限 {limit} 字节"));
+            }
+        }
+        if data.iter().any(|b| *b == 0) {
+            return Err("文件含二进制内容，请使用下载".into());
+        }
+        String::from_utf8(data).map_err(|_| "文件不是 UTF-8 文本，请使用下载".into())
+    })
+}
+
+#[tauri::command]
+pub fn sftp_write(
+    state: State<'_, SshState>,
+    id: String,
+    remote_path: String,
+    content: String,
+) -> CmdResult<()> {
+    validate_remote_path_str(&remote_path)?;
+    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
+    let session = sftps
+        .get(&id)
+        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
+
+    with_sftp_io(&session.backend, |sftp| {
+        let mut remote = sftp
+            .create(Path::new(remote_path.trim()))
+            .map_err(|e| format!("打开远程文件失败: {e}"))?;
+        remote
+            .write_all(content.as_bytes())
+            .map_err(|e| format!("写入远程文件失败: {e}"))?;
+        Ok(())
+    })
+}
+
+#[tauri::command]
 pub fn sftp_mkdir(state: State<'_, SshState>, id: String, path: String) -> CmdResult<()> {
     let remote = validate_remote_path(&path)?.to_path_buf();
     let sftps = state.sftps.lock().map_err(|e| e.to_string())?;

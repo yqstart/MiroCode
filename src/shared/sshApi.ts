@@ -83,6 +83,34 @@ export async function sftpUpload(
   return invoke("sftp_upload", { id, localPath, remotePath });
 }
 
+export async function sftpDownload(
+  id: string,
+  remotePath: string,
+  localPath: string,
+): Promise<void> {
+  return invoke("sftp_download", { id, remotePath, localPath });
+}
+
+export async function sftpRead(
+  id: string,
+  remotePath: string,
+  maxBytes?: number,
+): Promise<string> {
+  return invoke("sftp_read", {
+    id,
+    path: remotePath,
+    maxBytes: maxBytes ?? null,
+  });
+}
+
+export async function sftpWrite(
+  id: string,
+  remotePath: string,
+  content: string,
+): Promise<void> {
+  return invoke("sftp_write", { id, remotePath, content });
+}
+
 export async function sftpMkdir(id: string, path: string): Promise<void> {
   return invoke("sftp_mkdir", { id, path });
 }

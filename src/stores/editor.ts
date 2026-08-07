@@ -10,6 +10,14 @@ import {
   writeTextFile,
 } from "@/shared/fs";
 import { isRasterImagePath } from "@/shared/media";
+import {
+  buildRemoteFileUri,
+  isRemoteFilePath,
+  parseRemoteFileUri,
+  remoteTabLabel,
+} from "@/shared/remoteFile";
+import { sftpRead, sftpWrite } from "@/shared/sshApi";
+import type { SshConnectConfig } from "@/shared/sshApi";
 import { formatWithPrettier } from "@/shared/toolingApi";
 import type { EditorJumpTarget, EditorOpenAt } from "@/shared/types";
 import { useCompareStore } from "@/stores/compare";
@@ -79,6 +87,58 @@ export const useEditorStore = defineStore("editor", () => {
   function requestOpenAt(path: string, line: number, column: number) {
     openAtSeq += 1;
     openAt.value = { path, line, column, requestId: openAtSeq };
+  }
+
+  async function openRemoteFile(
+    sftpSessionId: string,
+    remotePath: string,
+    meta: Pick<SshConnectConfig, "host" | "username" | "displayName">,
+  ) {
+    useSessionsStore().blurSessions();
+    useCompareStore().blurCompare();
+    void import("@/stores/gitLog").then(({ useGitLogStore }) => {
+      useGitLogStore().blurLog();
+    });
+
+    const uri = buildRemoteFileUri(sftpSessionId, remotePath);
+    const existing = tabs.value.find((t) => t.path === uri);
+    if (existing) {
+      activePath.value = uri;
+      return;
+    }
+
+    const workspace = useWorkspaceStore();
+    try {
+      const content = await sftpRead(sftpSessionId, remotePath);
+      tabs.value.push({
+        id: uri,
+        path: uri,
+        name: remoteTabLabel(remotePath, meta),
+        content,
+        original: content,
+        language: languageFromPath(remotePath),
+        cursor: { line: 1, column: 1 },
+        previewNonce: Date.now(),
+        pinned: false,
+      });
+      activePath.value = uri;
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3600,
+      );
+    }
+  }
+
+  async function persistRemoteTab(tab: EditorTab, quiet = false) {
+    const ref = parseRemoteFileUri(tab.path);
+    if (!ref) return;
+    const workspace = useWorkspaceStore();
+    await sftpWrite(ref.sftpSessionId, ref.remotePath, tab.content);
+    tab.original = tab.content;
+    if (!quiet) {
+      workspace.showNotice(`已保存到远程 ${basename(ref.remotePath)}`);
+    }
   }
 
   async function openFile(path: string) {
@@ -298,6 +358,10 @@ export const useEditorStore = defineStore("editor", () => {
       workspace.showNotice("当前无活动文件可格式化");
       return;
     }
+    if (isRemoteFilePath(targetPath)) {
+      workspace.showNotice("远程文件暂不支持格式化");
+      return;
+    }
     if (isRasterImagePath(targetPath)) return;
 
     let tab = tabs.value.find((t) => t.path === targetPath) ?? null;
@@ -353,7 +417,7 @@ export const useEditorStore = defineStore("editor", () => {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
     const settings = useSettingsStore();
-    if (!workspace.rootPath || !activeTab.value) {
+    if (!activeTab.value) {
       if (!options?.quiet) {
         workspace.showNotice("当前无活动文件可保存");
       }
@@ -361,6 +425,28 @@ export const useEditorStore = defineStore("editor", () => {
     }
     const tab = activeTab.value;
     if (isRasterImagePath(tab.path)) return;
+
+    if (isRemoteFilePath(tab.path)) {
+      if (tab.content === tab.original) return;
+      try {
+        await persistRemoteTab(tab, options?.quiet);
+      } catch (error) {
+        if (!options?.quiet) {
+          workspace.showNotice(
+            error instanceof Error ? error.message : String(error),
+            3200,
+          );
+        }
+      }
+      return;
+    }
+
+    if (!workspace.rootPath) {
+      if (!options?.quiet) {
+        workspace.showNotice("当前无活动文件可保存");
+      }
+      return;
+    }
 
     let content = tab.content;
     const wantFormat =
@@ -391,13 +477,11 @@ export const useEditorStore = defineStore("editor", () => {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
     const settings = useSettingsStore();
-    if (!workspace.rootPath) return;
     const wantFormat =
       settings.editor.formatOnSave && settings.editor.prettierEnabled;
-    // 先格式化，再筛脏文件
-    if (wantFormat) {
+    if (wantFormat && workspace.rootPath) {
       for (const tab of tabs.value) {
-        if (isRasterImagePath(tab.path)) continue;
+        if (isRasterImagePath(tab.path) || isRemoteFilePath(tab.path)) continue;
         await maybeFormatTab(workspace.rootPath, tab);
       }
     }
@@ -406,17 +490,25 @@ export const useEditorStore = defineStore("editor", () => {
     );
     if (!dirty.length) return;
     try {
+      let saved = 0;
       for (const tab of dirty) {
+        if (isRemoteFilePath(tab.path)) {
+          await persistRemoteTab(tab, true);
+          saved += 1;
+          continue;
+        }
+        if (!workspace.rootPath) continue;
         workspace.markSelfWrite(tab.path);
         await writeTextFile(workspace.rootPath, tab.path, tab.content);
         tab.original = tab.content;
+        saved += 1;
       }
-      if (!options?.quiet) {
+      if (!options?.quiet && saved > 0) {
         workspace.showNotice(
-          dirty.length === 1 ? `已保存 ${dirty[0].name}` : `已保存 ${dirty.length} 个文件`,
+          saved === 1 ? `已保存 ${dirty[0].name}` : `已保存 ${saved} 个文件`,
         );
       }
-      void git.refresh();
+      if (workspace.rootPath) void git.refresh();
     } catch (error) {
       if (!options?.quiet) {
         workspace.showNotice(
@@ -440,6 +532,38 @@ export const useEditorStore = defineStore("editor", () => {
       const next = tabs.value[idx] || tabs.value[idx - 1] || null;
       activePath.value = next?.path ?? null;
     }
+  }
+
+  /** 断开 SFTP 会话时关闭对应远程编辑标签；force 时跳过未保存确认 */
+  async function closeRemoteTabsForSftpSession(
+    sftpSessionId: string,
+    options?: { force?: boolean },
+  ): Promise<boolean> {
+    const victims = tabs.value.filter(
+      (t) => parseRemoteFileUri(t.path)?.sftpSessionId === sftpSessionId,
+    );
+    if (!victims.length) return true;
+
+    if (!options?.force) {
+      const dirty = victims.filter(
+        (t) => !isRasterImagePath(t.path) && t.content !== t.original,
+      );
+      if (dirty.length) {
+        const ok = window.confirm(
+          dirty.length === 1
+            ? `远程文件「${dirty[0].name}」有未保存更改，断开连接将关闭该标签。继续？`
+            : `${dirty.length} 个远程文件有未保存更改，断开连接将关闭这些标签。继续？`,
+        );
+        if (!ok) return false;
+      }
+    }
+
+    const paths = new Set(victims.map((t) => t.path));
+    tabs.value = tabs.value.filter((t) => !paths.has(t.path));
+    if (activePath.value && paths.has(activePath.value)) {
+      activePath.value = tabs.value[0]?.path ?? null;
+    }
+    return true;
   }
 
   /** 固定标签排到左侧，组内保持相对顺序 */
@@ -566,6 +690,7 @@ export const useEditorStore = defineStore("editor", () => {
     popJump,
     requestOpenAt,
     openFile,
+    openRemoteFile,
     openFileAt,
     setContent,
     syncFromDisk,
@@ -577,6 +702,7 @@ export const useEditorStore = defineStore("editor", () => {
     saveAll,
     formatDocument,
     closeTab,
+    closeRemoteTabsForSftpSession,
     togglePin,
     closeOtherTabs,
     closeTabsToTheLeft,

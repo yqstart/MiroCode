@@ -14,14 +14,34 @@ function isImeApostrophe(data: string): boolean {
   return data === "'" || data === "\u2019" || data === "\u02bc";
 }
 
+/** Vim 等全屏 TUI 会切到 alternate buffer */
+function isTuiActive(term: Terminal): boolean {
+  try {
+    return term.buffer.active.type !== term.buffer.normal.type;
+  } catch {
+    return false;
+  }
+}
+
+function syncTuiChrome(term: Terminal, active: boolean) {
+  const root = term.element?.closest(".terminal-host");
+  root?.classList.toggle("tui-mode", active);
+  const textarea = term.textarea;
+  if (!textarea) return;
+  if (active) {
+    textarea.setAttribute("inputmode", "none");
+    textarea.setAttribute("lang", "en");
+    textarea.setAttribute("autocorrect", "off");
+    textarea.setAttribute("autocapitalize", "off");
+  } else {
+    textarea.removeAttribute("inputmode");
+    textarea.removeAttribute("lang");
+  }
+}
+
 /**
- * 修复 macOS WKWebView + 中文输入法下 xterm 的输入缺陷：
- * 1. 组字中按退格时，xterm 会 finalize 并把拼音甩进 PTY → 看起来像删不掉、乱出字
- * 2. 非组字但 keyCode=229 时，textarea diff 常把空格/残字符当成「新增」送进 PTY → Delete 变追加空格
- * 3. 中文标点（Shift+数字）在 commit-first 顺序下会被 `_keyDownSeen` 门控丢掉
- * 4. 配对标点 IME 合成的 ArrowLeft 会把真光标拽乱；方向键还会把 textarea 残值甩进终端
- * 5. 中文切英文后 IME 常误插间隔符 / 重复提交 → 空格变双倍、英文内容翻倍
- * 6. 中文切英文后 IME 常甩进音节撇号 → main 变成 mai'n
+ * 修复 macOS WKWebView + 中文输入法下 xterm 的输入缺陷；
+ * 进入 alternate buffer（Vim 等 TUI）时自动 bypass，避免 i 模式/方向键失效。
  *
  * @returns dispose
  */
@@ -30,6 +50,8 @@ export function attachTerminalInputBridge(
   write: (data: string) => void,
 ): () => void {
   const cleanups: Array<() => void> = [];
+  let tuiMode = isTuiActive(term);
+  syncTuiChrome(term, tuiMode);
 
   const textarea = term.textarea;
   if (textarea) {
@@ -37,13 +59,27 @@ export function attachTerminalInputBridge(
     textarea.setAttribute("autocapitalize", "off");
     textarea.setAttribute("autocomplete", "off");
     textarea.setAttribute("autocorrect", "off");
-    textarea.style.setProperty("user-select", "text");
-    textarea.style.setProperty("-webkit-user-select", "text");
   }
 
+  const bufferDisp = term.buffer.onBufferChange(() => {
+    const next = isTuiActive(term);
+    if (next === tuiMode) return;
+    tuiMode = next;
+    syncTuiChrome(term, tuiMode);
+    if (tuiMode && textarea) textarea.value = "";
+  });
+  cleanups.push(() => bufferDisp.dispose());
+
   if (!isMacPlatform() || !textarea) {
-    const dataDisp = term.onData(write);
+    const dataDisp = term.onData((data) => {
+      if (tuiMode) {
+        write(data);
+        return;
+      }
+      write(data);
+    });
     cleanups.push(() => dataDisp.dispose());
+    cleanups.push(() => syncTuiChrome(term, false));
     return () => {
       for (const fn of cleanups) fn();
     };
@@ -56,15 +92,22 @@ export function attachTerminalInputBridge(
     lastNonAsciiCommitAt: 0,
     lastCompositionEndAt: 0,
     composing: false,
-    /** 去重：短窗口内相同 payload 只投一次（防空格/IME 双写） */
     lastWriteData: "",
     lastWriteAt: 0,
   };
 
+  function rawWrite(data: string) {
+    if (!data) return;
+    write(data);
+  }
+
   function safeWrite(data: string) {
     if (!data) return;
+    if (tuiMode) {
+      rawWrite(data);
+      return;
+    }
     const now = performance.now();
-    // 单字符空白：50ms 内去重（双空格主因）
     if (
       data.length <= 2 &&
       isWhitespaceOnly(data) &&
@@ -73,7 +116,6 @@ export function attachTerminalInputBridge(
     ) {
       return;
     }
-    // 任意相同 payload：28ms 内去重（中英切换重复提交）
     if (data === ime.lastWriteData && now - ime.lastWriteAt < 28) {
       return;
     }
@@ -83,8 +125,11 @@ export function attachTerminalInputBridge(
   }
 
   const dataDisp = term.onData((data) => {
+    if (tuiMode) {
+      rawWrite(data);
+      return;
+    }
     const now = performance.now();
-    // 组字结束后极短窗口内的纯空白：IME 误插，丢弃
     if (
       isWhitespaceOnly(data) &&
       (now - ime.lastCompositionEndAt < 220 ||
@@ -92,7 +137,6 @@ export function attachTerminalInputBridge(
     ) {
       return;
     }
-    // 中英切换 / 组字结束窗口内的孤立撇号（mai'n）
     if (
       isImeApostrophe(data) &&
       (ime.composing ||
@@ -106,6 +150,7 @@ export function attachTerminalInputBridge(
   cleanups.push(() => dataDisp.dispose());
 
   const markCompositionStart = () => {
+    if (tuiMode) return;
     ime.composing = true;
   };
   const markCompositionEnd = () => {
@@ -120,10 +165,10 @@ export function attachTerminalInputBridge(
     textarea.removeEventListener("compositionend", markCompositionEnd, true);
   });
 
-  // 补投 xterm 因 `_keyDownSeen` 丢掉的中文标点 commit（绝不转发 ASCII/空白，避免双写）
   const host = term.element;
   if (host) {
     const onImeCommitInput = (ev: Event) => {
+      if (tuiMode) return;
       if (ev.target !== textarea) return;
       const ie = ev as InputEvent;
       if (ie.inputType !== "insertText" || !ie.data || ie.isComposing) return;
@@ -132,7 +177,6 @@ export function attachTerminalInputBridge(
         textarea.value = "";
         return;
       }
-      // 仅补投非 ASCII（中文标点等）；ASCII 一律走 onData，避免空格/英文字符双写
       if (!/[^\x00-\x7f]/.test(ie.data)) return;
       ime.lastNonAsciiCommitAt = performance.now();
       if (term.options.screenReaderMode) return;
@@ -149,8 +193,8 @@ export function attachTerminalInputBridge(
     );
   }
 
-  // 拦截「删成空格 / 组字后误插间隔符 / 中英切换撇号」
   const onBeforeInput = (ev: InputEvent) => {
+    if (tuiMode) return;
     if (ev.isComposing || ime.composing) return;
     if (ev.inputType !== "insertText" || !ev.data) return;
     const afterDelete = performance.now() - ime.lastDeleteAt < 140;
@@ -175,6 +219,9 @@ export function attachTerminalInputBridge(
   );
 
   term.attachCustomKeyEventHandler((e) => {
+    // TUI 模式：完全交给 xterm，避免 IME 桥截获 i/j/k/方向键等
+    if (tuiMode) return true;
+
     if (e.type === "keydown") {
       ime.keyDownSeen = true;
       if (e.keyCode === 229) ime.last229At = performance.now();
@@ -190,7 +237,6 @@ export function attachTerminalInputBridge(
       e.code === "ArrowUp" ||
       e.code === "ArrowDown";
 
-    // 方向键：清空 textarea 残值，避免把历史输入甩进 PTY
     if (isArrow) {
       textarea.value = "";
       if (
@@ -203,7 +249,6 @@ export function attachTerminalInputBridge(
         !ime.composing &&
         performance.now() - ime.lastNonAsciiCommitAt < 180
       ) {
-        // 配对标点后的合成方向键：不要进 PTY
         return false;
       }
       return true;
@@ -215,12 +260,10 @@ export function attachTerminalInputBridge(
 
     ime.lastDeleteAt = performance.now();
 
-    // 组字中：交给 IME，禁止 xterm CompositionHelper finalize 把拼音提交进终端
     if (e.isComposing || ime.composing) {
       return false;
     }
 
-    // 仅在 IME 近期活跃时拦截退格/Delete，避免干扰 Vim 等全屏 TUI
     const imeRecentlyActive =
       performance.now() - ime.last229At < 800 ||
       performance.now() - ime.lastCompositionEndAt < 800 ||
@@ -229,12 +272,13 @@ export function attachTerminalInputBridge(
       return true;
     }
 
-    // macOS：自行投递 DEL，跳过 xterm textarea value-diff（会误插空格）
     safeWrite(isBackspace ? "\x7f" : "\x1b[3~");
     textarea.value = "";
     e.preventDefault();
     return false;
   });
+
+  cleanups.push(() => syncTuiChrome(term, false));
 
   return () => {
     for (const fn of cleanups) fn();
@@ -249,10 +293,11 @@ export function terminalBaseOptions() {
       'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "PingFang SC", "Noto Sans Mono CJK SC", monospace',
     fontSize: 13,
     lineHeight: 1.2,
-    /** 等宽：避免空格视觉上被拉宽 */
     letterSpacing: 0,
     allowProposedApi: true as const,
     macOptionIsMeta: true,
     scrollback: 10000,
+    /** Shift+滚轮加速滚动回滚区（非 Vim 全屏时） */
+    fastScrollModifier: "shift" as const,
   };
 }

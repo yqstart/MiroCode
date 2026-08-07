@@ -54,6 +54,7 @@ Git（`features/git`）对标 **VS Code Source Control + Git Graph**：左侧 Co
 - SSH 主机配置：应用级全局（`~/.mirocode/ssh-profiles.json`），与项目/窗口无关；可选「记住密码」写入 `~/.mirocode/ssh-credentials.json`（0600）
 - SSH 主机密钥：校验 `~/.ssh/known_hosts` + `~/.mirocode/known_hosts`；未知密钥需用户确认（TOFU）
 - SSH 活跃连接：切换项目时强制关闭本窗口全部远程 Shell / SFTP；SFTP 优先复用同一 Shell Session
+- SFTP：上传/下载；双击文件夹进入、双击文本文件在编辑区打开（⌘S 保存回远程）；右键编辑/下载/重命名/删除
 
 ## 命名规范
 

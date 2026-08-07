@@ -45,6 +45,19 @@ let unlistenData: UnlistenFn | null = null;
 let unlistenExit: UnlistenFn | null = null;
 let unlistenError: UnlistenFn | null = null;
 let detachInput: (() => void) | null = null;
+/** 串行写入 SSH 通道，避免并发 invoke 打乱 Vim 键序 */
+let writeChain = Promise.resolve();
+
+function queueSshWrite(data: string) {
+  if (!data) return;
+  writeChain = writeChain
+    .then(() => sshShellWrite(props.sessionId, data))
+    .catch((err) => {
+      if (!term || disposed) return;
+      const message = err instanceof Error ? err.message : String(err);
+      term.writeln(`\r\n\x1b[31m写入失败: ${message}\x1b[0m`);
+    });
+}
 
 function fit() {
   if (!term || !fitAddon || !props.active) return;
@@ -105,11 +118,7 @@ async function boot() {
 
     detachInput = attachTerminalInputBridge(term, (data) => {
       if (!connected) return;
-      void sshShellWrite(props.sessionId, data).catch((err) => {
-        if (!term || disposed) return;
-        const message = err instanceof Error ? err.message : String(err);
-        term.writeln(`\r\n\x1b[31m写入失败: ${message}\x1b[0m`);
-      });
+      queueSshWrite(data);
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -189,7 +198,12 @@ watch(theme, () => {
   padding: 0 2px;
 }
 
-.terminal-host :deep(.xterm-helper-textarea) {
+.terminal-host.tui-mode :deep(.xterm-helper-textarea) {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.terminal-host:not(.tui-mode) :deep(.xterm-helper-textarea) {
   user-select: text !important;
   -webkit-user-select: text !important;
 }
