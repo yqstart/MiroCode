@@ -160,7 +160,10 @@ watch(
 </script>
 
 <template>
-  <div ref="host" class="terminal-host" />
+  <!-- padding 放外层；xterm 挂无 padding 内层，避免 FitAddon 多算约 1 行导致 Vim 末行截断 -->
+  <div class="terminal-host">
+    <div ref="host" class="terminal-fit" />
+  </div>
 </template>
 
 <style scoped>
@@ -172,7 +175,13 @@ watch(
   background: var(--bg-terminal, var(--bg-app));
 }
 
-.terminal-host :deep(.xterm) {
+.terminal-fit {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.terminal-fit :deep(.xterm) {
   height: 100%;
 }
 
