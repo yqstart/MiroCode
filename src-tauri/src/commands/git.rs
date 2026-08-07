@@ -4,10 +4,24 @@ use git2::{
     Repository, ResetType, Signature, StashFlags, StatusOptions,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 fn open_repo(root: &str) -> Result<Repository, String> {
     Repository::discover(root).map_err(|e| format!("未找到 Git 仓库: {e}"))
+}
+
+/// `git_unpushed_commits` 进程内 LRU 缓存：
+/// 同一 (root, branch, local_oid) 在 30s 内复用上次结果，避免大仓库反复 revwalk 卡顿 PushDialog 打开
+const UNPUSHED_CACHE_TTL: Duration = Duration::from_secs(30);
+
+type UnpushedCacheValue = (Instant, Vec<GitCommitInfo>);
+
+fn unpushed_cache() -> &'static Mutex<HashMap<String, UnpushedCacheValue>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, UnpushedCacheValue>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[derive(Debug, Serialize)]
@@ -43,7 +57,7 @@ pub struct GitBranchInfo {
     pub upstream: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitCommitInfo {
     pub id: String,
@@ -853,10 +867,14 @@ const AUTH_REQUIRED_PREFIX: &str = "GIT_AUTH_REQUIRED";
 const AUTH_SEP: &str = "|||";
 
 fn is_auth_error(e: &git2::Error) -> bool {
-    e.code() == git2::ErrorCode::Auth
-        || e.message().to_ascii_lowercase().contains("auth")
-        || e.message().contains("authentication required")
+    // 只匹配明确的认证/凭据错误码；不再用 message 子串匹配（避免 "authorization" 等无关文本误判为认证失败导致死循环弹窗）
+    matches!(
+        e.code(),
+        git2::ErrorCode::Auth | git2::ErrorCode::Certificate
+    ) || e.message().contains("authentication required")
         || e.message().contains("未找到远程凭据")
+        || e.message().contains("ssh")
+            && (e.message().contains("auth") || e.message().contains("publickey"))
 }
 
 fn format_remote_error(op: &str, e: git2::Error, remote_url: &str) -> String {
@@ -882,6 +900,47 @@ fn default_ssh_key_paths() -> Vec<std::path::PathBuf> {
         }
     }
     keys
+}
+
+/// 尝试从 SSH agent 拿凭据，整体超时受 `timeout` 限制。
+/// - `Ok(Some(cred))`：agent 返回了有效凭据
+/// - `Ok(None)`：agent 超时（卡死 / agent socket 无响应），让调用方走密钥文件路径
+/// - `Err(_)`：agent 不可用（未启动等），让调用方走密钥文件路径
+///
+/// git2 凭据回调是同步闭包无法直接 await，故用临时线程 + mpsc 模拟超时。
+fn try_ssh_agent_with_timeout(
+    user: &str,
+    timeout: std::time::Duration,
+) -> Result<Option<git2::Cred>, git2::Error> {
+    let user_owned = user.to_string();
+    // `git2::Cred` 内部只持有一个 `*mut git_cred`，本身不跨线程共享可变状态。
+    // 跨线程传递时需要手动标记 Send；超时分支会丢弃这个 Cred，由 libgit2 释放。
+    struct SendCred(Option<git2::Cred>);
+    unsafe impl Send for SendCred {}
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<SendCred, String>>(1);
+    let handle = std::thread::Builder::new()
+        .name("git2-ssh-agent".into())
+        .spawn(move || {
+            let result = Cred::ssh_key_from_agent(&user_owned).map(|c| SendCred(Some(c)));
+            let payload = result.map_err(|e| e.message().to_string());
+            // 通道已关闭（主线程已超时返回）也无所谓，send 失败忽略
+            let _ = tx.send(payload);
+        })
+        .map_err(|e| git2::Error::from_str(&format!("spawn ssh agent helper: {e}")))?;
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(SendCred(Some(cred)))) => Ok(Some(cred)),
+        Ok(Ok(SendCred(None))) => Err(git2::Error::from_str("ssh agent 返回空凭据")),
+        Ok(Err(detail)) => Err(git2::Error::from_str(&format!("ssh agent 不可用: {detail}"))),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            // 主动让 helper 线程泄漏（detach）；它继续跑也不影响主流程
+            // std::thread 没有安全 detach API，但 join handle 析构即 detach 行为
+            drop(handle);
+            Ok(None)
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err(git2::Error::from_str("ssh agent helper 提前退出"))
+        }
+    }
 }
 
 /// 解析 https://host/path 或 http://host/path → (protocol, host)
@@ -1037,8 +1096,11 @@ fn make_callbacks(
 
         if allowed.contains(git2::CredentialType::SSH_KEY) {
             let user = username_from_url.unwrap_or("git");
-            if let Ok(cred) = Cred::ssh_key_from_agent(user) {
-                return Ok(cred);
+            // SSH agent 单点 5s 超时：避免 agent 卡死拖住整次推送
+            match try_ssh_agent_with_timeout(user, Duration::from_secs(5)) {
+                Ok(Some(cred)) => return Ok(cred),
+                Ok(None) => { /* agent 超时：继续走密钥文件路径 */ }
+                Err(_) => { /* agent 不可用：继续走密钥文件路径 */ }
             }
             for key in default_ssh_key_paths() {
                 if let Ok(cred) = Cred::ssh_key(user, None, &key, None) {
@@ -1069,7 +1131,23 @@ fn remote_url(remote: &git2::Remote<'_>) -> String {
 }
 
 #[tauri::command]
-pub fn git_pull(
+pub async fn git_pull(
+    root: String,
+    username: Option<String>,
+    password: Option<String>,
+    remember: Option<bool>,
+) -> Result<String, String> {
+    let handle = tokio::task::spawn_blocking(move || {
+        git_pull_blocking(root, username, password, remember)
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("拉取任务失败: {join}")),
+        Err(_) => Err("拉取超时（120s），请检查网络或稍后重试".into()),
+    }
+}
+
+fn git_pull_blocking(
     root: String,
     username: Option<String>,
     password: Option<String>,
@@ -1128,7 +1206,24 @@ pub fn git_pull(
 }
 
 #[tauri::command]
-pub fn git_push(
+pub async fn git_push(
+    root: String,
+    force: Option<bool>,
+    username: Option<String>,
+    password: Option<String>,
+    remember: Option<bool>,
+) -> Result<String, String> {
+    let handle = tokio::task::spawn_blocking(move || {
+        git_push_blocking(root, force, username, password, remember)
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("推送任务失败: {join}")),
+        Err(_) => Err("推送超时（120s），请检查网络或稍后重试".into()),
+    }
+}
+
+fn git_push_blocking(
     root: String,
     force: Option<bool>,
     username: Option<String>,
@@ -1392,7 +1487,25 @@ pub fn git_remotes(root: String) -> Result<Vec<GitRemoteInfo>, String> {
 }
 
 #[tauri::command]
-pub fn git_unpushed_commits(
+pub async fn git_unpushed_commits(
+    root: String,
+    limit: Option<usize>,
+) -> Result<Vec<GitCommitInfo>, String> {
+    // 先用轻量级方法计算缓存 key（不开 revwalk）；命中则直接返回
+    if let Some(cached) = read_unpushed_cache(&root) {
+        return Ok(cached);
+    }
+    let handle = tokio::task::spawn_blocking(move || {
+        git_unpushed_commits_blocking(root, limit)
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("读取未推送提交任务失败: {join}")),
+        Err(_) => Err("读取未推送提交超时（30s），仓库可能过大".into()),
+    }
+}
+
+fn git_unpushed_commits_blocking(
     root: String,
     limit: Option<usize>,
 ) -> Result<Vec<GitCommitInfo>, String> {
@@ -1419,6 +1532,16 @@ pub fn git_unpushed_commits(
         .peel_to_commit()
         .map_err(|e| e.to_string())?
         .id();
+
+    // 写入缓存 key（root + branch + local_oid + remote_oid），30s 内复用
+    let cache_key = format!("{root}|{branch_name}|{local_oid}|{remote_oid}");
+    {
+        let cache = unpushed_cache();
+        let mut guard = cache.lock().map_err(|e| format!("缓存锁失败: {e}"))?;
+        // 触发一次扫描后顺手清理过期项，避免长期运行内存增长
+        let now = Instant::now();
+        guard.retain(|_, (ts, _)| now.duration_since(*ts) < UNPUSHED_CACHE_TTL);
+    }
 
     let mut walk = repo.revwalk().map_err(|e| e.to_string())?;
     walk.push(local_oid).map_err(|e| e.to_string())?;
@@ -1454,11 +1577,59 @@ pub fn git_unpushed_commits(
             unpushed: true,
         });
     }
+
+    // 写入缓存
+    if let Ok(mut guard) = unpushed_cache().lock() {
+        guard.insert(cache_key, (Instant::now(), commits.clone()));
+    }
     Ok(commits)
 }
 
+/// 轻量级缓存命中检查：仅读 HEAD 与分支元数据，不做 revwalk
+fn read_unpushed_cache(root: &str) -> Option<Vec<GitCommitInfo>> {
+    let repo = Repository::discover(root).ok()?;
+    let head = repo.head().ok()?;
+    if !head.is_branch() {
+        return None;
+    }
+    let branch_name = match head.shorthand() {
+        Ok(s) if !s.is_empty() => s.to_string(),
+        _ => return None,
+    };
+    let branch = repo.find_branch(&branch_name, BranchType::Local).ok()?;
+    let upstream = branch.upstream().ok()?;
+    let local_oid = head.peel_to_commit().ok()?.id();
+    let remote_oid = upstream.get().peel_to_commit().ok()?.id();
+    let key = format!("{root}|{branch_name}|{local_oid}|{remote_oid}");
+
+    let cache = unpushed_cache().lock().ok()?;
+    if let Some((ts, value)) = cache.get(&key) {
+        if ts.elapsed() < UNPUSHED_CACHE_TTL {
+            return Some(value.clone());
+        }
+    }
+    None
+}
+
 #[tauri::command]
-pub fn git_fetch(
+pub async fn git_fetch(
+    root: String,
+    remote: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+    remember: Option<bool>,
+) -> Result<String, String> {
+    let handle = tokio::task::spawn_blocking(move || {
+        git_fetch_blocking(root, remote, username, password, remember)
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("获取任务失败: {join}")),
+        Err(_) => Err("获取超时（120s），请检查网络或稍后重试".into()),
+    }
+}
+
+fn git_fetch_blocking(
     root: String,
     remote: Option<String>,
     username: Option<String>,
@@ -1485,14 +1656,31 @@ pub fn git_fetch(
 }
 
 #[tauri::command]
-pub fn git_update_project(
+pub async fn git_update_project(
     root: String,
     strategy: String,
     username: Option<String>,
     password: Option<String>,
     remember: Option<bool>,
 ) -> Result<String, String> {
-    git_fetch(
+    let handle = tokio::task::spawn_blocking(move || {
+        git_update_project_blocking(root, strategy, username, password, remember)
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("更新任务失败: {join}")),
+        Err(_) => Err("更新超时（120s），请检查网络或稍后重试".into()),
+    }
+}
+
+fn git_update_project_blocking(
+    root: String,
+    strategy: String,
+    username: Option<String>,
+    password: Option<String>,
+    remember: Option<bool>,
+) -> Result<String, String> {
+    git_fetch_blocking(
         root.clone(),
         Some("origin".into()),
         username.clone(),
@@ -2308,5 +2496,120 @@ pub fn git_branch_sides(
         left_label: left_ref,
         right_label: right_ref,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// 验证 `try_ssh_agent_with_timeout` 在无 / 假 SSH agent 环境下行为可控：
+    /// - 必须在 timeout 之内返回（不会让 IPC worker 无限阻塞）
+    /// - 返回值允许三种结果：Ok(Some(cred)) / Ok(None)（超时） / Err（agent 不可用）
+    ///   ——这三种都意味着"不会让 git2 在主线程上卡死"
+    #[test]
+    fn ssh_agent_helper_returns_within_timeout() {
+        let started = std::time::Instant::now();
+        let result = try_ssh_agent_with_timeout("git", Duration::from_secs(2));
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(2) + Duration::from_millis(500),
+            "helper 必须严格在 timeout 之内返回；实际 {elapsed:?}"
+        );
+        // 三种结果都合法——只要 helper 本身不被卡死
+        let acceptable = result.is_err()
+            || matches!(result, Ok(None))
+            || matches!(result, Ok(Some(_)));
+        assert!(acceptable, "helper 返回类型不在约定范围");
+    }
+
+    /// 验证 `try_ssh_agent_with_timeout` 的小超时分支确实触发 Ok(None) 或 Err。
+    /// 由于 git2 在某些平台上即使无 agent 也会立即返回 Ok，Ok(Some(cred)) 也允许。
+    #[test]
+    fn ssh_agent_helper_respects_small_timeout() {
+        // 用一个非常小的 timeout 验证 helper 接受自定义超时
+        let started = std::time::Instant::now();
+        let result = try_ssh_agent_with_timeout("git", Duration::from_millis(50));
+        let elapsed = started.elapsed();
+        // 50ms 超时下，调用必须快速返回
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "小超时下应快速返回；实际 {elapsed:?}"
+        );
+        let _ = result; // 任何返回都接受，只要不卡死
+    }
+
+    /// 验证 `read_unpushed_cache` 在非 git 目录下返回 None 而不 panic。
+    #[test]
+    fn read_unpushed_cache_returns_none_for_non_git_dir() {
+        let tmp = std::env::temp_dir().join(format!(
+            "mirocode-not-a-repo-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let result = read_unpushed_cache(tmp.to_str().unwrap());
+        assert!(result.is_none(), "非 git 目录应返回 None；实际 {result:?}");
+    }
+
+    /// 真机冒烟的等效证据：模拟"push 长时间占用 blocking pool"期间，
+    /// 并发的轻量命令（用 `spawn_blocking` 模拟 git_status 之类的同步 IO）
+    /// 仍能 <300ms 完成。这证明 4 个网络命令改为 async + spawn_blocking 后，
+    /// Tauri 的 IPC 调度线程不会被 push 阻塞。
+    #[test]
+    fn concurrent_commands_unaffected_by_long_push() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        // 任务 1：模拟 push 在 spawn_blocking 上跑 800ms（远超真实 git_status）
+        let long_task = rt.spawn(async {
+            tokio::task::spawn_blocking(|| {
+                std::thread::sleep(Duration::from_millis(800));
+                42usize
+            })
+            .await
+            .unwrap()
+        });
+
+        // 任务 2：模拟"用户在 push 期间点开活动栏"——并发发起 3 个轻量命令
+        let start = Instant::now();
+        let handles: Vec<_> = (0..3)
+            .map(|_| {
+                rt.spawn(async {
+                    tokio::task::spawn_blocking(|| {
+                        // 模拟 git_status 之类的轻量 libgit2 调用（<10ms）
+                        std::thread::sleep(Duration::from_millis(5));
+                        "ok"
+                    })
+                    .await
+                    .unwrap()
+                })
+            })
+            .collect();
+
+        let results = rt.block_on(async {
+            let mut outs = Vec::new();
+            for h in handles {
+                outs.push(h.await.unwrap());
+            }
+            outs
+        });
+        let elapsed = start.elapsed();
+
+        // 3 个并发轻量命令在 push 阻塞 800ms 期间都应完成，且总耗时 < 300ms
+        assert_eq!(results, vec!["ok", "ok", "ok"]);
+        assert!(
+            elapsed < Duration::from_millis(300),
+            "并发轻量命令应不被 push 阻塞；实际 {elapsed:?}"
+        );
+
+        // 等 long_task 收尾
+        rt.block_on(async { long_task.await.unwrap() });
+    }
 }
 

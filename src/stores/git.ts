@@ -91,6 +91,10 @@ export const useGitStore = defineStore("git", () => {
   const loading = ref(false);
   const commitMessage = ref("");
   const amendCommit = ref(false);
+  /// 远端操作（push/pull/fetch/update）进行中：用于禁用重复点击。
+  /// 注意：**不会**影响其他 UI 元素（活动栏/标签/资源树），
+  /// 它们走完全独立的 store 与组件树，互不阻塞。
+  const remoteInFlight = ref(false);
   let refreshSeq = 0;
   let refreshAgain = false;
 
@@ -486,18 +490,56 @@ export const useGitStore = defineStore("git", () => {
   ) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
+    // 防止用户连点 push/pull 按钮导致后端并发调用同一 git 操作
+    if (remoteInFlight.value) {
+      workspace.showNotice(t("git.remoteInFlight"), 2400);
+      return;
+    }
+    remoteInFlight.value = true;
     const root = workspace.rootPath;
     let auth: GitAuthPayload | undefined;
     let lastUser = "";
+    // 最多 1 次重试：第 0 次尝试 → 失败弹窗 → 第 1 次尝试用新凭据；仍认证失败则停止弹窗
+    const MAX_ATTEMPTS = 2;
 
-    for (;;) {
+    // 进入远端操作前先发一条"进行中"notice，避免网络慢/认证中时 UI 看起来卡死。
+    // 持续时长留 0，让后续的成功/失败 notice 自然覆盖它。
+    const progressMessages: Record<typeof kind, string> = {
+      push: t("git.pushing"),
+      pull: t("git.pulling"),
+      fetch: t("git.fetching"),
+      update: t("git.updating"),
+    };
+    workspace.showNotice(progressMessages[kind]);
+
+    try {
+      await runRemoteWithAuthInner(kind, force, updateStrategy, root, auth, lastUser, MAX_ATTEMPTS, workspace);
+    } finally {
+      remoteInFlight.value = false;
+    }
+  }
+
+  async function runRemoteWithAuthInner(
+    kind: "pull" | "push" | "fetch" | "update",
+    force: boolean,
+    updateStrategy: "merge" | "rebase",
+    root: string,
+    auth: GitAuthPayload | undefined,
+    lastUserIn: string,
+    maxAttempts: number,
+    workspace: ReturnType<typeof useWorkspaceStore>,
+  ) {
+    let authLocal = auth;
+    let lastUser = lastUserIn;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         let msg = "";
-        if (kind === "pull") msg = await gitPull(root, auth);
-        else if (kind === "push") msg = await gitPush(root, force, auth);
-        else if (kind === "fetch") msg = await gitFetch(root, "origin", auth);
-        else msg = await gitUpdateProject(root, updateStrategy, auth);
-        const remembered = auth?.remember === true;
+        if (kind === "pull") msg = await gitPull(root, authLocal);
+        else if (kind === "push") msg = await gitPush(root, force, authLocal);
+        else if (kind === "fetch") msg = await gitFetch(root, "origin", authLocal);
+        else msg = await gitUpdateProject(root, updateStrategy, authLocal);
+        const remembered = authLocal?.remember === true;
         const fallback = msg || t("git.done");
         workspace.showNotice(
           remembered ? t("git.doneRemembered", { msg: fallback }) : fallback,
@@ -509,6 +551,14 @@ export const useGitStore = defineStore("git", () => {
         const parsed = parseGitAuthError(raw);
         if (!parsed) {
           workspace.showNotice(raw, 4800);
+          return;
+        }
+        // 已用新凭据重试一次仍失败：不再继续弹窗，避免死循环
+        if (attempt + 1 >= maxAttempts) {
+          workspace.showNotice(
+            t("git.authFailedGiveUp", { detail: parsed.detail }),
+            6000,
+          );
           return;
         }
         const { promptGitAuth } = await import("@/shared/gitAuthDialog");
@@ -530,12 +580,12 @@ export const useGitStore = defineStore("git", () => {
         const next = await promptGitAuth({
           title: titles[kind],
           remoteUrl: parsed.url,
-          message: auth ? t("git.authRetry") : t("git.authRequired"),
+          message: authLocal ? t("git.authRetry") : t("git.authRequired"),
           defaultUsername,
         });
         if (!next) return;
         lastUser = next.username;
-        auth = {
+        authLocal = {
           username: next.username,
           password: next.password,
           remember: next.remember,
@@ -1202,6 +1252,7 @@ export const useGitStore = defineStore("git", () => {
     diffTitle,
     diffVisible,
     loading,
+    remoteInFlight,
     commitMessage,
     amendCommit,
     statusMap,

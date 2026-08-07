@@ -1,5 +1,50 @@
 import { invoke } from "@tauri-apps/api/core";
 
+/**
+ * 慢 IPC 自动检测阈值（毫秒）
+ * - 大于此值的 IPC 会主动通过 workspace.showNotice 弹一条 warning
+ * - 不依赖 DevTools 截屏；用户直接在 UI 看到"哪条 IPC 慢/卡"
+ * - 仅在开发模式生效，避免生产环境噪音
+ */
+const SLOW_IPC_THRESHOLD_MS = 2000;
+
+/**
+ * 统一的 IPC invoke 包装：
+ * - dev 模式 console.time/timeEnd 记录每个命令耗时
+ * - dev 模式自动检测 >2s 的 IPC 主动弹 warn notice（不依赖 DevTools 截屏）
+ * - 显式标注命令名，方便排查"哪个 IPC 调用慢 / 卡"
+ */
+function ipc<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (!import.meta.env.DEV) {
+    return invoke<T>(cmd, args);
+  }
+  const label = `ipc:${cmd}`;
+  const started = performance.now();
+  console.time(label);
+  return invoke<T>(cmd, args).finally(() => {
+    const elapsed = performance.now() - started;
+    console.timeEnd(label);
+    if (elapsed > SLOW_IPC_THRESHOLD_MS) {
+      // 主动弹 warn notice，告知用户"哪条 IPC 卡了 + 多少毫秒"
+      // 走动态 import 避免循环依赖
+      void import("@/stores/workspace")
+        .then(({ useWorkspaceStore }) => {
+          try {
+            useWorkspaceStore().showNotice(
+              `⚠ IPC 慢调用：${cmd} 耗时 ${Math.round(elapsed)}ms（> ${SLOW_IPC_THRESHOLD_MS}ms 阈值）`,
+              6000,
+            );
+          } catch {
+            /* store 未初始化时静默忽略 */
+          }
+        })
+        .catch(() => {
+          /* 静默 */
+        });
+    }
+  });
+}
+
 export interface GitStatusEntry {
   path: string;
   status: string;
@@ -44,11 +89,11 @@ export interface GitDiffResult {
 export type ConflictStrategy = "ours" | "theirs" | "manual";
 
 export async function gitStatus(root: string): Promise<GitStatusSnapshot> {
-  return invoke("git_status", { root });
+  return ipc("git_status", { root });
 }
 
 export async function gitInit(root: string): Promise<void> {
-  return invoke("git_init", { root });
+  return ipc("git_init", { root });
 }
 
 export async function gitSetRemote(
@@ -56,15 +101,15 @@ export async function gitSetRemote(
   name: string,
   url: string,
 ): Promise<void> {
-  return invoke("git_set_remote", { root, name, url });
+  return ipc("git_set_remote", { root, name, url });
 }
 
 export async function gitStage(root: string, paths: string[]): Promise<void> {
-  return invoke("git_stage", { root, paths });
+  return ipc("git_stage", { root, paths });
 }
 
 export async function gitUnstage(root: string, paths: string[]): Promise<void> {
-  return invoke("git_unstage", { root, paths });
+  return ipc("git_unstage", { root, paths });
 }
 
 export async function gitCommit(
@@ -73,7 +118,7 @@ export async function gitCommit(
   paths?: string[],
   amend?: boolean,
 ): Promise<void> {
-  return invoke("git_commit", {
+  return ipc("git_commit", {
     root,
     message,
     paths,
@@ -82,7 +127,7 @@ export async function gitCommit(
 }
 
 export async function gitBranches(root: string): Promise<GitBranchInfo[]> {
-  return invoke("git_branches", { root });
+  return ipc("git_branches", { root });
 }
 
 export async function gitCheckout(
@@ -90,7 +135,7 @@ export async function gitCheckout(
   name: string,
   force?: boolean,
 ): Promise<void> {
-  return invoke("git_checkout", { root, name, force: force ?? false });
+  return ipc("git_checkout", { root, name, force: force ?? false });
 }
 
 export async function gitCreateBranch(
@@ -98,11 +143,11 @@ export async function gitCreateBranch(
   name: string,
   checkout: boolean,
 ): Promise<void> {
-  return invoke("git_create_branch", { root, name, checkout });
+  return ipc("git_create_branch", { root, name, checkout });
 }
 
 export async function gitDeleteBranch(root: string, name: string): Promise<void> {
-  return invoke("git_delete_branch", { root, name });
+  return ipc("git_delete_branch", { root, name });
 }
 
 export async function gitRenameBranch(
@@ -110,14 +155,14 @@ export async function gitRenameBranch(
   from: string,
   to: string,
 ): Promise<void> {
-  return invoke("git_rename_branch", { root, from, to });
+  return ipc("git_rename_branch", { root, from, to });
 }
 
 export async function gitLog(
   root: string,
   limit?: number,
 ): Promise<GitCommitInfo[]> {
-  return invoke("git_log", { root, limit });
+  return ipc("git_log", { root, limit });
 }
 
 export async function gitDiff(
@@ -125,7 +170,7 @@ export async function gitDiff(
   path?: string,
   staged?: boolean,
 ): Promise<GitDiffResult> {
-  return invoke("git_diff", { root, path, staged });
+  return ipc("git_diff", { root, path, staged });
 }
 
 export interface GitFileSides {
@@ -149,21 +194,21 @@ export async function gitFileSides(
   path: string,
   staged?: boolean,
 ): Promise<GitFileSides> {
-  return invoke("git_file_sides", { root, path, staged });
+  return ipc("git_file_sides", { root, path, staged });
 }
 
 export async function gitConflictSides(
   root: string,
   path: string,
 ): Promise<GitConflictSides> {
-  return invoke("git_conflict_sides", { root, path });
+  return ipc("git_conflict_sides", { root, path });
 }
 
 export async function gitPull(
   root: string,
   auth?: { username: string; password: string; remember?: boolean },
 ): Promise<string> {
-  return invoke("git_pull", {
+  return ipc("git_pull", {
     root,
     username: auth?.username ?? null,
     password: auth?.password ?? null,
@@ -176,7 +221,7 @@ export async function gitPush(
   force?: boolean,
   auth?: { username: string; password: string; remember?: boolean },
 ): Promise<string> {
-  return invoke("git_push", {
+  return ipc("git_push", {
     root,
     force: force ?? false,
     username: auth?.username ?? null,
@@ -190,7 +235,7 @@ export async function gitStash(
   message?: string,
   includeUntracked?: boolean,
 ): Promise<void> {
-  return invoke("git_stash", {
+  return ipc("git_stash", {
     root,
     message,
     includeUntracked: includeUntracked ?? false,
@@ -204,46 +249,46 @@ export interface GitStashEntry {
 }
 
 export async function gitStashList(root: string): Promise<GitStashEntry[]> {
-  return invoke("git_stash_list", { root });
+  return ipc("git_stash_list", { root });
 }
 
 export async function gitStashPop(root: string, index?: number): Promise<void> {
-  return invoke("git_stash_pop", { root, index: index ?? null });
+  return ipc("git_stash_pop", { root, index: index ?? null });
 }
 
 export async function gitStashApply(root: string, index: number): Promise<void> {
-  return invoke("git_stash_apply", { root, index });
+  return ipc("git_stash_apply", { root, index });
 }
 
 export async function gitStashDrop(root: string, index: number): Promise<void> {
-  return invoke("git_stash_drop", { root, index });
+  return ipc("git_stash_drop", { root, index });
 }
 
 export async function gitDiscardPaths(
   root: string,
   paths: string[],
 ): Promise<void> {
-  return invoke("git_discard_paths", { root, paths });
+  return ipc("git_discard_paths", { root, paths });
 }
 
 export async function gitResetHard(root: string): Promise<void> {
-  return invoke("git_reset_hard", { root });
+  return ipc("git_reset_hard", { root });
 }
 
 export async function gitUndoCommit(root: string): Promise<void> {
-  return invoke("git_undo_commit", { root });
+  return ipc("git_undo_commit", { root });
 }
 
 export async function gitRevertTo(root: string, commitId: string): Promise<void> {
-  return invoke("git_revert_to", { root, commitId });
+  return ipc("git_revert_to", { root, commitId });
 }
 
 export async function gitMergeBranch(root: string, name: string): Promise<string> {
-  return invoke("git_merge_branch", { root, name });
+  return ipc("git_merge_branch", { root, name });
 }
 
 export async function gitConflictFiles(root: string): Promise<string[]> {
-  return invoke("git_conflict_files", { root });
+  return ipc("git_conflict_files", { root });
 }
 
 export async function gitResolveConflict(
@@ -251,7 +296,7 @@ export async function gitResolveConflict(
   path: string,
   strategy: ConflictStrategy,
 ): Promise<void> {
-  return invoke("git_resolve_conflict", { root, path, strategy });
+  return ipc("git_resolve_conflict", { root, path, strategy });
 }
 
 export interface GitRemoteInfo {
@@ -275,7 +320,7 @@ export type GitAuthPayload = {
 
 /** 查 Miro Code 已记住的 HTTPS 用户名（按远程 host） */
 export async function gitStoredUsername(url: string): Promise<string | null> {
-  return invoke("git_stored_username", { url });
+  return ipc("git_stored_username", { url });
 }
 
 export async function gitFetch(
@@ -283,7 +328,7 @@ export async function gitFetch(
   remote?: string,
   auth?: GitAuthPayload,
 ): Promise<string> {
-  return invoke("git_fetch", {
+  return ipc("git_fetch", {
     root,
     remote: remote ?? null,
     username: auth?.username ?? null,
@@ -297,7 +342,7 @@ export async function gitUpdateProject(
   strategy: "merge" | "rebase",
   auth?: GitAuthPayload,
 ): Promise<string> {
-  return invoke("git_update_project", {
+  return ipc("git_update_project", {
     root,
     strategy,
     username: auth?.username ?? null,
@@ -307,7 +352,7 @@ export async function gitUpdateProject(
 }
 
 export async function gitRebaseBranch(root: string, onto: string): Promise<string> {
-  return invoke("git_rebase_branch", { root, onto });
+  return ipc("git_rebase_branch", { root, onto });
 }
 
 export interface GitRebaseStatus {
@@ -327,26 +372,26 @@ export interface GitRebaseStep {
 }
 
 export async function gitRebaseStatus(root: string): Promise<GitRebaseStatus> {
-  return invoke("git_rebase_status", { root });
+  return ipc("git_rebase_status", { root });
 }
 
 export async function gitRebaseContinue(root: string): Promise<string> {
-  return invoke("git_rebase_continue", { root });
+  return ipc("git_rebase_continue", { root });
 }
 
 export async function gitRebaseAbort(root: string): Promise<string> {
-  return invoke("git_rebase_abort", { root });
+  return ipc("git_rebase_abort", { root });
 }
 
 export async function gitRebaseSkip(root: string): Promise<string> {
-  return invoke("git_rebase_skip", { root });
+  return ipc("git_rebase_skip", { root });
 }
 
 export async function gitRebasePlan(
   root: string,
   onto: string,
 ): Promise<GitCommitInfo[]> {
-  return invoke("git_rebase_plan", { root, onto });
+  return ipc("git_rebase_plan", { root, onto });
 }
 
 export async function gitRebaseInteractive(
@@ -354,11 +399,11 @@ export async function gitRebaseInteractive(
   onto: string,
   steps: GitRebaseStep[],
 ): Promise<string> {
-  return invoke("git_rebase_interactive", { root, onto, steps });
+  return ipc("git_rebase_interactive", { root, onto, steps });
 }
 
 export async function gitCherryPick(root: string, commitId: string): Promise<string> {
-  return invoke("git_cherry_pick", { root, commitId });
+  return ipc("git_cherry_pick", { root, commitId });
 }
 
 export async function gitReset(
@@ -366,22 +411,22 @@ export async function gitReset(
   commitId: string,
   mode: "soft" | "mixed" | "hard",
 ): Promise<string> {
-  return invoke("git_reset", { root, commitId, mode });
+  return ipc("git_reset", { root, commitId, mode });
 }
 
 export async function gitBlame(root: string, path: string): Promise<GitBlameLine[]> {
-  return invoke("git_blame", { root, path });
+  return ipc("git_blame", { root, path });
 }
 
 export async function gitRemotes(root: string): Promise<GitRemoteInfo[]> {
-  return invoke("git_remotes", { root });
+  return ipc("git_remotes", { root });
 }
 
 export async function gitUnpushedCommits(
   root: string,
   limit?: number,
 ): Promise<GitCommitInfo[]> {
-  return invoke("git_unpushed_commits", { root, limit });
+  return ipc("git_unpushed_commits", { root, limit });
 }
 
 export async function gitSetUpstream(
@@ -389,7 +434,7 @@ export async function gitSetUpstream(
   branch: string,
   upstream: string,
 ): Promise<void> {
-  return invoke("git_set_upstream", { root, branch, upstream });
+  return ipc("git_set_upstream", { root, branch, upstream });
 }
 
 export async function gitCheckoutRemote(
@@ -397,7 +442,7 @@ export async function gitCheckoutRemote(
   remoteRef: string,
   localName?: string,
 ): Promise<string> {
-  return invoke("git_checkout_remote", {
+  return ipc("git_checkout_remote", {
     root,
     remoteRef,
     localName: localName ?? null,
@@ -408,7 +453,7 @@ export async function gitRevertCommit(
   root: string,
   commitId: string,
 ): Promise<string> {
-  return invoke("git_revert_commit", { root, commitId });
+  return ipc("git_revert_commit", { root, commitId });
 }
 
 export async function gitCreateBranchAt(
@@ -417,21 +462,21 @@ export async function gitCreateBranchAt(
   commitId: string,
   checkout: boolean,
 ): Promise<void> {
-  return invoke("git_create_branch_at", { root, name, commitId, checkout });
+  return ipc("git_create_branch_at", { root, name, commitId, checkout });
 }
 
 export async function gitCheckoutCommit(
   root: string,
   commitId: string,
 ): Promise<string> {
-  return invoke("git_checkout_commit", { root, commitId });
+  return ipc("git_checkout_commit", { root, commitId });
 }
 
 export async function gitDeleteRemoteBranch(
   root: string,
   remoteRef: string,
 ): Promise<string> {
-  return invoke("git_delete_remote_branch", { root, remoteRef });
+  return ipc("git_delete_remote_branch", { root, remoteRef });
 }
 
 export async function gitBranchSides(
@@ -440,7 +485,7 @@ export async function gitBranchSides(
   rightRef: string,
   path?: string,
 ): Promise<GitFileSides> {
-  return invoke("git_branch_sides", {
+  return ipc("git_branch_sides", {
     root,
     leftRef,
     rightRef,

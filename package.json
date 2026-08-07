@@ -11,7 +11,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "release": "tauri build"
+    "release": "tauri build",
+    "e2e:ipc": "node scripts/e2e-ipc-selfcheck.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -55,6 +56,7 @@
     "@types/marked": "^6.0.0",
     "@types/node": "^24.13.3",
     "@vitejs/plugin-vue": "^5.2.1",
+    "puppeteer": "^25.5.0",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",
     "vue-tsc": "^2.1.10"
