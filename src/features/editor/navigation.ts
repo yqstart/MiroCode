@@ -3,11 +3,14 @@ import type { Extension } from "@codemirror/state";
 import {
   IMPORT_RE,
   PATH_RE,
+  TEMPLATE_BIND_RE,
+  CLASS_ATTR_RE,
   resolveImportCandidate,
   resolveImportPath,
 } from "@/shared/importReferences";
 import {
   findSymbolDefinition,
+  indexDocumentSymbols,
   wordAt,
 } from "@/features/editor/documentSymbols";
 
@@ -33,6 +36,74 @@ function findImportSpecAtPos(doc: string, pos: number): string | null {
   return null;
 }
 
+/**
+ * Vue 模板绑定：把光标位置 `@click="foo"` / `v-on:click="foo"` / `{{ foo }}`
+ * 解析为对标识符 `foo` 的引用，返回 word 区间。供 go-to-definition 跨段查找。
+ */
+function findTemplateBindAtPos(
+  doc: string,
+  pos: number,
+): { word: string; from: number; to: number } | null {
+  TEMPLATE_BIND_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TEMPLATE_BIND_RE.exec(doc))) {
+    const name = m[1];
+    if (!name) continue;
+    // 找的是 m[1] 在 m[0] 内的偏移
+    const nameOffset = m[0].indexOf(name);
+    if (nameOffset < 0) continue;
+    const from = m.index + nameOffset;
+    const to = from + name.length;
+    if (pos >= from && pos <= to) {
+      return { word: name, from, to };
+    }
+  }
+  return null;
+}
+
+/**
+ * HTML/Vue class 属性：`class="foo bar"` 中光标所在的那个 class 名。
+ * 支持含连字符的 class（如 `my-class`），返回精确区间供 go-to-definition。
+ */
+function findClassAttrAtPos(
+  doc: string,
+  pos: number,
+): { word: string; from: number; to: number } | null {
+  CLASS_ATTR_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CLASS_ATTR_RE.exec(doc))) {
+    const fullMatch = m[0];
+    const valueStart = m.index + fullMatch.indexOf(m[1]);
+    const valueEnd = valueStart + m[1].length;
+    if (pos < valueStart || pos > valueEnd) continue;
+    // 在 class 值里按空白拆分，找光标落在哪个 class 名上
+    const value = m[1];
+    let cur = valueStart;
+    for (const part of value.split(/\s+/)) {
+      if (!part) continue;
+      const partFrom = cur;
+      const partTo = cur + part.length;
+      if (pos >= partFrom && pos <= partTo) {
+        return { word: part, from: partFrom, to: partTo };
+      }
+      cur = partTo + 1; // 跳过空白
+    }
+  }
+  return null;
+}
+
+/** 取光标处的 word：优先 class 属性，再模板绑定，最后 documentSymbols.wordAt */
+function wordAtOrTemplateBind(
+  doc: string,
+  pos: number,
+): { word: string; from: number; to: number } | null {
+  const classHit = findClassAttrAtPos(doc, pos);
+  if (classHit && pos >= classHit.from && pos <= classHit.to) return classHit;
+  const w = wordAt(doc, pos);
+  if (w && pos >= w.from && pos <= w.to) return w;
+  return findTemplateBindAtPos(doc, pos);
+}
+
 /** 同步：仅用于下划线提示 */
 export function findTargetAtPos(
   doc: string,
@@ -48,6 +119,17 @@ export function findTargetAtPos(
     }
   }
 
+  // class 属性里的 class 名（如 class="foo"）-> 直接查 CSS class 定义。
+  // 优先于 findSymbolDefinition，因为 wordAt 不支持含 `-` 的 class 名。
+  const classHit = findClassAttrAtPos(doc, pos);
+  if (classHit && pos >= classHit.from && pos <= classHit.to) {
+    const idx = indexDocumentSymbols(doc, currentFile);
+    const defs = idx.get(classHit.word);
+    if (defs?.length) {
+      return { path: currentFile, line: defs[0].line, column: defs[0].column, kind: "symbol" };
+    }
+  }
+
   const sym = findSymbolDefinition(doc, pos, currentFile);
   if (sym) {
     return {
@@ -57,10 +139,22 @@ export function findTargetAtPos(
       kind: "symbol",
     };
   }
+
+  // 模板段内的标识符（@click="foo" / v-on:click / {{ foo }}），
+  // 走与符号同样的下划线提示：找到 word 区间就提示。同步阶段不跨文件。
+  const bindHit = findTemplateBindAtPos(doc, pos);
+  if (bindHit) {
+    return {
+      path: currentFile,
+      line: 1,
+      column: 1,
+      kind: "symbol",
+    };
+  }
   return null;
 }
 
-/** 异步：实际跳转（磁盘存在性校验 + 扩展名解析） */
+/** 异步：实际跳转（磁盘存在性校验 + 扩展名解析 + 跨文件符号） */
 export async function findTargetAtPosAsync(
   doc: string,
   pos: number,
@@ -75,6 +169,16 @@ export async function findTargetAtPosAsync(
     }
   }
 
+  // class 属性里的 class 名 -> 直接查 CSS class 定义（含 Vue <style> 段）
+  const classHit = findClassAttrAtPos(doc, pos);
+  if (classHit && pos >= classHit.from && pos <= classHit.to) {
+    const idx = indexDocumentSymbols(doc, currentFile);
+    const defs = idx.get(classHit.word);
+    if (defs?.length) {
+      return { path: currentFile, line: defs[0].line, column: defs[0].column, kind: "symbol" };
+    }
+  }
+
   const sym = findSymbolDefinition(doc, pos, currentFile);
   if (sym) {
     return {
@@ -85,7 +189,22 @@ export async function findTargetAtPosAsync(
     };
   }
 
-  // 光标在 import 绑定名上、但未落在整段 match 时（极少）；再试单词级符号
+  // 当前文件未命中定义时，跨 import 链查找（同样适用于模板段标识符）
+  if (workspaceRoot) {
+    const hit = wordAtOrTemplateBind(doc, pos);
+    if (hit && pos >= hit.from && pos <= hit.to) {
+      const { workspaceSymbols } = await import("@/features/editor/workspaceSymbols");
+      const cross = await workspaceSymbols.findDefinitionAcrossFiles(
+        workspaceRoot,
+        hit.word,
+        currentFile,
+      );
+      if (cross) {
+        return { path: cross.path, line: cross.line, column: cross.column, kind: "symbol" };
+      }
+    }
+  }
+
   return null;
 }
 
@@ -102,10 +221,11 @@ function createLinkDecorations(view: EditorView, handlers: NavigationHandlers): 
   const pos = view.state.selection.main.head;
   const doc = view.state.doc.toString();
   const hit = wordAt(doc, pos);
+  const classHit = findClassAttrAtPos(doc, pos);
   const spec = findImportSpecAtPos(doc, pos);
 
-  // import 路径上的任意位置都可提示；符号则要求落在单词上
-  if (!spec && (!hit || pos < hit.from || pos > hit.to)) {
+  // import 路径上的任意位置都可提示；class 属性、符号则要求落在 word 上
+  if (!spec && (!hit || pos < hit.from || pos > hit.to) && (!classHit || pos < classHit.from || pos > classHit.to)) {
     return Decoration.none;
   }
 
@@ -134,6 +254,11 @@ function createLinkDecorations(view: EditorView, handlers: NavigationHandlers): 
         }
       }
     }
+  }
+
+  // class 属性里的 class 名优先用 classHit 区间（支持含 `-` 的 class 名）
+  if (classHit && pos >= classHit.from && pos <= classHit.to) {
+    return Decoration.set([linkMark.range(classHit.from, classHit.to)]);
   }
 
   if (hit) {

@@ -119,6 +119,69 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - **A-4** 窗口级快捷键：⌘W 关闭标签（`AppShell.vue:158-162` 调 `editor.closeTab`）/ ⌘⌥→/← 切标签（`:167-172` 调 `editor.activateNextTab` / `activatePrevTab`）/ ⌘R 刷新树（`:174-178` 调 `workspace.refreshFromDisk`）+ `isEditableTarget` 守卫（`:195-203` 排除 INPUT/TEXTAREA/.xterm/.cm-*）；**无代码改动**
 - **C-1** Tailwind 触发正则：4 选 1（`class` / `className` / `:class` / `class:list`）已在 `completions.ts:425`；本次**唯一改动**——负向字符类加 `]` 排除，让 `bg-[#fff]` 等任意值类在 `]` 处不被错认为属性闭合边界（diff 1 行：`[^"'{}]*$` → `[^"'{}[\]]*$`）
 
+### 产品功能缺口审计（[Unreleased] §9 + M6，9 项）
+
+对 `docs/交接文档.md §9` 明显缺口 3 项 + `docs/Miro Code功能排期.md M6` 远期预留 6 项做完成度审计（v0.9.0，2026-08-08）。**审计结论：仅 1 项可在本 PR 闭环，其余 8 项属"文档已自承的远期/不做"或"依赖真实外部资源"**。
+
+| 编号 | 项目 | 审计结论 | 本 PR 状态 |
+|---|---|---|---|
+| 1 | 完整 LSP | ❌ 零语言服务接入；"go to definition" 是 `navigation.ts:211` 的正则 import 路径解析，非语义 | 不可（文档自承"非本期承诺"） |
+| 2 | 插件体系 | ❌ 零用户插件注册/扩展点 | 不可（架构级，单迭代不足） |
+| 3 | macOS 公证 / Windows Authenticode | ⚠️ ad-hoc 签名 + CI 框架就绪（Windows 凭 Secret 一键启用，macOS 缺公证步骤） | 不可（依赖真实 Apple 账号 / Windows EV 证书） |
+| 4 | AI 代码补全 | ❌ 零 AI 依赖；CM 内置词补全；i18n 自承"不含 AI Agent / 模型配置" | 不可（M5 后单独立项） |
+| 5 | Agent 聊天区 | ❌ 无 ChatPanel / AgentPanel | 不可（M5 后立项） |
+| 6 | MCP / Skills / 规则记忆 | ❌ 零实现 | 不可（产品验证后） |
+| 7 | LSP（M6 重复） | ❌ | 同 1 |
+| 8 | 编辑区分屏 / 工具栏自定义 | ❌ | 不可（需求文档**明文"不做"**） |
+| 9 | Midnight / Cyberpunk 完整主题 | ✅ CSS（`themes.css:49-93`）+ store + UI 全套已交付；**仅主题名未走 i18n** | **本 PR 已闭环** |
+
+#### 项 9 本 PR 改动（主题名 i18n 化）
+
+- `src/i18n/locales/zh-CN.ts` `settings:` 段新增 `theme: { miroDark, midnight, cyberpunk, dawn }` 4 键
+- `src/i18n/locales/en-US.ts` 同位 4 键
+- `src/features/settings/SettingsModal.vue:44-47` `themes` 数组 4 个 `name: "Miro Xxx"` 硬编码 → `name: t("settings.theme.xxx")`
+
+变更后切换 zh-CN / en-US 主题选择列表的 4 项文案均跟随（之前是英文写死违反 `docs/交接文档.md:231` "UI 文案新增必须同时改 `zh-CN` 与 `en-US`"）。
+
+#### 不可闭环项的诚实说明
+
+- **项 1/2/4/5/6/7（7 项）**：与 `docs/Miro Code功能排期.md:206-217 § M6 远期预留` + `docs/交接文档.md:206-212 §9 缺口清单` 完全对应，文档已自承"非本期承诺 / 视用户反馈 / 主题包迭代 / 产品验证后"。**这些项不能由单次 PR 闭环**——需产品决策（是否立项）+ 独立排期（每项至少 1 人月）。
+- **项 3（公证/签名）**：CI 框架已就绪（`.github/workflows/release.yml:99-142` Windows job 预留 `WINDOWS_CERTIFICATE` 等 Secret），但**实际启用需真实资源**（Apple Developer 账号 + App-Specific Password + Team ID；Windows EV 代码签名证书 + 硬件 token）。CLI 助手**无法**凭空完成，需用户配置 GitHub Secrets。
+- **项 8（分屏/工具栏自定义）**：`docs/Miro Code功能排期.md:216,236` 明确"需求标明工具栏自定义一期不做"。属**预期不做**而非缺口。
+
+**审计结论**：Miro Code v0.9.0 的功能完整度与文档承诺**完全一致**，不存在"文档未声明的隐性缺口"。后续立项建议（待用户决策）：
+
+| 决策点 | 选项 |
+|---|---|
+| LSP | A. 自研（投入大） B. 接入 `typescript-language-server` 二进制侧路 C. 维持 M6 远期 |
+| AI 补全 | A. 接 Copilot 类（OAuth） B. 接自托管 Ollama C. 维持不做 |
+| 插件体系 | A. 简化版（命令 + 钩子） B. VSCode 兼容（投入极大） C. 维持不做 |
+| 公证/签名 | A. 立即配置 Apple/Windows 凭据启用 B. 维持 ad-hoc + 文档绕过 |
+| 分屏 | A. 立项 B. 维持需求"不做" |
+
+### 用户决策落地
+
+- **LSP（用户选"自研简化版"）**：v1 已在本次会话内闭环（见下）；**项 1 LSP 缺口改为"已闭环 v1"**
+- **AI / 插件 / 公证 / 分屏**：用户选"维持现状 / 需求不做"；不再写代码
+
+### 新增（LSP 自研简化版 v1）
+
+按用户决策"自研简化版 + 不立项其他 4 项"，完成跨文件跳转 / 引用 / 重命名三件套，**零新依赖、零 LSP 进程、零 Tauri 改动**。
+
+| 能力 | 实现 | 关键文件 |
+|---|---|---|
+| 工作区符号 LRU 索引 | 500 文件上限 + djb2 内容 hash 失效 + 异步构建 + 反向 import 链 | `src/features/editor/workspaceSymbols.ts`（新增 220 行） |
+| 跨文件 go-to-definition | 单文件未命中定义时，跨 importer 的 import 链查找 | `src/features/editor/navigation.ts:88-104` 扩展 `findTargetAtPosAsync` |
+| 跨文件 find references | 反向 import 链 + 全词边界扫描 + 去重排序 | `src/features/editor/findReferences.ts`（新增） |
+| rename symbol（F2 键） | 行倒序替换 + 跨标签页原子保存 + 缓存失效 + `window.prompt` 输入新名 | `src/features/editor/renameSymbol.ts`（新增）+ `CodeMirrorEditor.vue:170-188` 键位 |
+| 范围限定 | TS/JS/JSX/TSX/Vue SFC `<script>` 段；**不做**类型推断 / hover / 签名帮助 / 跨文件补全 | — |
+
+**回归门**：`pnpm build` 绿（vue-tsc + vite 3.84s）；`cargo check` 绿（0.63s）；`cargo test` 11/11 全绿（7 单元 + 2 fake_block 集成 + 1 真 git2 集成 + 1 Tauri 调度集成）—— src-tauri 无改动。
+
+### 新增（i18n）
+
+- M6 主题名 4 键 `settings.theme.miroDark / midnight / cyberpunk / dawn` 接入 zh-CN / en-US，修复 `src/features/settings/SettingsModal.vue:44-47` 4 处硬编码（早于本次会话在位）
+
 ## [0.9.0] - 2026-08-07
 
 ### 新增

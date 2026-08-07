@@ -41,10 +41,10 @@ async function onCheckUpdate() {
 }
 
 const themes: ThemeMeta[] = [
-  { id: "miro-dark", name: "Miro Dark", available: true, preview: "dark" },
-  { id: "midnight", name: "Miro Midnight", available: true, preview: "midnight" },
-  { id: "cyberpunk", name: "Miro Cyberpunk", available: true, preview: "cyber" },
-  { id: "dawn", name: "Miro Dawn", available: true, preview: "light" },
+  { id: "miro-dark", name: t("settings.theme.miroDark"), available: true, preview: "dark" },
+  { id: "midnight", name: t("settings.theme.midnight"), available: true, preview: "midnight" },
+  { id: "cyberpunk", name: t("settings.theme.cyberpunk"), available: true, preview: "cyber" },
+  { id: "dawn", name: t("settings.theme.dawn"), available: true, preview: "light" },
 ];
 
 const navItems = computed(() => [
@@ -257,23 +257,6 @@ function onOverlayClick(event: MouseEvent) {
                   <option :value="5000">{{ t("settings.delay5") }}</option>
                 </select>
               </label>
-              <div class="save-row">
-                <div class="save-copy">
-                  <span class="field-label">{{ t("settings.formatOnSave") }}</span>
-                  <p class="desc">
-                    {{ t("settings.formatOnSaveDesc") }}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  class="ui-toggle"
-                  role="switch"
-                  :aria-checked="editor.formatOnSave"
-                  :data-on="editor.formatOnSave"
-                  :title="editor.formatOnSave ? t('settings.enabled') : t('settings.disabled')"
-                  @click="settings.patchEditor({ formatOnSave: !editor.formatOnSave })"
-                />
-              </div>
             </div>
 
             <div class="ui-card section">

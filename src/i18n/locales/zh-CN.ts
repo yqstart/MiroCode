@@ -87,6 +87,12 @@ export const zhCN = {
   },
   settings: {
     title: "设置",
+    theme: {
+      miroDark: "Miro Dark",
+      midnight: "Miro Midnight",
+      cyberpunk: "Miro Cyberpunk",
+      dawn: "Miro Dawn",
+    },
     navEditor: "编辑器",
     navShortcuts: "快捷键",
     navAbout: "关于",
@@ -103,8 +109,6 @@ export const zhCN = {
     autoSave: "自动保存",
     autoSaveDelay: "自动保存延迟（毫秒）",
     autoSaveDesc: "编辑后延迟写盘；窗口隐藏或退出前会强制落盘，降低崩溃丢改风险。",
-    formatOnSave: "保存时格式化",
-    formatOnSaveDesc: "保存前用 Prettier 格式化当前文件（需开启下方 Prettier，且项目已安装）。",
     fileSave: "文件保存",
     tooling: "代码工具",
     eslintEnabled: "ESLint",

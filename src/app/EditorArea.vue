@@ -262,6 +262,9 @@ function onTabsWheel(event: WheelEvent) {
 const editorCtx = ref<{ x: number; y: number; absPath: string } | null>(null);
 const tabCtx = ref<{ x: number; y: number; path: string } | null>(null);
 
+/** contextmenu 触发时间戳：用于避免同帧后续 mousedown 立刻把刚开的菜单关掉 */
+let ctxMenuOpenedAt = 0;
+
 const tabCtxIndex = computed(() => {
   if (!tabCtx.value) return -1;
   return tabs.value.findIndex((t) => t.path === tabCtx.value!.path);
@@ -311,6 +314,7 @@ function onTabContextMenu(event: MouseEvent, path: string) {
   editorCtx.value = null;
   const pos = clampMenuPos(event.clientX, event.clientY);
   tabCtx.value = { x: pos.x, y: pos.y, path };
+  ctxMenuOpenedAt = Date.now();
   activateFile(path);
 }
 
@@ -387,21 +391,51 @@ function onEditorContextMenu(event: MouseEvent) {
   event.preventDefault();
   event.stopPropagation();
   tabCtx.value = null;
+  // 右键时主动触发一次 git 刷新，避免 statusMap 暂空导致 git 菜单看不到
+  // （refresh 是异步的，菜单立即就显示，状态随后自然补上）
+  void git.refresh();
   const pos = clampMenuPos(event.clientX, event.clientY);
   editorCtx.value = {
     x: pos.x,
     y: pos.y,
     absPath: activeTab.value.path,
   };
+  // 标记 contextmenu 触发时刻；50ms 内的 mousedown 视为同一手势，不关菜单
+  ctxMenuOpenedAt = Date.now();
 }
 
-function onDocPointerDown(event: MouseEvent) {
-  // 右键打开菜单时忽略，避免 WKWebView 连带事件立刻关掉菜单
+/**
+ * 关闭逻辑说明：
+ * 1. 监听 `mousedown` 而非 `pointerdown`：`mousedown.button` 字段在所有浏览器/WKWebView 都可靠。
+ * 2. 时间守卫：contextmenu 触发后 80ms 内的 mousedown 视为同一手势的尾巴（如 macOS right-click
+ *    触发的后续 click），不关菜单。
+ * 3. 位置判定：点击坐标在菜单 bounding box 内部时**不**关（让菜单内 button 自己的 click
+ *    handler 负责关闭——它们会先把 editorCtx/tabCtx 置 null，再走业务逻辑）。
+ * 4. 右键 (button === 2) 仍跳过：避免新一轮 contextmenu 立刻关掉旧菜单。
+ */
+function onDocMouseDown(event: MouseEvent) {
   if (event.button === 2) return;
-  const el = event.target as Element | null;
-  if (el?.closest?.(".editor-ctx, .tab-ctx")) return;
+  if (editorCtx.value && pointInMenu(event.clientX, event.clientY, editorCtx.value)) return;
+  if (tabCtx.value && pointInMenu(event.clientX, event.clientY, tabCtx.value)) return;
+  if (Date.now() - ctxMenuOpenedAt < 80) return;
   editorCtx.value = null;
   tabCtx.value = null;
+}
+
+function pointInMenu(
+  x: number,
+  y: number,
+  menu: { x: number; y: number },
+): boolean {
+  // 菜单宽高通过 CSS 估算（与模板内 min-width 160/168px + 字号行高匹配）
+  const width = 200;
+  const height = 280;
+  return (
+    x >= menu.x &&
+    x <= menu.x + width &&
+    y >= menu.y &&
+    y <= menu.y + height
+  );
 }
 
 async function formatFromEditor() {
@@ -429,9 +463,9 @@ async function showDiffFromEditor() {
   await git.showDiff(rel, false);
 }
 
-onMounted(() => window.addEventListener("pointerdown", onDocPointerDown, true));
+onMounted(() => window.addEventListener("mousedown", onDocMouseDown, true));
 onBeforeUnmount(() =>
-  window.removeEventListener("pointerdown", onDocPointerDown, true),
+  window.removeEventListener("mousedown", onDocMouseDown, true),
 );
 </script>
 

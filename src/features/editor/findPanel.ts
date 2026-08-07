@@ -488,18 +488,41 @@ export function createMiroFindPanel(view: EditorView): Panel {
 /** ⌘F / Ctrl+F：打开查找（默认隐藏替换；有选区则填入） */
 export function openFindPanel(view: EditorView) {
   openSearchPanel(view);
-  const panel = panelByView.get(view);
-  panel?.setReplaceVisible(false);
-  // 若面板已打开，openSearchPanel 会按选区更新 query；同步到输入框
-  panel?.setQuery(getSearchQuery(view.state));
+  syncPanelOnReady(view, (panel) => {
+    panel.setReplaceVisible(false);
+    panel.setQuery(getSearchQuery(view.state));
+  });
 }
 
 /** ⌘⌥F（mac）/ Ctrl+H（win）：打开并展开替换行 */
 export function openFindReplacePanel(view: EditorView) {
   openSearchPanel(view);
-  const panel = panelByView.get(view);
-  panel?.setQuery(getSearchQuery(view.state));
-  panel?.focusReplace();
+  syncPanelOnReady(view, (panel) => {
+    panel.setQuery(getSearchQuery(view.state));
+    panel.focusReplace();
+  });
+}
+
+/**
+ * openSearchPanel 后 panel 异步 mount（CM 在 ViewPlugin.update 里创建 DOM）。
+ * 用 rAF 轮询等待 panelByView 注册成功，最多等 5 帧（约 80ms）。
+ */
+function syncPanelOnReady(
+  view: EditorView,
+  fn: (panel: MiroFindPanel) => void,
+  retries = 5,
+): void {
+  const trySync = () => {
+    const panel = panelByView.get(view);
+    if (panel) {
+      fn(panel);
+      return;
+    }
+    if (retries > 0) {
+      requestAnimationFrame(() => syncPanelOnReady(view, fn, retries - 1));
+    }
+  };
+  requestAnimationFrame(trySync);
 }
 
 export { findNextCentered, findPreviousCentered };

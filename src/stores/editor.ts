@@ -47,6 +47,21 @@ export const useEditorStore = defineStore("editor", () => {
   const openAt = ref<EditorOpenAt | null>(null);
   let openAtSeq = 0;
 
+  /**
+   * 外部修改标记：当 syncFromDisk / reloadAfterDiscard / formatDocument /
+   * renameSymbol 等「非用户输入」来源改了 tab.content 时，先 markExternalUpdate(path)。
+   * CodeMirrorEditor 的 props.content watcher 只有在 consumeExternalUpdate
+   * 返回 true 时才把新内容 dispatch 进 CM；用户输入触发的 setContent 不标记，
+   * watcher 直接 return，彻底切断 CM -> store -> prop -> CM 的回环。
+   */
+  const pendingExternalUpdates = new Set<string>();
+  function markExternalUpdate(path: string): void {
+    pendingExternalUpdates.add(path);
+  }
+  function consumeExternalUpdate(path: string): boolean {
+    return pendingExternalUpdates.delete(path);
+  }
+
   const activeTab = computed(
     () => tabs.value.find((t) => t.path === activePath.value) ?? null,
   );
@@ -104,6 +119,7 @@ export const useEditorStore = defineStore("editor", () => {
     const existing = tabs.value.find((t) => t.path === uri);
     if (existing) {
       activePath.value = uri;
+      markExternalUpdate(uri);
       return;
     }
 
@@ -153,6 +169,9 @@ export const useEditorStore = defineStore("editor", () => {
     const existing = tabs.value.find((t) => t.path === path);
     if (existing) {
       activePath.value = path;
+      // 切换到已打开 tab：标记外部修改，让 CodeMirrorEditor 的 content watcher
+      // 正确同步该 tab 的内容（断环机制会阻断未标记的 dispatch）
+      markExternalUpdate(path);
       workspace.selectPath(path);
       workspace.revealPath(path);
       return;
@@ -208,6 +227,7 @@ export const useEditorStore = defineStore("editor", () => {
   function syncFromDisk(path: string, content: string) {
     const tab = tabs.value.find((t) => t.path === path);
     if (!tab) return;
+    markExternalUpdate(path);
     tab.content = content;
     tab.original = content;
   }
@@ -251,6 +271,7 @@ export const useEditorStore = defineStore("editor", () => {
         }
 
         if (tab.content === tab.original) {
+          markExternalUpdate(path);
           tab.content = disk;
           tab.original = disk;
           tab.previewNonce = Date.now();
@@ -262,6 +283,7 @@ export const useEditorStore = defineStore("editor", () => {
           `「${tab.name}」已被外部修改，且本地有未保存更改。\n\n确定：用磁盘版本覆盖\n取消：保留编辑器内容`,
         );
         if (overwrite) {
+          markExternalUpdate(path);
           tab.content = disk;
           tab.original = disk;
           tab.previewNonce = Date.now();
@@ -307,6 +329,7 @@ export const useEditorStore = defineStore("editor", () => {
           continue;
         }
         const disk = await readTextFile(root, abs);
+        markExternalUpdate(abs);
         tab.content = disk;
         tab.original = disk;
         tab.previewNonce = Date.now();
@@ -340,6 +363,10 @@ export const useEditorStore = defineStore("editor", () => {
       useGitLogStore().blurLog();
     });
     activePath.value = path;
+    // 切换到已打开的 tab 时，CodeMirrorEditor 的 :key 不变（同一路径），
+    // 组件不重建。props.content 会变成该 tab 的内容，但 watcher 的断环逻辑
+    // 会阻断非外部修改的 dispatch。这里标记外部修改，让 watcher 正确同步内容。
+    markExternalUpdate(path);
     const workspace = useWorkspaceStore();
     workspace.selectPath(path);
     workspace.revealPath(path);
@@ -403,6 +430,7 @@ export const useEditorStore = defineStore("editor", () => {
         tab.content,
       );
       if (formatted !== tab.content) {
+        markExternalUpdate(tab.path);
         tab.content = formatted;
         workspace.showNotice(`已格式化 ${tab.name}`);
       } else {
@@ -416,31 +444,9 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
-  async function maybeFormatTab(
-    root: string,
-    tab: EditorTab,
-  ): Promise<string> {
-    const settings = useSettingsStore();
-    if (!settings.editor.formatOnSave || !settings.editor.prettierEnabled) {
-      return tab.content;
-    }
-    try {
-      const rel = relativeToRoot(root, tab.path);
-      const formatted = await formatWithPrettier(root, rel, tab.content);
-      if (formatted !== tab.content) {
-        tab.content = formatted;
-      }
-      return formatted;
-    } catch {
-      // 格式化失败不阻断保存
-      return tab.content;
-    }
-  }
-
   async function saveActive(options?: { quiet?: boolean }) {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
-    const settings = useSettingsStore();
     if (!activeTab.value) {
       if (!options?.quiet) {
         workspace.showNotice("当前无活动文件可保存");
@@ -473,11 +479,6 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     let content = tab.content;
-    const wantFormat =
-      settings.editor.formatOnSave && settings.editor.prettierEnabled;
-    if (wantFormat) {
-      content = await maybeFormatTab(workspace.rootPath, tab);
-    }
     if (content === tab.original) return;
     try {
       workspace.markSelfWrite(tab.path);
@@ -500,15 +501,6 @@ export const useEditorStore = defineStore("editor", () => {
   async function saveAll(options?: { quiet?: boolean }) {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
-    const settings = useSettingsStore();
-    const wantFormat =
-      settings.editor.formatOnSave && settings.editor.prettierEnabled;
-    if (wantFormat && workspace.rootPath) {
-      for (const tab of tabs.value) {
-        if (isRasterImagePath(tab.path) || isRemoteFilePath(tab.path)) continue;
-        await maybeFormatTab(workspace.rootPath, tab);
-      }
-    }
     const dirty = tabs.value.filter(
       (t) => !isRasterImagePath(t.path) && t.content !== t.original,
     );
@@ -718,6 +710,8 @@ export const useEditorStore = defineStore("editor", () => {
     openFileAt,
     setContent,
     syncFromDisk,
+    markExternalUpdate,
+    consumeExternalUpdate,
     syncExternalChanges,
     reloadAfterDiscard,
     setCursor,

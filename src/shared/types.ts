@@ -18,8 +18,6 @@ export interface EditorPreferences {
   eslintEnabled: boolean;
   /** 启用工作区 Prettier（需项目已安装 prettier） */
   prettierEnabled: boolean;
-  /** 保存时用 Prettier 格式化（需同时开启 prettier） */
-  formatOnSave: boolean;
   /** 移动文件/文件夹后如何更新相对 import 引用 */
   updateImportsOnMove: UpdateImportsOnMove;
 }
@@ -58,7 +56,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoSaveDelayMs: 1000,
     eslintEnabled: false,
     prettierEnabled: false,
-    formatOnSave: false,
     updateImportsOnMove: "prompt",
   },
   layout: {

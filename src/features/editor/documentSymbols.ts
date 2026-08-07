@@ -109,6 +109,13 @@ const METHOD_NAME_BLOCKLIST = new Set([
 
 const WORD_RE = /[A-Za-z_$][\w$]*/;
 
+/**
+ * CSS class 选择器：匹配 `.foo {` / `.foo,` / `.foo.bar {` / `&.foo {` / `.foo .bar {`
+ * 只取行内**第一个** class 名（`.foo.bar` 取 `foo`），避免长链歧义。
+ * 不匹配 `#id`、属性选择器、伪类。
+ */
+const CSS_CLASS_RE = /\.([A-Za-z_][\w-]*)/;
+
 /** Vue SFC：取光标所在区块的纯 JS/TS 文本与行号偏移 */
 function scriptSliceForVue(
   doc: string,
@@ -136,11 +143,13 @@ function indexLines(text: string, lineOffset = 0): Map<string, DocumentSymbol[]>
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
+    let matchedJs = false;
     for (const { re, kind, nameGroup } of DEF_PATTERNS) {
       const m = line.match(re);
       if (!m?.[nameGroup]) continue;
       const name = m[nameGroup];
       if (kind === "method" && METHOD_NAME_BLOCKLIST.has(name)) continue;
+      matchedJs = true;
       const column = (m.index ?? 0) + line.indexOf(name, m.index ?? 0) + 1;
       const sym: DocumentSymbol = {
         name,
@@ -152,6 +161,24 @@ function indexLines(text: string, lineOffset = 0): Map<string, DocumentSymbol[]>
       list.push(sym);
       map.set(name, list);
     }
+    // JS 模式未命中时，尝试 CSS class 选择器识别（.foo { / .foo, / &.foo 等）
+    if (!matchedJs) {
+      const cm = line.match(CSS_CLASS_RE);
+      if (cm?.[1]) {
+        const className = cm[1];
+        const classIdx = line.indexOf(`.${className}`);
+        const column = classIdx + 2; // 跳过 `.`，1-based
+        const sym: DocumentSymbol = {
+          name: className,
+          line: i + 1 + lineOffset,
+          column: Math.max(1, column),
+          kind: "class",
+        };
+        const list = map.get(className) ?? [];
+        list.push(sym);
+        map.set(className, list);
+      }
+    }
   }
   return map;
 }
@@ -162,19 +189,51 @@ export function indexDocumentSymbols(
 ): Map<string, DocumentSymbol[]> {
   const name = basename(filePath).toLowerCase();
   if (name.endsWith(".vue")) {
-    const scriptOpen = doc.indexOf("<script");
-    if (scriptOpen >= 0) {
-      const contentStart = doc.indexOf(">", scriptOpen);
-      const scriptClose = doc.indexOf("</script>", contentStart);
-      if (contentStart >= 0 && scriptClose > contentStart) {
-        const scriptBody = doc.slice(contentStart + 1, scriptClose);
-        const lineOffset = doc.slice(0, contentStart + 1).split("\n").length - 1;
-        return indexLines(scriptBody, lineOffset);
-      }
-    }
-    return new Map();
+    const map = new Map<string, DocumentSymbol[]>();
+    // 扫描所有 <script ...>...</script> 段（可能多个）
+    appendVueBlockSymbols(doc, "script", map);
+    // 扫描所有 <style ...>...</style> 段（CSS class 选择器）
+    appendVueBlockSymbols(doc, "style", map);
+    return map;
+  }
+  // 纯 CSS/SCSS/Less 文件：全文索引（CSS_CLASS_RE 会命中）
+  if (
+    name.endsWith(".css") ||
+    name.endsWith(".scss") ||
+    name.endsWith(".sass") ||
+    name.endsWith(".less")
+  ) {
+    return indexLines(doc);
   }
   return indexLines(doc);
+}
+
+/** 扫描 Vue SFC 中所有指定标签段（script/style），把符号追加到 map */
+function appendVueBlockSymbols(
+  doc: string,
+  tag: "script" | "style",
+  map: Map<string, DocumentSymbol[]>,
+): void {
+  const openTag = `<${tag}`;
+  const closeTag = `</${tag}>`;
+  let searchFrom = 0;
+  for (;;) {
+    const openIdx = doc.indexOf(openTag, searchFrom);
+    if (openIdx < 0) break;
+    const contentStart = doc.indexOf(">", openIdx);
+    if (contentStart < 0) break;
+    const closeIdx = doc.indexOf(closeTag, contentStart + 1);
+    if (closeIdx < 0) break;
+    const body = doc.slice(contentStart + 1, closeIdx);
+    const lineOffset = doc.slice(0, contentStart + 1).split("\n").length - 1;
+    const blockMap = indexLines(body, lineOffset);
+    for (const [symName, list] of blockMap.entries()) {
+      const existing = map.get(symName) ?? [];
+      existing.push(...list);
+      map.set(symName, existing);
+    }
+    searchFrom = closeIdx + closeTag.length;
+  }
 }
 
 export function wordAt(
@@ -216,19 +275,31 @@ export function findSymbolDefinition(
   if (!hit || pos < hit.from || pos > hit.to) return null;
 
   const name = basename(filePath).toLowerCase();
-  let index: Map<string, DocumentSymbol[]>;
 
+  // .vue 文件：脚本段是定义主战场（template/style 段不该出现符号定义）。
+  // 但若光标在 template/style 内、或脚本段未命中声明，仍回退到全文找一次。
   if (name.endsWith(".vue")) {
     const slice = scriptSliceForVue(doc, pos);
-    if (!slice) return null;
-    index = indexLines(slice.text, slice.lineOffset);
-  } else {
-    index = indexLines(doc);
+    if (slice) {
+      const inScript = indexLines(slice.text, slice.lineOffset);
+      const inScriptHit = pickClosest(inScript.get(hit.word), doc, pos);
+      if (inScriptHit) return inScriptHit;
+    }
+    const full = indexLines(doc);
+    return pickClosest(full.get(hit.word), doc, pos);
   }
 
-  const defs = index.get(hit.word);
-  if (!defs?.length) return null;
+  const index = indexLines(doc);
+  return pickClosest(index.get(hit.word), doc, pos);
+}
 
+/** 在 defs 中挑「光标之前最近的声明」；空数组返回 null */
+function pickClosest(
+  defs: DocumentSymbol[] | undefined,
+  doc: string,
+  pos: number,
+): { line: number; column: number } | null {
+  if (!defs?.length) return null;
   const cursor = lineColumnAt(doc, pos);
   let best: DocumentSymbol | null = null;
   for (const def of defs) {

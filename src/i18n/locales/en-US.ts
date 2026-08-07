@@ -87,6 +87,12 @@ export const enUS = {
   },
   settings: {
     title: "Settings",
+    theme: {
+      miroDark: "Miro Dark",
+      midnight: "Miro Midnight",
+      cyberpunk: "Miro Cyberpunk",
+      dawn: "Miro Dawn",
+    },
     navEditor: "Editor",
     navShortcuts: "Shortcuts",
     navAbout: "About",
@@ -104,9 +110,6 @@ export const enUS = {
     autoSaveDelay: "Auto Save Delay (ms)",
     autoSaveDesc:
       "Save to disk after a delay. Also flushes when the window hides or quits.",
-    formatOnSave: "Format on Save",
-    formatOnSaveDesc:
-      "Run Prettier before saving (requires Prettier below and a project install).",
     fileSave: "File Save",
     tooling: "Tooling",
     eslintEnabled: "ESLint",

@@ -16,6 +16,20 @@ export const IMPORT_RE =
 
 export const PATH_RE = /['"](\.{1,2}\/[^'"]+)['"]/g;
 
+/**
+ * Vue 模板绑定：把 `@click="foo"` / `v-on:click="foo"` / `{{ foo }}` / `{{ foo.bar }}`
+ * 等视作对标识符 `foo` 的引用，参与 go-to-definition。
+ * 注意：只取首个裸标识符（`{{ a.b.c }}` -> `a`），避免长链查找歧义。
+ */
+export const TEMPLATE_BIND_RE = /(?:@[A-Za-z][\w-]*\s*=\s*["']|v-on:[A-Za-z][\w-]*\s*=\s*["']|\{\{)\s*([A-Za-z_$][\w$]*)/g;
+
+/**
+ * HTML/Vue class 属性：`class="foo bar"` / `:class="{ foo: true }"` / `class='foo'`。
+ * 全局匹配，每次取出一个 class 名（含连字符，如 `my-class`）。
+ * 用于 go-to-definition：template 里 `class="foo"` 的 `foo` 跳到 `<style>` 段 `.foo`。
+ */
+export const CLASS_ATTR_RE = /class\s*=\s*["']([^"']+)["']/g;
+
 const RESOLVE_EXTENSIONS = [
   "",
   ".ts",

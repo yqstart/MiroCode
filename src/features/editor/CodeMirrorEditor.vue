@@ -42,9 +42,11 @@ import {
   goBackKeymap,
   goToDefinitionKeymap,
 } from "@/features/editor/navigation";
+import { renameSymbol } from "@/features/editor/renameSymbol";
 import { editorThemeExtensions } from "@/features/editor/theme";
 import { createMiroFindPanel, openFindPanel, openFindReplacePanel } from "@/features/editor/findPanel";
 import { useEditorStore } from "@/stores/editor";
+import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
 
@@ -57,6 +59,7 @@ const host = ref<HTMLDivElement | null>(null);
 const editorStore = useEditorStore();
 const settings = useSettingsStore();
 const workspace = useWorkspaceStore();
+const git = useGitStore();
 const { theme, editor } = storeToRefs(settings);
 const { openAt } = storeToRefs(editorStore);
 
@@ -154,6 +157,10 @@ function createEditor() {
         crosshairCursor(),
         highlightActiveLine(),
         highlightSelectionMatches(),
+        // VS Code 风格查找面板：自研 MiroFindPanel（右上角悬浮、查找/替换两行、
+        // 上下箭头、Aa/.*/Ab 切换、结果计数、⌘F/⌘H/⌘G/Esc/F3 等快捷键）。
+        // openFindPanel/openFindReplacePanel 已用 requestAnimationFrame 修复
+        // panelByView 时序问题（openSearchPanel 后下一帧才 mount 注册）。
         search({ top: true, createPanel: createMiroFindPanel }),
         keymap.of([
           ...closeBracketsKeymap,
@@ -164,6 +171,22 @@ function createEditor() {
           ...completionKeymap,
           ...goToDefinitionKeymap(navHandlers),
           goBackKeymap(navHandlers),
+          // F2：rename symbol（LSP 简化版 v1）
+          {
+            key: "F2",
+            run: (view) => {
+              const root = workspace.rootPath;
+              if (!root) {
+                workspace.showNotice("未打开工作区", 2000);
+                return true;
+              }
+              // 简单 prompt：v1 不上复杂对话框；用户可 Esc 取消
+              const newName = window.prompt("重命名为：");
+              if (newName == null) return true; // 取消
+              void renameSymbol(view, newName, root, props.path);
+              return true;
+            },
+          },
           indentWithTab,
         ]),
         // 快捷键对齐 VS Code：⌘F 查找；⌘⌥F（mac）/ Ctrl+H（win）替换
@@ -214,6 +237,8 @@ function createEditor() {
 
 onMounted(() => {
   createEditor();
+  // 编辑器首次挂载时拉一次 git status，避免刚打开文件右键看不到 git 菜单
+  void git.refresh();
 });
 
 onBeforeUnmount(() => {
@@ -228,6 +253,9 @@ watch(
     eslint.dispose();
     view?.destroy();
     view = null;
+    // 切换文件后立刻拉一次 git status，避免刚切换就右键时 statusMap 暂空
+    // 看不到「显示 Diff / 回滚变更」菜单项。
+    void git.refresh();
     createEditor();
   },
 );
@@ -236,13 +264,51 @@ watch(
   () => props.content,
   (next) => {
     if (!view) return;
+    // 断环核心：只有外部修改（syncFromDisk / reloadAfterDiscard /
+    // formatDocument / renameSymbol 等）才标记了 pendingExternalUpdate，
+    // 此时把新内容 dispatch 进 CM。用户输入触发的 setContent 不标记，
+    // watcher 直接 return，彻底切断 CM -> store -> prop -> CM 回环。
+    if (!editorStore.consumeExternalUpdate(props.path)) return;
     const current = view.state.doc.toString();
     if (next === current) return;
+
+    // 保留光标位置：记录 dispatch 前的行号+列号，dispatch 后按行号重新定位。
+    // 不能用绝对 offset（格式化/外部修改可能改变行数和缩进，offset 会错位）。
+    // 用「行号不变、列号取 min(原列, 当前行长度)」策略，对格式化场景足够稳健。
+    const sel = view.state.selection.main;
+    const headLine = view.state.doc.lineAt(sel.head);
+    const savedLine = headLine.number;
+    const savedCol = sel.head - headLine.from;
+    const anchorLine = view.state.doc.lineAt(sel.anchor);
+    const savedAnchorLine = anchorLine.number;
+    const savedAnchorCol = sel.anchor - anchorLine.from;
+
     applyingExternal = true;
+    try {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: next },
+        userEvent: "input.external",
+      });
+    } finally {
+      applyingExternal = false;
+    }
+
+    // dispatch 后按行号+列号重新定位光标
+    const newDoc = view.state.doc;
+    const newLineCount = newDoc.lines;
+    const targetLine = Math.min(savedLine, newLineCount);
+    const newLineObj = newDoc.line(targetLine);
+    const targetHead = newLineObj.from + Math.min(savedCol, newLineObj.length);
+
+    const targetAnchorLine = Math.min(savedAnchorLine, newLineCount);
+    const newAnchorLineObj = newDoc.line(targetAnchorLine);
+    const targetAnchor =
+      newAnchorLineObj.from + Math.min(savedAnchorCol, newAnchorLineObj.length);
+
     view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: next },
+      selection: { anchor: targetAnchor, head: targetHead },
+      scrollIntoView: false,
     });
-    applyingExternal = false;
   },
 );
 
@@ -335,7 +401,7 @@ defineExpose({ scrollTo });
   opacity: 0.7;
 }
 
-/* 文件内查找：VS Code 风格右上角悬浮 */
+/* 文件内查找：VS Code 风格右上角悬浮（CM 内置 .cm-panels-top 容器） */
 .cm-host :deep(.cm-panels-top) {
   position: absolute;
   inset: 0 0 auto 0;
