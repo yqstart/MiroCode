@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   ChevronDown,
   ChevronRight,
@@ -85,11 +85,23 @@ const formatMenuDisabled = computed(
   () => !settings.editor.prettierEnabled,
 );
 
-const DND_MIME = "application/x-miro-explorer-path";
+/** Tauri macOS WKWebView 的 HTML5 DnD 不可靠，改用 pointer 拖拽 */
+const DRAG_THRESHOLD_PX = 5;
 const dragSource = ref<{ path: string; isDir: boolean } | null>(null);
 const dropHoverPath = ref<string | null>(null);
 const dropValid = ref(false);
 const moving = ref(false);
+let suppressRowClick = false;
+
+type PointerDragSession = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  source: { path: string; isDir: boolean };
+  started: boolean;
+};
+
+let pointerDrag: PointerDragSession | null = null;
 
 function resolveDropParent(targetPath: string, targetIsDir: boolean): string {
   return targetIsDir ? targetPath : dirname(targetPath);
@@ -111,34 +123,121 @@ function canDropOn(
   );
 }
 
-function onDragStart(event: DragEvent, path: string, isDir: boolean) {
-  if (!rootPath.value) return;
-  dragSource.value = { path, isDir };
-  event.dataTransfer?.setData(DND_MIME, JSON.stringify({ path, isDir }));
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+function lookupTreeNode(path: string): { path: string; isDir: boolean } | null {
+  const node = flatTree.value.find((n) => n.path === path);
+  if (!node) return null;
+  return { path: node.path, isDir: node.isDir };
 }
 
-function onDragEnd() {
+function resolveDropTargetAt(
+  clientX: number,
+  clientY: number,
+): { path: string; isDir: boolean } | null {
+  const el = document.elementFromPoint(clientX, clientY);
+  if (!el) return null;
+  const row = el.closest("[data-tree-path]") as HTMLElement | null;
+  if (row?.dataset.treePath) {
+    return lookupTreeNode(row.dataset.treePath);
+  }
+  // 落到树空白处 → 工作区根目录
+  if (el.closest(".tree") && rootPath.value) {
+    return { path: rootPath.value, isDir: true };
+  }
+  return null;
+}
+
+function updateDropHover(clientX: number, clientY: number) {
+  if (!dragSource.value) {
+    dropHoverPath.value = null;
+    dropValid.value = false;
+    return;
+  }
+  const target = resolveDropTargetAt(clientX, clientY);
+  if (!target || target.path === dragSource.value.path) {
+    dropHoverPath.value = null;
+    dropValid.value = false;
+    return;
+  }
+  dropHoverPath.value = target.path;
+  dropValid.value = canDropOn(dragSource.value, target.path, target.isDir);
+}
+
+function clearPointerDragListeners() {
+  window.removeEventListener("pointermove", onWindowPointerMove);
+  window.removeEventListener("pointerup", onWindowPointerUp);
+  window.removeEventListener("pointercancel", onWindowPointerUp);
+}
+
+function resetDragChrome() {
   dragSource.value = null;
   dropHoverPath.value = null;
   dropValid.value = false;
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
 }
 
-function onDragOver(event: DragEvent, path: string, isDir: boolean) {
-  if (!dragSource.value || moving.value) return;
-  event.preventDefault();
-  const valid = canDropOn(dragSource.value, path, isDir);
-  dropHoverPath.value = path;
-  dropValid.value = valid;
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = valid ? "move" : "none";
+function onRowPointerDown(event: PointerEvent, path: string, isDir: boolean) {
+  if (event.button !== 0 || !rootPath.value || moving.value) return;
+  pointerDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    source: { path, isDir },
+    started: false,
+  };
+  window.addEventListener("pointermove", onWindowPointerMove);
+  window.addEventListener("pointerup", onWindowPointerUp);
+  window.addEventListener("pointercancel", onWindowPointerUp);
+}
+
+function onWindowPointerMove(event: PointerEvent) {
+  if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+  const dx = event.clientX - pointerDrag.startX;
+  const dy = event.clientY - pointerDrag.startY;
+  if (!pointerDrag.started) {
+    if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+    pointerDrag.started = true;
+    dragSource.value = pointerDrag.source;
+    document.body.style.cursor = "grabbing";
+    document.body.style.userSelect = "none";
   }
+  event.preventDefault();
+  updateDropHover(event.clientX, event.clientY);
 }
 
-function onDragLeaveRow(path: string) {
-  if (dropHoverPath.value === path) {
-    dropHoverPath.value = null;
-    dropValid.value = false;
+async function onWindowPointerUp(event: PointerEvent) {
+  if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+  const session = pointerDrag;
+  pointerDrag = null;
+  clearPointerDragListeners();
+
+  if (!session.started) {
+    resetDragChrome();
+    return;
+  }
+
+  suppressRowClick = true;
+  window.setTimeout(() => {
+    suppressRowClick = false;
+  }, 0);
+
+  const source = session.source;
+  const target = resolveDropTargetAt(event.clientX, event.clientY);
+  const valid =
+    Boolean(target) &&
+    target!.path !== source.path &&
+    canDropOn(source, target!.path, target!.isDir);
+
+  resetDragChrome();
+  if (!valid || !target || moving.value) return;
+
+  const toParent = resolveDropParent(target.path, target.isDir);
+  moving.value = true;
+  try {
+    const result = await workspace.movePath(source.path, toParent, source.isDir);
+    if (result) await afterMove(result);
+  } finally {
+    moving.value = false;
   }
 }
 
@@ -187,34 +286,11 @@ async function afterMove(result: MovePathResult) {
   }
 }
 
-async function onDrop(event: DragEvent, path: string, isDir: boolean) {
-  event.preventDefault();
-  event.stopPropagation();
-  dropHoverPath.value = null;
-  dropValid.value = false;
-
-  let source = dragSource.value;
-  if (!source) {
-    try {
-      const raw = event.dataTransfer?.getData(DND_MIME);
-      if (raw) source = JSON.parse(raw) as { path: string; isDir: boolean };
-    } catch {
-      // ignore
-    }
-  }
-  dragSource.value = null;
-  if (!source || moving.value) return;
-  if (!canDropOn(source, path, isDir)) return;
-
-  const toParent = resolveDropParent(path, isDir);
-  moving.value = true;
-  try {
-    const result = await workspace.movePath(source.path, toParent, source.isDir);
-    if (result) await afterMove(result);
-  } finally {
-    moving.value = false;
-  }
-}
+onBeforeUnmount(() => {
+  clearPointerDragListeners();
+  pointerDrag = null;
+  resetDragChrome();
+});
 
 /** 工具栏新建：优先落在选中目录，否则落在选中文件的父目录 / 根目录 */
 function resolveCreateParent(): string | null {
@@ -352,6 +428,7 @@ function clearAllRecent(event: MouseEvent) {
 }
 
 async function onRowClick(path: string, isDir: boolean) {
+  if (suppressRowClick) return;
   workspace.selectPath(path);
   if (isDir) {
     await workspace.toggleExpand(path);
@@ -667,6 +744,12 @@ defineExpose({ locateActiveFile });
       <template v-else>
         <div
           class="tree"
+          :class="{
+            'drop-root':
+              Boolean(dragSource) &&
+              dropValid &&
+              dropHoverPath === rootPath,
+          }"
           :title="t('explorer.dragMoveHint')"
           @contextmenu="onContext($event, rootPath, true)"
         >
@@ -675,7 +758,6 @@ defineExpose({ locateActiveFile });
             :key="node.path"
             type="button"
             class="row"
-            draggable="true"
             :class="{
               active: selectedPath === node.path,
               dirty: dirtySet.has(node.path),
@@ -687,13 +769,9 @@ defineExpose({ locateActiveFile });
             }"
             :data-tree-path="node.path"
             :style="{ paddingLeft: `${10 + node.depth * 14}px` }"
+            @pointerdown="onRowPointerDown($event, node.path, node.isDir)"
             @click="onRowClick(node.path, node.isDir)"
             @contextmenu="onContext($event, node.path, node.isDir)"
-            @dragstart="onDragStart($event, node.path, node.isDir)"
-            @dragend="onDragEnd"
-            @dragover="onDragOver($event, node.path, node.isDir)"
-            @dragleave="onDragLeaveRow(node.path)"
-            @drop="onDrop($event, node.path, node.isDir)"
           >
             <span class="twist">
               <template v-if="node.isDir">
@@ -1169,6 +1247,11 @@ defineExpose({ locateActiveFile });
   padding: 4px 6px 12px;
 }
 
+.tree.drop-root {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
 .row {
   width: 100%;
   min-height: 28px;
@@ -1179,6 +1262,8 @@ defineExpose({ locateActiveFile });
   border-radius: 6px;
   color: var(--text-primary);
   text-align: left;
+  touch-action: none;
+  cursor: default;
 }
 
 .row:hover {
@@ -1187,6 +1272,7 @@ defineExpose({ locateActiveFile });
 
 .row.dragging {
   opacity: 0.45;
+  cursor: grabbing;
 }
 
 .row.drop-into {
