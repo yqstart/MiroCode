@@ -12,8 +12,8 @@
 
 ### 修复
 
-- **i18n**：`ImagePreview.vue` 7 处硬编码中文接入 i18n（新增 `editor.image.*` 键）
-- **补全**：Tailwind 类名补全触发条件扩展为同时支持 `class`（HTML/Vue）/ `className`（React/TSX）/ `:class`（Vue 动态绑定）/ `class:list`（Svelte）
+- **i18n**：`ImagePreview.vue` 8 处硬编码中文接入 i18n（新增 `editor.image.*` 键：loading / previewUnavailable / noWorkspace / zoomOut / zoomIn / actualSize / fitWindow / wheelZoomHint），zh-CN / en-US 双语齐备
+- **补全**：Tailwind 类名补全触发条件扩展为 4 选 1 —— `class`（HTML/Vue）/ `className`（React/TSX）/ `:class`（Vue 动态绑定）/ `class:list`（Astro）。同时收紧负向字符类排除 `]`，避免 `bg-[#fff]` 等任意值类在 `]` 处被错认为属性闭合边界而无法触发补全
 - **Git 推送"程序无响应"**：
   - 根因：`git_push` / `git_pull` / `git_fetch` / `git_update_project` 之前是同步 `#[tauri::command]`，libgit2 网络 IO 会阻塞 Tauri IPC worker 线程；慢网络 / 大仓库 / TLS 握手 / SSH 协商下，IPC 线程池被占满后整个 UI 操作全部排队，表现为"无响应"
   - 修复：四个命令改为 `async fn` + `tokio::task::spawn_blocking` + `tokio::time::timeout(120s)`，超时返回明确错误文案（"推送超时（120s），请检查网络或稍后重试"）；前端 `invoke()` 调用方式不变
@@ -110,6 +110,14 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
   - `fake_block_sleeps_for_requested_ms`：验证 sleep 实际 ≥ 100ms 且 < 500ms
   - `fake_block_does_not_block_concurrent_invocations`：用 `tauri::async_runtime::spawn` 派发 fake_block + 5 个 fast task，断言 5 个并发完成总耗时 < 1500ms（不被串行化）
   - `cargo test` **11/11 全绿**（7 单元 + 2 fake_block 集成 + 1 真 git2 集成 + 1 Tauri 调度集成）
+
+### Tier 一完工自检（[Unreleased] 5 项最短闭环）
+
+- **A-1** `ImagePreview.vue` i18n：8 键齐备（`editor.image.*`），zh-CN / en-US 双语，切语言 8 处文案跟随；**无代码改动**（键已在 `src/i18n/locales/zh-CN.ts:77-86` / `en-US.ts:77-86`）
+- **A-2** 资源树"在终端中打开"：模板菜单项 `ExplorerPanel.vue:870` + `runMenu('open-in-terminal')` 路由到 `sessions.openSessions(target)`（`ExplorerPanel.vue:544-549`）+ i18n `explorer.openInTerminal` 已在 `zh-CN:185` / `en-US:189`；**无代码改动**
+- **A-3** 资源树"复制文件名"：模板菜单项 `ExplorerPanel.vue:866` + `runMenu('copy-file-name')` 调 `writeClipboard(basename(path))`（`ExplorerPanel.vue:526-531`）+ i18n `explorer.copyFileName` / `explorer.copiedFileName` 已齐；**无代码改动**
+- **A-4** 窗口级快捷键：⌘W 关闭标签（`AppShell.vue:158-162` 调 `editor.closeTab`）/ ⌘⌥→/← 切标签（`:167-172` 调 `editor.activateNextTab` / `activatePrevTab`）/ ⌘R 刷新树（`:174-178` 调 `workspace.refreshFromDisk`）+ `isEditableTarget` 守卫（`:195-203` 排除 INPUT/TEXTAREA/.xterm/.cm-*）；**无代码改动**
+- **C-1** Tailwind 触发正则：4 选 1（`class` / `className` / `:class` / `class:list`）已在 `completions.ts:425`；本次**唯一改动**——负向字符类加 `]` 排除，让 `bg-[#fff]` 等任意值类在 `]` 处不被错认为属性闭合边界（diff 1 行：`[^"'{}]*$` → `[^"'{}[\]]*$`）
 
 ## [0.9.0] - 2026-08-07
 
