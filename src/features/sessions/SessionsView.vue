@@ -208,143 +208,157 @@ watch(remoteSessions, (list) => {
     </aside>
 
     <section class="main">
-      <!-- 本地 -->
-      <template v-if="subView === 'local'">
-        <header class="subtabs">
-          <button
-            v-for="term in localTerminals"
-            :key="term.id"
-            type="button"
-            class="subtab"
-            :class="{ active: term.id === activeLocalId }"
-            @click="sessions.activateLocal(term.id)"
-          >
-            <span>{{ term.title }}</span>
-            <span
-              class="close"
-              :title="t('sessions.closeTerminal')"
-              @click.stop="sessions.closeLocalTerminal(term.id)"
-            >
-              <X :size="12" />
-            </span>
-          </button>
-          <button
-            type="button"
-            class="add"
-            :title="t('sessions.newLocalTitle')"
-            @click="onAddLocal"
-          >
-            <Plus :size="14" />
-          </button>
-          <div v-if="hasScripts" class="scripts-slot">
-            <PackageScriptsMenu variant="compact" />
-          </div>
-        </header>
-        <div class="body">
-          <LocalTerminal
-            v-for="term in localTerminals"
-            v-show="term.id === activeLocalId"
-            :key="term.id"
-            :session-id="term.id"
-            :cwd="term.cwd"
-            :active="term.id === activeLocalId"
-          />
-          <div v-if="!localTerminals.length" class="empty">
-            <p>{{ t("sessions.localEmpty") }}</p>
-            <button type="button" class="cta" @click="onAddLocal">
-              {{ t("sessions.newTerminal") }}
-            </button>
-          </div>
-        </div>
-      </template>
-
-      <!-- SSH（主机列表 + 会话） -->
-      <template v-else>
-        <header v-if="remoteSessions.length" class="subtabs">
-          <button
-            type="button"
-            class="subtab"
-            :class="{ active: showHosts }"
-            :title="t('sessions.hostsList')"
-            @click="goHosts"
-          >
-            <LayoutGrid :size="12" />
-            <span>{{ t("sessions.hosts") }}</span>
-          </button>
-          <button
-            v-for="term in remoteSessions"
-            :key="term.id"
-            type="button"
-            class="subtab"
-            :class="{ active: !showHosts && term.id === activeRemoteId }"
-            @click="activateRemoteSession(term.id)"
-          >
-            <span>{{ term.title }}</span>
-            <span
-              class="close"
-              :title="t('common.close')"
-              @click.stop="closeRemoteFully(term.id)"
-            >
-              <X :size="12" />
-            </span>
-          </button>
-        </header>
-
-        <div
-          v-if="!showHosts && activeRemote"
-          class="pane-switch"
+      <!-- 本地终端顶栏 -->
+      <header v-show="subView === 'local'" class="subtabs">
+        <button
+          v-for="term in localTerminals"
+          :key="term.id"
+          type="button"
+          class="subtab"
+          :class="{ active: term.id === activeLocalId }"
+          @click="sessions.activateLocal(term.id)"
         >
-          <button
-            type="button"
-            class="pane-btn"
-            :class="{ active: activeRemote.pane === 'shell' }"
-            @click="switchRemotePane('shell')"
+          <span>{{ term.title }}</span>
+          <span
+            class="close"
+            :title="t('sessions.closeTerminal')"
+            @click.stop="sessions.closeLocalTerminal(term.id)"
           >
-            <TerminalSquare :size="13" />
-            {{ t("sessions.shell") }}
-          </button>
-          <button
-            type="button"
-            class="pane-btn"
-            :class="{ active: activeRemote.pane === 'sftp' }"
-            :disabled="sftpBusy"
-            @click="switchRemotePane('sftp')"
+            <X :size="12" />
+          </span>
+        </button>
+        <button
+          type="button"
+          class="add"
+          :title="t('sessions.newLocalTitle')"
+          @click="onAddLocal"
+        >
+          <Plus :size="14" />
+        </button>
+        <div v-if="hasScripts" class="scripts-slot">
+          <PackageScriptsMenu variant="compact" />
+        </div>
+      </header>
+
+      <!-- SSH 会话顶栏 -->
+      <header
+        v-show="subView === 'remote' && remoteSessions.length"
+        class="subtabs"
+      >
+        <button
+          type="button"
+          class="subtab"
+          :class="{ active: showHosts }"
+          :title="t('sessions.hostsList')"
+          @click="goHosts"
+        >
+          <LayoutGrid :size="12" />
+          <span>{{ t("sessions.hosts") }}</span>
+        </button>
+        <button
+          v-for="term in remoteSessions"
+          :key="term.id"
+          type="button"
+          class="subtab"
+          :class="{ active: !showHosts && term.id === activeRemoteId }"
+          @click="activateRemoteSession(term.id)"
+        >
+          <span>{{ term.title }}</span>
+          <span
+            class="close"
+            :title="t('common.close')"
+            @click.stop="closeRemoteFully(term.id)"
           >
-            <HardDrive :size="13" />
-            {{ sftpBusy ? t("sessions.connecting") : t("sessions.sftp") }}
+            <X :size="12" />
+          </span>
+        </button>
+      </header>
+
+      <div
+        v-show="subView === 'remote' && !showHosts && activeRemote"
+        class="pane-switch"
+      >
+        <button
+          type="button"
+          class="pane-btn"
+          :class="{ active: activeRemote?.pane === 'shell' }"
+          @click="switchRemotePane('shell')"
+        >
+          <TerminalSquare :size="13" />
+          {{ t("sessions.shell") }}
+        </button>
+        <button
+          type="button"
+          class="pane-btn"
+          :class="{ active: activeRemote?.pane === 'sftp' }"
+          :disabled="sftpBusy"
+          @click="switchRemotePane('sftp')"
+        >
+          <HardDrive :size="13" />
+          {{ sftpBusy ? t("sessions.connecting") : t("sessions.sftp") }}
+        </button>
+        <p v-if="sftpError" class="pane-error">{{ sftpError }}</p>
+      </div>
+
+      <div class="body">
+        <!-- 本地终端：v-show 保活 PTY，切换 SSH 时不销毁 -->
+        <LocalTerminal
+          v-for="term in localTerminals"
+          v-show="subView === 'local' && term.id === activeLocalId"
+          :key="term.id"
+          :session-id="term.id"
+          :cwd="term.cwd"
+          :active="subView === 'local' && term.id === activeLocalId"
+        />
+        <div
+          v-show="subView === 'local' && !localTerminals.length"
+          class="empty"
+        >
+          <p>{{ t("sessions.localEmpty") }}</p>
+          <button type="button" class="cta" @click="onAddLocal">
+            {{ t("sessions.newTerminal") }}
           </button>
-          <p v-if="sftpError" class="pane-error">{{ sftpError }}</p>
         </div>
 
-        <div class="body">
-          <SshHostsView
-            v-if="showHosts"
-            :connecting="remoteConnecting"
-            :error="remoteError"
-            @connect="onRemoteConnect"
+        <SshHostsView
+          v-show="subView === 'remote' && showHosts"
+          :connecting="remoteConnecting"
+          :error="remoteError"
+          @connect="onRemoteConnect"
+        />
+
+        <!-- 远程会话：切回本地时保持连接 -->
+        <template v-for="term in remoteSessions" :key="term.id">
+          <RemoteTerminal
+            v-show="
+              subView === 'remote' &&
+              term.id === activeRemoteId &&
+              term.pane === 'shell'
+            "
+            :session-id="term.id"
+            :config="term.config"
+            :active="
+              subView === 'remote' &&
+              term.id === activeRemoteId &&
+              term.pane === 'shell'
+            "
+            @failed="onRemoteFailed(term.id, $event)"
+            @closed="onRemoteClosed(term.id)"
           />
-          <template v-else>
-            <template v-for="term in remoteSessions" :key="term.id">
-              <RemoteTerminal
-                v-show="term.id === activeRemoteId && term.pane === 'shell'"
-                :session-id="term.id"
-                :config="term.config"
-                :active="term.id === activeRemoteId && term.pane === 'shell'"
-                @failed="onRemoteFailed(term.id, $event)"
-                @closed="onRemoteClosed(term.id)"
-              />
-              <SftpPanel
-                v-if="term.sftpOpened"
-                v-show="term.id === activeRemoteId && term.pane === 'sftp'"
-                :session-id="sftpSessionId(term.id)"
-                :config="term.config"
-                @failed="onSftpFailed(term.id, $event)"
-                @disconnected="onSftpDisconnected(term.id)"
-              />
-            </template>
-          </template>
-        </div>
-      </template>
+          <SftpPanel
+            v-if="term.sftpOpened"
+            v-show="
+              subView === 'remote' &&
+              term.id === activeRemoteId &&
+              term.pane === 'sftp'
+            "
+            :session-id="sftpSessionId(term.id)"
+            :config="term.config"
+            @failed="onSftpFailed(term.id, $event)"
+            @disconnected="onSftpDisconnected(term.id)"
+          />
+        </template>
+      </div>
     </section>
   </div>
 </template>

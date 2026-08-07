@@ -49,7 +49,7 @@ src-tauri/             # Tauri 后端、Git/搜索命令、PTY 插件
 Git（`features/git`）对标 **VS Code Source Control + Git Graph**：左侧 Commit（暂存的更改 / 更改分组 + 行内暂存·回滚 + 点选打开编辑区 Diff + Rebase Continue/Abort）；编辑区标签 **Git Log**（过滤 / 详情侧栏 / Revert / Cherry-pick / Checkout / New Branch / Diff / Interactive Rebase）；Branches 弹层（Compare/Upstream/删远程）；冲突分栏（Base/导航）；⌘K 打开 Commit；活动栏 Project / Commit / History。
 
 会话视图（`features/sessions`）以编辑区标签打开：本地终端 / SSH（主机卡片列表 + 终端/SFTP）。
-- 本地终端：随工作区切换重建（cwd = 项目根），并强制切回「本地终端」子视图
+- 本地终端：随工作区切换重建（cwd = 项目根），并强制切回「本地终端」子视图；本地 ↔ SSH 子视图切换保活 PTY/连接（v-show），仅关闭标签或切换工作区时销毁
 - package.json scripts：活动栏终端上方 Package 入口 + 本地终端顶栏快捷芯片；点击后在本地终端注入 `pnpm/npm/yarn/bun run …`
 - SSH 主机配置：应用级全局（`~/.mirocode/ssh-profiles.json`），与项目/窗口无关；可选「记住密码」写入 `~/.mirocode/ssh-credentials.json`（0600）
 - SSH 主机密钥：校验 `~/.ssh/known_hosts` + `~/.mirocode/known_hosts`；未知密钥需用户确认（TOFU）
