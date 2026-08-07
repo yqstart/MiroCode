@@ -74,6 +74,16 @@ export const zhCN = {
     discardUntrackedConfirm:
       "「{name}」是未跟踪的新文件，回滚将删除该文件。此操作不可撤销。确定？",
     formatDocument: "格式化",
+    image: {
+      loading: "加载中…",
+      previewUnavailable: "无法预览此图片",
+      noWorkspace: "未打开工作区",
+      zoomOut: "缩小",
+      zoomIn: "放大",
+      actualSize: "实际大小",
+      fitWindow: "适应窗口",
+      wheelZoomHint: "滚轮缩放",
+    },
   },
   settings: {
     title: "设置",
@@ -167,6 +177,8 @@ export const zhCN = {
     paste: "粘贴",
     copyAbsPath: "复制绝对路径",
     copyRelPath: "复制相对路径",
+    copyFileName: "复制文件名",
+    copiedFileName: "已复制文件名",
     revealInOs: "在资源管理器中显示",
     revealInOsUnavailable: "浏览器预览无法打开系统资源管理器",
     revealInOsFailed: "无法在资源管理器中显示：{message}",

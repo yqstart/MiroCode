@@ -421,7 +421,8 @@ function tailwindSource(
   if (word.from === word.to && !context.explicit) return null;
 
   const before = context.state.doc.sliceString(Math.max(0, word.from - 80), word.from);
-  const inClassAttr = /class\s*=\s*["'][^"']*$/.test(before);
+  // 兼容 HTML class= / Vue :class= / React className= / Svelte class:list=
+  const inClassAttr = /(?:class|className|:class|class:list)\s*=\s*["'{][^"'{}]*$/.test(before);
   if (!inClassAttr && !isCssContext(context, filePath)) {
     return null;
   }

@@ -30,6 +30,7 @@ import { revealInOsExplorer } from "@/shared/revealInOs";
 import { useI18n } from "@/i18n";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
+import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore, type MovePathResult } from "@/stores/workspace";
 
@@ -37,6 +38,7 @@ const { t } = useI18n();
 const workspace = useWorkspaceStore();
 const editor = useEditorStore();
 const git = useGitStore();
+const sessions = useSessionsStore();
 const settings = useSettingsStore();
 const {
   rootPath,
@@ -68,6 +70,7 @@ const openingMode = ref(false);
 const dirtySet = computed(() => editor.dirtyPaths);
 const canLocate = computed(() => Boolean(rootPath.value && activePath.value));
 const isRootTarget = computed(() => Boolean(menu.value?.isRoot));
+const isFileTarget = computed(() => Boolean(menu.value) && !menu.value!.isDir && !menu.value!.isRoot);
 const locateFileTitle = computed(() =>
   t("explorer.revealActiveTitle", { shortcut: formatShortcut("alt", "F1") }),
 );
@@ -533,6 +536,17 @@ async function runMenu(action: string) {
       workspace.showNotice(t("explorer.copiedRelPath"));
       return;
     }
+    if (action === "copy-file-name") {
+      await writeClipboard(basename(path));
+      workspace.showNotice(t("explorer.copiedFileName"));
+      return;
+    }
+    if (action === "open-in-terminal") {
+      // 目录取该目录，文件取其父目录
+      const target = isDir ? path : dirname(path);
+      sessions.openSessions(target);
+      return;
+    }
     if (action === "reveal-in-os") {
       await revealInOsExplorer(path, (message, ms) =>
         workspace.showNotice(message, ms),
@@ -845,6 +859,16 @@ defineExpose({ locateActiveFile });
       </button>
       <button type="button" @click="runMenu('copy-rel-path')">
         {{ t("explorer.copyRelPath") }}
+      </button>
+      <button
+        v-if="isFileTarget"
+        type="button"
+        @click="runMenu('copy-file-name')"
+      >
+        {{ t("explorer.copyFileName") }}
+      </button>
+      <button type="button" @click="runMenu('open-in-terminal')">
+        {{ t("explorer.openInTerminal") }}
       </button>
       <hr />
       <button

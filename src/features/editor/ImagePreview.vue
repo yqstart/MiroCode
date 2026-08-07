@@ -9,6 +9,7 @@ import {
   svgDataUrl,
 } from "@/shared/media";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useI18n } from "@/i18n";
 
 const props = defineProps<{
   path: string;
@@ -19,6 +20,7 @@ const props = defineProps<{
 }>();
 
 const workspace = useWorkspaceStore();
+const { t } = useI18n();
 const { rootPath } = storeToRefs(workspace);
 
 const stageRef = ref<HTMLElement | null>(null);
@@ -90,7 +92,7 @@ async function reload() {
     }
 
     if (!rootPath.value) {
-      throw new Error("未打开工作区");
+      throw new Error(t("editor.image.noWorkspace"));
     }
     const url = await rasterDataUrl(rootPath.value, props.path);
     if (seq !== loadSeq) return;
@@ -99,7 +101,9 @@ async function reload() {
     if (seq !== loadSeq) return;
     loading.value = false;
     loadError.value =
-      error instanceof Error ? error.message : String(error) || "无法预览此图片";
+      error instanceof Error
+        ? error.message
+        : String(error) || t("editor.image.previewUnavailable");
   }
 }
 
@@ -115,7 +119,7 @@ async function onLoad(event: Event) {
 function onError() {
   loading.value = false;
   natural.value = null;
-  loadError.value = "无法预览此图片";
+  loadError.value = t("editor.image.previewUnavailable");
 }
 
 watch(
@@ -134,7 +138,7 @@ watch(
       class="stage"
       @wheel.prevent="onWheel"
     >
-      <div v-if="loading && !loadError" class="hint">加载中…</div>
+      <div v-if="loading && !loadError" class="hint">{{ t("editor.image.loading") }}</div>
       <div v-if="loadError" class="hint error">{{ loadError }}</div>
       <img
         v-show="src && !loadError"
@@ -154,17 +158,17 @@ watch(
         <button
           type="button"
           class="zbtn"
-          title="缩小"
+          :title="t('editor.image.zoomOut')"
           :disabled="!natural"
           @click="zoomBy(1 / 1.25)"
         >
           <Minus :size="12" />
         </button>
-        <span class="zoom-label" :title="'滚轮缩放'">{{ zoomLabel }}</span>
+        <span class="zoom-label" :title="t('editor.image.wheelZoomHint')">{{ zoomLabel }}</span>
         <button
           type="button"
           class="zbtn"
-          title="放大"
+          :title="t('editor.image.zoomIn')"
           :disabled="!natural"
           @click="zoomBy(1.25)"
         >
@@ -173,7 +177,7 @@ watch(
         <button
           type="button"
           class="zbtn"
-          title="实际大小"
+          :title="t('editor.image.actualSize')"
           :disabled="!natural"
           @click="zoomToActual"
         >
@@ -182,7 +186,7 @@ watch(
         <button
           type="button"
           class="zbtn"
-          title="适应窗口"
+          :title="t('editor.image.fitWindow')"
           :disabled="!natural"
           @click="fitToWindow"
         >

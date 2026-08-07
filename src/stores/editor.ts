@@ -345,6 +345,30 @@ export const useEditorStore = defineStore("editor", () => {
     workspace.revealPath(path);
   }
 
+  /** 切到下一个标签；末尾循环到首个（VSCode 行为） */
+  function activateNextTab() {
+    if (tabs.value.length < 2) return;
+    const idx = tabs.value.findIndex((t) => t.path === activePath.value);
+    if (idx < 0) {
+      activate(tabs.value[0].path);
+      return;
+    }
+    const next = tabs.value[(idx + 1) % tabs.value.length];
+    activate(next.path);
+  }
+
+  /** 切到上一个标签；首部循环到末个（VSCode 行为） */
+  function activatePrevTab() {
+    if (tabs.value.length < 2) return;
+    const idx = tabs.value.findIndex((t) => t.path === activePath.value);
+    if (idx < 0) {
+      activate(tabs.value[0].path);
+      return;
+    }
+    const prev = tabs.value[(idx - 1 + tabs.value.length) % tabs.value.length];
+    activate(prev.path);
+  }
+
   async function formatDocument(path?: string) {
     const workspace = useWorkspaceStore();
     const settings = useSettingsStore();
@@ -698,6 +722,8 @@ export const useEditorStore = defineStore("editor", () => {
     reloadAfterDiscard,
     setCursor,
     activate,
+    activateNextTab,
+    activatePrevTab,
     saveActive,
     saveAll,
     formatDocument,

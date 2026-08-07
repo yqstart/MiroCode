@@ -74,6 +74,16 @@ export const enUS = {
     discardUntrackedConfirm:
       "“{name}” is untracked. Discarding will delete the file. This cannot be undone. Continue?",
     formatDocument: "Format",
+    image: {
+      loading: "Loading…",
+      previewUnavailable: "Cannot preview this image",
+      noWorkspace: "No workspace opened",
+      zoomOut: "Zoom out",
+      zoomIn: "Zoom in",
+      actualSize: "Actual size",
+      fitWindow: "Fit to window",
+      wheelZoomHint: "Scroll to zoom",
+    },
   },
   settings: {
     title: "Settings",
@@ -171,6 +181,8 @@ export const enUS = {
     paste: "Paste",
     copyAbsPath: "Copy Absolute Path",
     copyRelPath: "Copy Relative Path",
+    copyFileName: "Copy File Name",
+    copiedFileName: "File name copied",
     revealInOs: "Reveal in Finder / Explorer",
     revealInOsUnavailable: "Cannot open the system file manager in browser preview",
     revealInOsFailed: "Failed to reveal in file manager: {message}",

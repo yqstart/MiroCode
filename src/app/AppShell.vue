@@ -153,6 +153,29 @@ function onKeydown(event: KeyboardEvent) {
     void locateActiveInExplorer();
     return;
   }
+  // 以下为文本编辑强相关的快捷键，需避开输入框 / xterm / 查找面板 / 资源树过滤 / QuickOpen
+  if (isEditableTarget(event.target)) return;
+  // ⌘W：关闭当前标签
+  if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "w") {
+    event.preventDefault();
+    if (editor.activePath) {
+      void editor.closeTab(editor.activePath);
+    }
+    return;
+  }
+  // ⌘⌥→ / ⌘⌥←：切换到下一个 / 上一个标签
+  if (mod && event.altKey && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
+    event.preventDefault();
+    if (event.key === "ArrowRight") editor.activateNextTab();
+    else editor.activatePrevTab();
+    return;
+  }
+  // ⌘R：刷新资源树
+  if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "r") {
+    event.preventDefault();
+    void workspace.refreshFromDisk();
+    return;
+  }
   if (event.key === "Escape") {
     if (search.findInFilesVisible) {
       search.closeFindInFiles();
@@ -166,6 +189,17 @@ function onKeydown(event: KeyboardEvent) {
       ui.closeSettings();
     }
   }
+}
+
+/** 命中输入控件时跳过文本编辑类快捷键 */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (target.isContentEditable) return true;
+  // xterm / CodeMirror 内容区
+  if (target.closest(".xterm, .cm-content, .cm-editor")) return true;
+  return false;
 }
 
 function onWindowFocus() {
