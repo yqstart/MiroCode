@@ -604,8 +604,18 @@ export const enUS = {
     later: "Later",
     installNow: "Update Now",
     foundHint:
-      "Version {version} is available. Use Update in the title bar or check again.",
-    pendingHint: "Version {version} is available. Click Update in the title bar.",
+      "Version {version} is available. Click What's New in the title bar for details, or Update to install.",
+    pendingHint:
+      "Version {version} is available. View release notes or click Update to install.",
+    autoFoundHint:
+      "Version {version} is available. Click What's New in the title bar to read the changelog.",
+    viewNotes: "View Release Notes",
+    viewNotesShort: "What's New",
+    viewNotesTitle: "Release notes for v{version}",
+    viewNotesForVersion: "What's new in v{version}",
+    notesTitle: "What's new in v{version}",
+    notesEmpty:
+      "No detailed release notes yet. See the GitHub Release page.",
     downloadingTitle: "Downloading Update",
     downloadingMessage: "Downloading Miro Code {version}…",
     downloading: "Downloading…",

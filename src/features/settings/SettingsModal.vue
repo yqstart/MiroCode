@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { Check, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { THEME_LABELS } from "@/features/editor/theme";
-import { checkForAppUpdate, getAppVersion } from "@/shared/appUpdate";
+import { checkForAppUpdate, getAppVersion, showAvailableUpdateNotes } from "@/shared/appUpdate";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 import { formatShortcut } from "@/shared/platform";
 import { useAppUpdateStore } from "@/stores/appUpdate";
@@ -41,6 +41,10 @@ onMounted(async () => {
 function setUpdateHint(message: string, kind: "info" | "ok" | "err" = "info") {
   updateHint.value = message;
   updateHintKind.value = kind;
+}
+
+async function onViewUpdateNotes() {
+  await showAvailableUpdateNotes(true);
 }
 
 async function onCheckUpdate() {
@@ -410,6 +414,18 @@ function onOverlayClick(event: MouseEvent) {
                       : t("settings.checkUpdate")
                   }}
                 </button>
+                <button
+                  v-if="hasUpdate"
+                  type="button"
+                  class="view-notes-btn"
+                  @click="onViewUpdateNotes"
+                >
+                  {{
+                    t("update.viewNotesForVersion", {
+                      version: availableVersion ?? "",
+                    })
+                  }}
+                </button>
                 <p
                   v-if="updateHint"
                   class="update-hint"
@@ -743,6 +759,10 @@ function onOverlayClick(event: MouseEvent) {
 
 .update-actions {
   margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .check-update-btn {
@@ -763,6 +783,21 @@ function onOverlayClick(event: MouseEvent) {
 .check-update-btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.view-notes-btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+}
+
+.view-notes-btn:hover {
+  filter: brightness(1.04);
 }
 
 .update-hint {

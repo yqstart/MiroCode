@@ -16,6 +16,7 @@ import GitAuthDialog from "@/shared/GitAuthDialog.vue";
 import PromptDialog from "@/shared/PromptDialog.vue";
 import MoveReferencesDialog from "@/shared/MoveReferencesDialog.vue";
 import UpdateProgressDialog from "@/shared/UpdateProgressDialog.vue";
+import UpdateNotesDialog from "@/shared/UpdateNotesDialog.vue";
 import PushDialog from "@/features/git/PushDialog.vue";
 import UpdateProjectDialog from "@/features/git/UpdateProjectDialog.vue";
 import InteractiveRebaseDialog from "@/features/git/InteractiveRebaseDialog.vue";
@@ -232,6 +233,7 @@ onUnmounted(() => {
     <MoveReferencesDialog />
     <ChoiceDialog />
     <UpdateProgressDialog />
+    <UpdateNotesDialog />
     <GitAuthDialog />
     <PushDialog />
     <UpdateProjectDialog />
@@ -259,7 +261,7 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
-.floating-update :deep(.update-badge) {
+.floating-update :deep(.update-cluster) {
   pointer-events: auto;
 }
 

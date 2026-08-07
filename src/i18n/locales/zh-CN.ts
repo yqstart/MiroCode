@@ -594,8 +594,18 @@ export const zhCN = {
       "发现新版本 {version}（当前 {current}）\n\n{notes}",
     later: "稍后",
     installNow: "立即更新",
-    foundHint: "发现新版本 {version}，可点击标题栏「更新」或再次检查更新",
-    pendingHint: "新版本 {version} 可用，请点击标题栏「更新」",
+    foundHint:
+      "发现新版本 {version}，可点击标题栏「新功能」查看详情，或点「更新」安装",
+    pendingHint:
+      "新版本 {version} 可用，可点「新功能」查看更新内容，或点「更新」安装",
+    autoFoundHint:
+      "发现新版本 {version}，点击标题栏「新功能」可查看更新内容",
+    viewNotes: "查看更新内容",
+    viewNotesShort: "新功能",
+    viewNotesTitle: "查看 v{version} 更新内容",
+    viewNotesForVersion: "查看 v{version} 更新内容",
+    notesTitle: "v{version} 更新内容",
+    notesEmpty: "暂无详细更新说明，请前往 GitHub Release 页面查看。",
     downloadingTitle: "正在下载更新",
     downloadingMessage: "正在下载 Miro Code {version}…",
     downloading: "下载中…",

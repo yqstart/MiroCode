@@ -1,6 +1,8 @@
 import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
 import { t } from "@/i18n";
+import { resolveUpdateNotes } from "@/shared/changelog";
 import { promptChoice } from "@/shared/choiceDialog";
+import { openUpdateNotesDialog } from "@/shared/updateNotesDialog";
 import { useAppUpdateStore } from "@/stores/appUpdate";
 import { pinia } from "@/stores/pinia";
 
@@ -42,6 +44,25 @@ function updateStore() {
   return useAppUpdateStore(pinia);
 }
 
+/** 打开新版本更新说明弹窗 */
+export async function showAvailableUpdateNotes(
+  showInstallActions = true,
+): Promise<"install" | "later" | "close" | null> {
+  const store = updateStore();
+  const version = store.availableVersion;
+  if (!version) return null;
+  let notes = store.releaseNotes;
+  if (!notes.trim() && pendingUpdate) {
+    notes = await resolveUpdateNotes(version, pendingUpdate.body ?? "");
+    store.setAvailable(version, store.currentVersion ?? "", notes);
+  }
+  return openUpdateNotesDialog({
+    version,
+    notesMarkdown: notes,
+    showInstallActions: showInstallActions && Boolean(pendingUpdate),
+  });
+}
+
 /**
  * 检查 GitHub Release 上的 latest.json。
  * - auto：有更新时仅点亮右上角「更新」（不打断）
@@ -76,34 +97,43 @@ export async function checkForAppUpdate(
     }
 
     pendingUpdate = update;
-    store.setAvailable(update.version, update.currentVersion);
+    const notes = await resolveUpdateNotes(update.version, update.body ?? "");
+    store.setAvailable(update.version, update.currentVersion, notes);
 
-    // 启动静默检查：只显示右上角入口
+    // 启动静默检查：点亮入口并提示可查看更新内容
     if (mode === "auto") {
+      notify?.(
+        t("update.autoFoundHint", { version: update.version }),
+        6200,
+      );
       return "available";
     }
 
-    const notes = (update.body ?? "").trim();
-    const message = notes
-      ? t("update.foundMessageWithNotes", {
-          version: update.version,
-          current: update.currentVersion,
-          notes,
-        })
-      : t("update.foundMessage", {
-          version: update.version,
-          current: update.currentVersion,
-        });
-
     const choice = await promptChoice({
       title: t("update.foundTitle"),
-      message,
+      message: t("update.foundMessage", {
+        version: update.version,
+        current: update.currentVersion,
+      }),
       choices: [
+        { id: "notes", label: t("update.viewNotes"), variant: "ghost" },
         { id: "later", label: t("update.later"), variant: "ghost" },
         { id: "install", label: t("update.installNow"), variant: "primary" },
       ],
       dismissId: "later",
     });
+
+    if (choice === "notes") {
+      const action = await showAvailableUpdateNotes(true);
+      if (action === "install") {
+        return await installPendingUpdate(notify);
+      }
+      notify?.(
+        t("update.foundHint", { version: update.version }),
+        4800,
+      );
+      return "available";
+    }
 
     if (choice !== "install") {
       notify?.(
