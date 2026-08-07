@@ -33,20 +33,10 @@ if (import.meta.env.DEV) {
   }
   (window as unknown as WindowWithCheck).__ipcSelfCheck = async (opts = {}) => {
     const { invoke } = await import("@tauri-apps/api/core");
-    const slowCmd = opts.slowCmd ?? "git_status";
+    const slowCmd = opts.slowCmd ?? "dev_fake_block";
+    const slowMs = opts.slowMs ?? 800;
     const fastCmd = opts.fastCmd ?? "git_status";
     const fastCount = opts.fastCount ?? 10;
-    // 静默使用 slowMs（接口保留以备未来模拟 fake push 用；当前未消费）
-    void opts.slowMs;
-
-    // 模拟"push 卡住 N ms"：因为没有 fake push，临时把仓库根传一个不存在的路径，
-    // 让 git_status 在 Rust 端走 spawn_blocking + sleep 一下的等价路径——
-    // 但 git_status 不会 sleep。所以这里换思路：
-    // - 用一个真实的 git_status（在当前工作区）测量基线
-    // - 再在 fastCount 个并发 git_status 中穿插一组"占用 ipc 桥"的 Promise
-    //
-    // 真要测"push 卡住"，请用 src-tauri/tests/tauri_ipc_concurrency.rs 的模式
-    // （已在 CI 跑过）；dev 模式下做的是"前端能看到的真实 ipc 桥并发证据"。
     const workspaceStore = await import("@/stores/workspace");
     const root = workspaceStore.useWorkspaceStore().rootPath ?? "";
     if (!root) {
@@ -57,21 +47,37 @@ if (import.meta.env.DEV) {
       };
     }
 
-    // 真实"卡住"测量：连续调同一命令 1 次作为基线
+    // 第一阶段：基线 1× fastCmd 测量（无卡住，量化"无干扰"下的 IPC 耗时）
     const t0 = performance.now();
-    let slowOk = false;
+    let baselineOk = false;
     try {
-      await invoke(slowCmd, { root });
-      slowOk = true;
+      await invoke(fastCmd, { root });
+      baselineOk = true;
     } catch {
       /* 忽略 */
     }
-    const slowElapsed = performance.now() - t0;
+    const baselineElapsed = performance.now() - t0;
 
-    // 并发测量：fastCount 个并发调用，统计每个的耗时
+    // 第二阶段：触发 fake 卡住 + 同时并发 fastCount 个 fastCmd
+    // - slowCmd 默认 dev_fake_block：真 Tauri 调度层 + tokio::time::sleep
+    // - 等价"git_push 卡住 N ms 期间并发 git_status"的真机复现
+    const t1 = performance.now();
+    const slowPromise = (async () => {
+      const s = performance.now();
+      let ok = false;
+      try {
+        await invoke(slowCmd, { root, ms: slowMs });
+        ok = true;
+      } catch {
+        /* 忽略 */
+      }
+      return { cmd: slowCmd, elapsed: performance.now() - s, ok };
+    })();
+    // 给 slowPromise 50ms 启动时间（让 IPC 桥先被占用），再并发 fast
+    await new Promise((r) => setTimeout(r, 50));
+
     const fastResults: IpcResult[] = [];
-    const start = performance.now();
-    const promises: Promise<void>[] = [];
+    const fastPromises: Promise<void>[] = [];
     for (let i = 0; i < fastCount; i++) {
       const p = (async () => {
         const s = performance.now();
@@ -84,26 +90,37 @@ if (import.meta.env.DEV) {
         }
         fastResults.push({ cmd: fastCmd, elapsed: performance.now() - s, ok });
       })();
-      promises.push(p);
+      fastPromises.push(p);
     }
-    await Promise.all(promises);
-    const totalElapsed = performance.now() - start;
+    await Promise.all(fastPromises);
+    const slowResult = await slowPromise;
+    const totalElapsed = performance.now() - t1;
 
     const maxFast = Math.max(...fastResults.map((r) => r.elapsed));
-    const avgFast = fastResults.reduce((s, r) => s + r.elapsed, 0) / fastResults.length;
+    const avgFast = fastResults.length
+      ? fastResults.reduce((s, r) => s + r.elapsed, 0) / fastResults.length
+      : 0;
+    // 关键判定：并发 fast 的总耗时应接近 slowMs（说明 fast 在 slow 期间**不排队**）
+    // 而非接近 fastCount × 单次耗时（被串行化排队）
+    const serialWorst = avgFast * fastCount;
     const verdict =
-      maxFast < 200
-        ? `✅ UI 即时响应：${fastCount} 个并发 ${fastCmd} 最大 ${maxFast.toFixed(0)}ms / 平均 ${avgFast.toFixed(0)}ms`
-        : `⚠️ UI 有卡顿：${fastCount} 个并发 ${fastCmd} 最大 ${maxFast.toFixed(0)}ms`;
+      totalElapsed < slowMs * 1.5
+        ? `✅ UI 即时响应：${slowCmd} 卡 ${slowMs}ms 期间 ${fastCount} 个并发 ${fastCmd} 完成 ${totalElapsed.toFixed(0)}ms（最大 ${maxFast.toFixed(0)}ms / 平均 ${avgFast.toFixed(0)}ms）`
+        : `⚠️ UI 有卡顿：并发 ${fastCount} 个 ${fastCmd} 总耗时 ${totalElapsed.toFixed(0)}ms（> ${slowMs}ms，疑似串行；串行最坏 ${serialWorst.toFixed(0)}ms）`;
 
-    console.log(`[ipcSelfCheck] slow (1× ${slowCmd}): ${slowElapsed.toFixed(0)}ms, ${slowOk ? "ok" : "err"}`);
     console.log(
-      `[ipcSelfCheck] fast (${fastCount}× ${fastCmd}): total ${totalElapsed.toFixed(0)}ms, max ${maxFast.toFixed(0)}ms, avg ${avgFast.toFixed(0)}ms`,
+      `[ipcSelfCheck] baseline (1× ${fastCmd}): ${baselineElapsed.toFixed(0)}ms, ${baselineOk ? "ok" : "err"}`,
+    );
+    console.log(
+      `[ipcSelfCheck] slow (1× ${slowCmd} ${slowMs}ms): ${slowResult.elapsed.toFixed(0)}ms, ${slowResult.ok ? "ok" : "err"}`,
+    );
+    console.log(
+      `[ipcSelfCheck] fast (${fastCount}× ${fastCmd}) during slow: total ${totalElapsed.toFixed(0)}ms, max ${maxFast.toFixed(0)}ms, avg ${avgFast.toFixed(0)}ms`,
     );
     console.log(`[ipcSelfCheck] ${verdict}`);
 
     return {
-      slow: { cmd: slowCmd, elapsed: slowElapsed, ok: slowOk },
+      slow: slowResult,
       fast: fastResults,
       verdict,
     };
@@ -118,7 +135,11 @@ if (import.meta.env.DEV) {
   );
   // eslint-disable-next-line no-console
   console.log(
-    "[MiroCode 真机自检] 或测 push 期间并发：配慢网络 → 点 Push → 立刻在 Console 跑 await __ipcSelfCheck({fastCount: 20})",
+    "[MiroCode 真机自检] 真机复现 push 卡住期间并发 IPC：await __ipcSelfCheck({ slowMs: 800, fastCount: 20 })",
+  );
+  // eslint-disable-next-line no-console
+  console.log(
+    "[MiroCode 真机自检] 或配慢网络点 Push 后立刻跑：await __ipcSelfCheck({ fastCount: 20 })",
   );
 }
 

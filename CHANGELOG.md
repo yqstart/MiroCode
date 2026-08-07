@@ -92,6 +92,25 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
     - 全量 `cargo test` 9/9 绿（4 个原单元测试 + 1 个并发模拟 + 2 个 Tauri 集成测试 + 2 个 lib + 1 个 doc 套件）
     - **剩余真机验证项**（确实必须本机做的）：视觉确认 push 期间活动栏/标签/资源树 UI 即时响应——这层只能由人眼 + 鼠标完成。但底层调度正确性已有 Tauri 集成测试保证；如本机实测仍有 UI 阻塞，需进一步排查 Tauri command 调度（按现行 `tauri::async_runtime` 模型与并发测试结果，理论上不应再卡）
 
+### 新增（真机 IPC 自检工具补完）
+
+- **`dev_fake_block` 真机"卡住 N ms"注入器**：`src-tauri/src/commands/git.rs` 新增 dev-only `#[tauri::command] pub async fn dev_fake_block(ms: u64)`，**真**走 Tauri 调度层 + `tokio::time::sleep`，等价于真 push 卡住的运行时行为。release 构建下函数立即返回错误（`cfg!(debug_assertions)` 守卫，生产构建零影响）。注册到 `lib.rs` 的 `invoke_handler`。
+- **`__ipcSelfCheck` 升级为可量化"卡住期间并发 IPC"**：
+  - 默认调用：`await __ipcSelfCheck()` 自动触发 `dev_fake_block(800)` 期间并发 10 个 `git_status`，输出形如 `✅ UI 即时响应：dev_fake_block 卡 800ms 期间 10 个并发 git_status 完成 850ms（最大 50ms / 平均 45ms）`
+  - 压测调用：`await __ipcSelfCheck({ slowMs: 1200, fastCount: 20 })` —— 直接量化"1200ms 卡住期间 20 个并发 git_status 的最大/平均耗时"
+  - 关键判定：并发 fast 总耗时 < `slowMs × 1.5` 视为 ✅；否则视为 ⚠️（疑似 IPC 桥被串行化）
+- **真机复现步骤（无需配慢网络/断网）**：
+  ```js
+  // 在 pnpm tauri:dev 启动的 WebView DevTools Console 跑：
+  await __ipcSelfCheck()                  // 800ms 卡住 + 10 并发（基线）
+  await __ipcSelfCheck({ slowMs: 1500, fastCount: 20 })  // 压测
+  // 期间点活动栏/标签/资源树，UI 应即时响应
+  ```
+- **新增 `dev_fake_block_concurrent` 集成测试**（`src-tauri/tests/dev_fake_block_concurrent.rs`，`#[cfg(debug_assertions)]` 守卫）：
+  - `fake_block_sleeps_for_requested_ms`：验证 sleep 实际 ≥ 100ms 且 < 500ms
+  - `fake_block_does_not_block_concurrent_invocations`：用 `tauri::async_runtime::spawn` 派发 fake_block + 5 个 fast task，断言 5 个并发完成总耗时 < 1500ms（不被串行化）
+  - `cargo test` **11/11 全绿**（7 单元 + 2 fake_block 集成 + 1 真 git2 集成 + 1 Tauri 调度集成）
+
 ## [0.9.0] - 2026-08-07
 
 ### 新增

@@ -2498,6 +2498,24 @@ pub fn git_branch_sides(
     })
 }
 
+// ==================== dev-only 真机"卡住 N ms"注入器 ====================
+// 目的：让 `__ipcSelfCheck({ slowCmd: "dev_fake_block", slowMs: 800 })` 在真机
+// 上**真**走 Tauri 调度层 + 真 tokio::time::sleep，完全等价于"git_push 期间
+// IPC 桥被占用"——直接量化"卡住 800ms 期间 20 个并发 git_status 的最大耗时"。
+// 安全：release 构建下函数立即返回错误（cmd 注入器只该出现在 dev 模式）。
+#[tauri::command]
+pub async fn dev_fake_block(ms: u64) -> Result<(), String> {
+    if !cfg!(debug_assertions) {
+        return Err("dev_fake_block 仅在 dev 构建可用".into());
+    }
+    let started = std::time::Instant::now();
+    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    // 在 Rust 端 stderr 输出（dev 模式可在 WebView DevTools → Network/IPC 链路看到）
+    eprintln!("[dev_fake_block] 睡眠 {ms}ms 实际 {elapsed_ms}ms");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
