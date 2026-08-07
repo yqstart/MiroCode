@@ -53,10 +53,6 @@ const props = defineProps<{
   content: string;
 }>();
 
-const emit = defineEmits<{
-  contextmenu: [event: MouseEvent];
-}>();
-
 const host = ref<HTMLDivElement | null>(null);
 const editorStore = useEditorStore();
 const settings = useSettingsStore();
@@ -151,12 +147,9 @@ function createEditor() {
         createCompletionExtension(props.path),
         ...createDiagnosticsExtension(props.path),
         createNavigationExtension(navHandlers),
-        EditorView.domEventHandlers({
-          contextmenu(event) {
-            emit("contextmenu", event);
-            return false;
-          },
-        }),
+        // 勿用 domEventHandlers 处理 contextmenu：
+        // main.ts 已在捕获阶段 preventDefault，CM 会跳过 defaultPrevented 的 handler，导致右键菜单失效。
+        // 父级 @contextmenu 通过 Vue 透传到本组件根节点即可。
         rectangularSelection(),
         crosshairCursor(),
         highlightActiveLine(),

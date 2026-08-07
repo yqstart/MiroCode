@@ -381,7 +381,7 @@ const formatDocumentDisabled = computed(
 );
 
 function onEditorContextMenu(event: MouseEvent) {
-  if (!activeTab.value || !rootPath.value) return;
+  if (!activeTab.value || !showFileEditor.value) return;
   if (sessionsFocused.value || compareFocused.value || gitLogFocused.value) return;
   if (isRasterImagePath(activeTab.value.path)) return;
   event.preventDefault();
@@ -393,6 +393,15 @@ function onEditorContextMenu(event: MouseEvent) {
     y: pos.y,
     absPath: activeTab.value.path,
   };
+}
+
+function onDocPointerDown(event: MouseEvent) {
+  // 右键打开菜单时忽略，避免 WKWebView 连带事件立刻关掉菜单
+  if (event.button === 2) return;
+  const el = event.target as Element | null;
+  if (el?.closest?.(".editor-ctx, .tab-ctx")) return;
+  editorCtx.value = null;
+  tabCtx.value = null;
 }
 
 async function formatFromEditor() {
@@ -420,13 +429,10 @@ async function showDiffFromEditor() {
   await git.showDiff(rel, false);
 }
 
-function onDocClick() {
-  editorCtx.value = null;
-  tabCtx.value = null;
-}
-
-onMounted(() => window.addEventListener("click", onDocClick));
-onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
+onMounted(() => window.addEventListener("pointerdown", onDocPointerDown, true));
+onBeforeUnmount(() =>
+  window.removeEventListener("pointerdown", onDocPointerDown, true),
+);
 </script>
 
 <template>
