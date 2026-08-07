@@ -81,6 +81,20 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # 从 CHANGELOG.md 生成 Release 正文（变更项 + 安装说明），与应用内「新功能」同源
+      - name: Prepare release notes
+        id: notes
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          BODY_FILE="$RUNNER_TEMP/release-notes.md"
+          node scripts/release-notes.mjs "$VERSION" > "$BODY_FILE"
+          {
+            echo "body<<__MIRO_RELEASE_NOTES__"
+            cat "$BODY_FILE"
+            echo "__MIRO_RELEASE_NOTES__"
+          } >> "$GITHUB_OUTPUT"
+
       # 可选：配置 Windows 代码签名证书后，Release 构建会自动 Authenticode 签名，消除 SmartScreen「不安全」提示
       - name: Import Windows code signing certificate
         if: matrix.platform == 'windows-latest'
@@ -139,17 +153,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: Miro Code v__VERSION__
-          releaseBody: |
-            多平台安装包由 GitHub Actions 自动构建。
-
-            - macOS：`.dmg`（Apple Silicon / Intel 各一）
-            - Windows：`.msi` / `.exe`
-            - Linux：`.deb` / `.AppImage`
-
-            应用内可通过「设置 → 关于 → 检查更新」或启动时自动检查升级。
-            macOS 已 ad-hoc 签名；若仍提示「未验证开发者」，请右键 → 打开。首次安装若见「已损坏」，见 [多平台发布.md](https://github.com/yqstart/MiroCode/blob/master/docs/多平台发布.md#macos安装后提示已损坏无法打开)。
-            Windows 若 SmartScreen 提示「已保护你的电脑」，见 [多平台发布.md · Windows](https://github.com/yqstart/MiroCode/blob/master/docs/多平台发布.md#windowssmartscreen-提示已保护你的电脑)（更多信息 → 仍要运行）。
-            详见仓库 [CHANGELOG.md](https://github.com/yqstart/MiroCode/blob/master/CHANGELOG.md)。
+          releaseBody: ${{ steps.notes.outputs.body }}
           # 已发布的 Release 须为 false；若希望先审再发，可改为 true（且勿对手动已发布 tag 再跑）
           releaseDraft: false
           prerelease: false
