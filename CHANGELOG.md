@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-07
+
+### 新增
+
+- **SFTP**：文件下载至本地；双击可编辑的远程文件在编辑区打开（`miro-sftp://` 虚拟路径），保存时写回远程；右键菜单与 Termius 式交互优化
+
+### 修复
+
+- **SSH / 终端**：关闭终端标签或 SSH 会话时主动断开 Shell/SFTP，并关闭对应远程编辑标签（⌘J 隐藏仍会保活连接，属预期行为）
+- **SSH 终端**：Vim 等 TUI 模式检测与输入串行队列，减少滚动/编辑异常
+
 ## [0.7.0] - 2026-08-07
 
 ### 新增
@@ -152,7 +163,8 @@
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/yqstart/MiroCode/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/yqstart/MiroCode/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/yqstart/MiroCode/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/yqstart/MiroCode/compare/v0.5.0...v0.5.1
