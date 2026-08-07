@@ -6,7 +6,7 @@ export function terminalThemeColors(theme: ThemeId): ITheme {
   if (theme === "cyberpunk") {
     return {
       background: "#0a0610",
-      foreground: "#f0e6ff",
+      foreground: "#faf5ff",
       cursor: "#f0abfc",
       cursorAccent: "#0a0610",
       selectionBackground: "rgba(240,171,252,0.32)",
@@ -18,8 +18,8 @@ export function terminalThemeColors(theme: ThemeId): ITheme {
       blue: "#22d3ee",
       magenta: "#e879f9",
       cyan: "#67e8f9",
-      white: "#f5f3ff",
-      brightBlack: "#6b7280",
+      white: "#faf5ff",
+      brightBlack: "#c4b5fd",
       brightRed: "#fda4af",
       brightGreen: "#6ee7b7",
       brightYellow: "#fde68a",
@@ -32,7 +32,7 @@ export function terminalThemeColors(theme: ThemeId): ITheme {
   if (theme === "midnight") {
     return {
       background: "#080e1a",
-      foreground: "#e2e8f0",
+      foreground: "#f1f5f9",
       cursor: "#38bdf8",
       cursorAccent: "#080e1a",
       selectionBackground: "rgba(56,189,248,0.32)",
@@ -44,15 +44,15 @@ export function terminalThemeColors(theme: ThemeId): ITheme {
       blue: "#38bdf8",
       magenta: "#a78bfa",
       cyan: "#22d3ee",
-      white: "#e2e8f0",
-      brightBlack: "#64748b",
+      white: "#f1f5f9",
+      brightBlack: "#94a3b8",
       brightRed: "#fca5a5",
       brightGreen: "#6ee7b7",
       brightYellow: "#fde68a",
       brightBlue: "#7dd3fc",
       brightMagenta: "#c4b5fd",
       brightCyan: "#67e8f9",
-      brightWhite: "#f8fafc",
+      brightWhite: "#ffffff",
     };
   }
   if (theme === "dawn") {
@@ -84,7 +84,7 @@ export function terminalThemeColors(theme: ThemeId): ITheme {
   }
   return {
     background: "#0c0c10",
-    foreground: "#f4f4f5",
+    foreground: "#fafafa",
     cursor: "#8b5cf6",
     cursorAccent: "#0c0c10",
     selectionBackground: "rgba(139,92,246,0.32)",
@@ -96,14 +96,14 @@ export function terminalThemeColors(theme: ThemeId): ITheme {
     blue: "#60a5fa",
     magenta: "#c084fc",
     cyan: "#22d3ee",
-    white: "#e4e4e7",
-    brightBlack: "#71717a",
+    white: "#f4f4f5",
+    brightBlack: "#a1a1aa",
     brightRed: "#fca5a5",
     brightGreen: "#6ee7b7",
     brightYellow: "#fde68a",
     brightBlue: "#93c5fd",
     brightMagenta: "#d8b4fe",
     brightCyan: "#67e8f9",
-    brightWhite: "#fafafa",
+    brightWhite: "#ffffff",
   };
 }
