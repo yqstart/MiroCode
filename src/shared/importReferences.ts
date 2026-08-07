@@ -1,10 +1,10 @@
 import {
   dirname,
-  joinPath,
   listDir,
   pathExists,
   readTextFile,
   relativePath,
+  resolveRelativePath,
   writeTextFile,
   normalizeAbsPath,
   isPathUnder,
@@ -22,10 +22,15 @@ const RESOLVE_EXTENSIONS = [
   ".tsx",
   ".js",
   ".jsx",
+  ".mjs",
+  ".cjs",
   ".vue",
   ".json",
   "/index.ts",
+  "/index.tsx",
   "/index.js",
+  "/index.jsx",
+  "/index.vue",
 ];
 
 const SCAN_EXTENSIONS = new Set([
@@ -54,22 +59,39 @@ export interface ImportPatch {
   preview: string;
 }
 
-/** 同步解析（跳转用，不查磁盘） */
+function importTargetBase(currentFile: string, spec: string): string {
+  return resolveRelativePath(dirname(currentFile), spec);
+}
+
+function underWorkspace(root: string, path: string): boolean {
+  return isPathUnder(root, path);
+}
+
+/** 同步解析（下划线提示用；不查磁盘，优先带扩展名猜测） */
 export function resolveImportCandidate(
   workspaceRoot: string | null,
   currentFile: string,
   spec: string,
 ): string | null {
   if (!workspaceRoot || !spec.startsWith(".")) return null;
-  const base = dirname(currentFile);
-  const target = joinPath(base, spec);
-
-  for (const ext of RESOLVE_EXTENSIONS) {
-    const candidate = ext.startsWith("/") ? `${target}${ext}` : `${target}${ext}`;
-    if (candidate.startsWith(workspaceRoot)) return candidate;
+  const target = importTargetBase(currentFile, spec);
+  if (!underWorkspace(workspaceRoot, target) && !underWorkspace(workspaceRoot, dirname(target))) {
+    return null;
   }
-  if (target.startsWith(workspaceRoot)) return target;
-  return null;
+
+  const baseName = target.split("/").pop() ?? "";
+  const hasExt = /\.\w+$/.test(baseName);
+  if (hasExt) {
+    return underWorkspace(workspaceRoot, target) ? target : null;
+  }
+
+  // 无扩展名时不要返回裸路径（打开会失败）；猜最常见扩展供下划线提示
+  for (const ext of RESOLVE_EXTENSIONS) {
+    if (!ext) continue;
+    const candidate = ext.startsWith("/") ? `${target}${ext}` : `${target}${ext}`;
+    if (underWorkspace(workspaceRoot, candidate)) return candidate;
+  }
+  return underWorkspace(workspaceRoot, target) ? target : null;
 }
 
 /** 解析相对 import 为工作区内绝对路径（需磁盘存在） */
@@ -79,13 +101,17 @@ export async function resolveImportPath(
   spec: string,
 ): Promise<string | null> {
   if (!spec.startsWith(".")) return null;
-  const base = dirname(currentFile);
-  const target = joinPath(base, spec);
+  const target = importTargetBase(currentFile, spec);
 
   for (const ext of RESOLVE_EXTENSIONS) {
     const candidate = ext.startsWith("/") ? `${target}${ext}` : `${target}${ext}`;
-    if (!(await pathExists(root, candidate))) continue;
-    return candidate;
+    if (!underWorkspace(root, candidate) && ext !== "") continue;
+    try {
+      if (!(await pathExists(root, candidate))) continue;
+      return candidate;
+    } catch {
+      // 工作区校验失败等
+    }
   }
   return null;
 }

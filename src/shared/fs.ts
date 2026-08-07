@@ -119,6 +119,27 @@ export function normalizeAbsPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+/**
+ * 将相对片段（含 `./` `../`）解析为干净绝对路径，结果中不含 `.`/`..` 组件。
+ * 后端 path_exists 会拒绝含 `..` 的路径，import 跳转必须先规范化。
+ */
+export function resolveRelativePath(fromDir: string, spec: string): string {
+  const base = normalizeAbsPath(fromDir);
+  const parts = base ? base.split("/") : [];
+  // 保留开头的空段（Unix 根）或 Windows 盘符
+  for (const seg of spec.replace(/\\/g, "/").split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") {
+      if (parts.length > 1) parts.pop();
+      continue;
+    }
+    parts.push(seg);
+  }
+  if (!parts.length) return "/";
+  if (parts[0] === "") return `/${parts.slice(1).join("/")}`;
+  return parts.join("/");
+}
+
 /** to 是否在 prefix 目录下（含自身） */
 export function isPathUnder(prefix: string, target: string): boolean {
   const p = normalizeAbsPath(prefix);

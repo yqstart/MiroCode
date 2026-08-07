@@ -18,6 +18,16 @@ export interface DocumentSymbol {
 
 const DEF_PATTERNS: { re: RegExp; kind: SymbolKind; nameGroup: number }[] = [
   {
+    re: /^\s*export\s+default\s+async\s+function\s+([A-Za-z_$][\w$]*)/,
+    kind: "function",
+    nameGroup: 1,
+  },
+  {
+    re: /^\s*export\s+default\s+function\s+([A-Za-z_$][\w$]*)/,
+    kind: "function",
+    nameGroup: 1,
+  },
+  {
     re: /^\s*export\s+async\s+function\s+([A-Za-z_$][\w$]*)/,
     kind: "function",
     nameGroup: 1,
@@ -29,6 +39,11 @@ const DEF_PATTERNS: { re: RegExp; kind: SymbolKind; nameGroup: number }[] = [
   },
   { re: /^\s*async\s+function\s+([A-Za-z_$][\w$]*)/, kind: "function", nameGroup: 1 },
   { re: /^\s*function\s+([A-Za-z_$][\w$]*)/, kind: "function", nameGroup: 1 },
+  {
+    re: /^\s*export\s+default\s+class\s+([A-Za-z_$][\w$]*)/,
+    kind: "class",
+    nameGroup: 1,
+  },
   {
     re: /^\s*export\s+class\s+([A-Za-z_$][\w$]*)/,
     kind: "class",
@@ -46,6 +61,11 @@ const DEF_PATTERNS: { re: RegExp; kind: SymbolKind; nameGroup: number }[] = [
   { re: /^\s*export\s+enum\s+([A-Za-z_$][\w$]*)/, kind: "enum", nameGroup: 1 },
   { re: /^\s*enum\s+([A-Za-z_$][\w$]*)/, kind: "enum", nameGroup: 1 },
   {
+    re: /^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\(|function\b)/,
+    kind: "function",
+    nameGroup: 1,
+  },
+  {
     re: /^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=/,
     kind: "variable",
     nameGroup: 1,
@@ -60,12 +80,32 @@ const DEF_PATTERNS: { re: RegExp; kind: SymbolKind; nameGroup: number }[] = [
     kind: "variable",
     nameGroup: 1,
   },
+  // class / object 方法：foo() { / async foo() { / foo(a: T): R {
   {
-    re: /^\s*(?:public|private|protected|static|async|\s)+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*[:{]/,
+    re: /^\s*(?:public|private|protected|static|async|override|readonly|\s)*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*[:{]/,
     kind: "method",
     nameGroup: 1,
   },
 ];
+
+const METHOD_NAME_BLOCKLIST = new Set([
+  "if",
+  "for",
+  "while",
+  "switch",
+  "catch",
+  "with",
+  "function",
+  "class",
+  "return",
+  "typeof",
+  "instanceof",
+  "new",
+  "await",
+  "import",
+  "export",
+  "from",
+]);
 
 const WORD_RE = /[A-Za-z_$][\w$]*/;
 
@@ -100,6 +140,7 @@ function indexLines(text: string, lineOffset = 0): Map<string, DocumentSymbol[]>
       const m = line.match(re);
       if (!m?.[nameGroup]) continue;
       const name = m[nameGroup];
+      if (kind === "method" && METHOD_NAME_BLOCKLIST.has(name)) continue;
       const column = (m.index ?? 0) + line.indexOf(name, m.index ?? 0) + 1;
       const sym: DocumentSymbol = {
         name,
