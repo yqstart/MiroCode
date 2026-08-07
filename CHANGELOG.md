@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-07
+
+### 新增
+
+- 发现新版本时可查看更新说明：解析内置 `CHANGELOG.md` / GitHub Release，标题栏「新功能」、设置页与检查更新弹窗均可打开
+
+### 修复
+
+- **SSH**：Shell 写入与 SFTP 共用 Session 争用导致偶发断连；SFTP 浏览上级目录至 `/` 报非法路径；会话标签优先显示主机「显示名称」
+- **SSH / 本地终端**：macOS 下 Vim 等全屏 TUI 无法滚动/编辑（viewport CSS 与 IME 退格拦截）；记住密码凭据文件读写加锁，减少偶发需重新输入
+- **终端**：本地终端 ↔ SSH 子视图切换时保活 PTY/远程连接，不再误杀本地正在运行的进程
+- Git 编辑区回滚相关交互
+
 ## [0.6.0] - 2026-08-06
 
 ### 新增
@@ -139,7 +152,8 @@
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/yqstart/MiroCode/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/yqstart/MiroCode/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/yqstart/MiroCode/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/yqstart/MiroCode/compare/v0.4.0...v0.5.0
