@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-07
+
+### 新增
+
+- 发版脚本 `scripts/release-notes.mjs`：从 `CHANGELOG.md` 生成 GitHub Release 正文，与应用内「新功能」同源
+- 交接文档 `docs/交接文档.md`：便于后续人类 / Agent 接手继续开发
+
+### 修复
+
+- **设置 / 更新**：去掉检查更新旁冗余文案与按钮；修复 CHANGELOG 节提取在多行 `$` 下被截断，导致更新说明只剩版本标题
+- **终端**：FitAddon 在带 padding 容器上多算约 1 行，导致 SSH/本地 Vim 末行截断；改为双层容器挂载 xterm
+- **编辑器右键**：`main.ts` 捕获阶段 `preventDefault` 后 CodeMirror `domEventHandlers` 被跳过；改回组件根节点透传原生事件
+- **资源管理器**：Tauri macOS WKWebView 上 HTML5 DnD 不可靠，改为 pointer 阈值拖放以真正移动文件
+- **主题可读性**：提亮 deep/light 主题 secondary/muted、编辑器注释与终端前景
+- **选区高亮**：当前选区对比度高于相同文本 / 查找匹配（避免「选中反而更暗」）
+- **Go to Definition**：规范化含 `../` 的相对 import（避免后端拒绝路径）；按磁盘存在性补全扩展名；增强函数/类/方法符号识别
+- **查找替换**：修复误把 `.miro-find-row` 设为 `display:none` 导致面板空白；快捷键对齐 VS Code（⌘F / ⌘⌥F·Ctrl+H，Esc / ⌘G / F3）
+
 ## [0.8.0] - 2026-08-07
 
 ### 新增
@@ -163,7 +181,8 @@
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/yqstart/MiroCode/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/yqstart/MiroCode/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/yqstart/MiroCode/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/yqstart/MiroCode/compare/v0.5.1...v0.6.0

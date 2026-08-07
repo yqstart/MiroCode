@@ -6,6 +6,7 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 
 | 文档 | 路径 |
 |---|---|
+| **交接文档（接手入口）** | `docs/交接文档.md` |
 | 官方定名 | `docs/Miro Code（米罗编辑器）官方定名文档.md` |
 | 产品需求 | `docs/Miro Code代码编辑器需求文档.md` |
 | 技术架构 | `docs/Miro Code技术架构文档.md` |
