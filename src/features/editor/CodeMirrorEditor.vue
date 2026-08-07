@@ -166,6 +166,7 @@ function createEditor() {
           goBackKeymap(navHandlers),
           indentWithTab,
         ]),
+        // 快捷键对齐 VS Code：⌘F 查找；⌘⌥F（mac）/ Ctrl+H（win）替换
         Prec.highest(
           keymap.of([
             {
@@ -176,14 +177,14 @@ function createEditor() {
               },
             },
             {
-              key: "Mod-r",
+              key: "Mod-Alt-f",
               run: (v) => {
                 openFindReplacePanel(v);
                 return true;
               },
             },
             {
-              key: "Mod-Alt-f",
+              key: "Mod-h",
               run: (v) => {
                 openFindReplacePanel(v);
                 return true;
@@ -361,16 +362,17 @@ defineExpose({ scrollTo });
   gap: 6px;
 }
 
+/* VS Code 风格：查找行始终可见；替换行折叠时隐藏 */
 .cm-host :deep(.miro-find-row),
-.cm-host :deep(.miro-find-replace-row.is-collapsed) {
-  display: none;
-}
-
 .cm-host :deep(.miro-find-replace-row) {
   display: flex;
   align-items: center;
   gap: 4px;
   min-width: 0;
+}
+
+.cm-host :deep(.miro-find-replace-row.is-collapsed) {
+  display: none;
 }
 
 .cm-host :deep(.miro-find-spacer) {

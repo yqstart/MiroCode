@@ -11,6 +11,7 @@ import type { EditorView, Panel, ViewUpdate } from "@codemirror/view";
 import { EditorView as EV } from "@codemirror/view";
 import { runScopeHandlers } from "@codemirror/view";
 import { t } from "@/i18n";
+import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
 
 const panelByView = new WeakMap<EditorView, MiroFindPanel>();
 
@@ -161,6 +162,7 @@ class MiroFindPanel implements Panel {
     this.searchField = createEl(
       "input",
       {
+        type: "text",
         class: "miro-find-input",
         name: "search",
         form: "",
@@ -168,18 +170,21 @@ class MiroFindPanel implements Panel {
         "aria-label": t("editorFind.findPlaceholder"),
         placeholder: t("editorFind.findPlaceholder"),
         value: this.query.search,
+        ...PLAIN_INPUT_ATTRS,
       },
     ) as HTMLInputElement;
 
     this.replaceField = createEl(
       "input",
       {
+        type: "text",
         class: "miro-find-input",
         name: "replace",
         form: "",
         "aria-label": t("editorFind.replacePlaceholder"),
         placeholder: t("editorFind.replacePlaceholder"),
         value: this.query.replace,
+        ...PLAIN_INPUT_ATTRS,
       },
     ) as HTMLInputElement;
 
@@ -383,15 +388,44 @@ class MiroFindPanel implements Panel {
       e.preventDefault();
       return;
     }
+    // Esc：关闭（对齐 VS Code）
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeSearchPanel(this.view);
+      this.view.focus();
+      return;
+    }
+    // ⌘G / F3：下一处；⇧⌘G / ⇧F3：上一处
+    if (
+      (e.key === "g" || e.key === "G") &&
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey
+    ) {
+      e.preventDefault();
+      (e.shiftKey ? findPreviousCentered : findNextCentered)(this.view);
+      this.refreshMatchCount();
+      return;
+    }
+    if (e.key === "F3") {
+      e.preventDefault();
+      (e.shiftKey ? findPreviousCentered : findNextCentered)(this.view);
+      this.refreshMatchCount();
+      return;
+    }
     if (e.key === "Enter" && e.target === this.searchField) {
       e.preventDefault();
       (e.shiftKey ? findPreviousCentered : findNextCentered)(this.view);
       this.refreshMatchCount();
       return;
     }
+    // 替换框 Enter = 替换当前并跳下一处；⇧Enter = 仅跳上一处
     if (e.key === "Enter" && e.target === this.replaceField) {
       e.preventDefault();
-      replaceNext(this.view);
+      if (e.shiftKey) {
+        findPreviousCentered(this.view);
+      } else {
+        replaceNext(this.view);
+      }
       this.refreshMatchCount();
     }
   }
@@ -451,16 +485,21 @@ export function createMiroFindPanel(view: EditorView): Panel {
   return new MiroFindPanel(view);
 }
 
-/** ⌘F / Ctrl+F：打开查找（默认隐藏替换） */
+/** ⌘F / Ctrl+F：打开查找（默认隐藏替换；有选区则填入） */
 export function openFindPanel(view: EditorView) {
   openSearchPanel(view);
-  panelByView.get(view)?.setReplaceVisible(false);
+  const panel = panelByView.get(view);
+  panel?.setReplaceVisible(false);
+  // 若面板已打开，openSearchPanel 会按选区更新 query；同步到输入框
+  panel?.setQuery(getSearchQuery(view.state));
 }
 
-/** ⌘R / Ctrl+R 或 ⌘⌥F：打开并展开替换行 */
+/** ⌘⌥F（mac）/ Ctrl+H（win）：打开并展开替换行 */
 export function openFindReplacePanel(view: EditorView) {
   openSearchPanel(view);
-  panelByView.get(view)?.focusReplace();
+  const panel = panelByView.get(view);
+  panel?.setQuery(getSearchQuery(view.state));
+  panel?.focusReplace();
 }
 
 export { findNextCentered, findPreviousCentered };
