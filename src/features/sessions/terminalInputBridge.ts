@@ -220,6 +220,15 @@ export function attachTerminalInputBridge(
       return false;
     }
 
+    // 仅在 IME 近期活跃时拦截退格/Delete，避免干扰 Vim 等全屏 TUI
+    const imeRecentlyActive =
+      performance.now() - ime.last229At < 800 ||
+      performance.now() - ime.lastCompositionEndAt < 800 ||
+      performance.now() - ime.lastNonAsciiCommitAt < 800;
+    if (!imeRecentlyActive) {
+      return true;
+    }
+
     // macOS：自行投递 DEL，跳过 xterm textarea value-diff（会误插空格）
     safeWrite(isBackspace ? "\x7f" : "\x1b[3~");
     textarea.value = "";
@@ -244,5 +253,6 @@ export function terminalBaseOptions() {
     letterSpacing: 0,
     allowProposedApi: true as const,
     macOptionIsMeta: true,
+    scrollback: 10000,
   };
 }

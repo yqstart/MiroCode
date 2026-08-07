@@ -176,9 +176,7 @@ watch(
   height: 100%;
 }
 
-.terminal-host :deep(.xterm-viewport) {
-  overflow-y: auto !important;
-}
+/* 勿覆盖 viewport overflow：会破坏 Vim 等 TUI 的 alternate buffer */
 
 /* 组字预览对齐主题，避免黑底白字叠在深色终端上难辨 */
 .terminal-host :deep(.composition-view) {

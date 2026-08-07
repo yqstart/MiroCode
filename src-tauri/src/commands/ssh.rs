@@ -10,7 +10,7 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -351,6 +351,23 @@ fn validate_remote_path(path: &str) -> CmdResult<&Path> {
     Ok(Path::new(path.trim()))
 }
 
+/// SFTP 操作期间等待 pause 解除，避免 Channel 写与 Session 阻塞 I/O 争用
+fn wait_shell_io_ready(pause: &AtomicBool, stop: &AtomicBool) -> CmdResult<()> {
+    for _ in 0..250 {
+        if stop.load(Ordering::SeqCst) {
+            return Err("SSH 会话已关闭".into());
+        }
+        if !pause.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    if pause.load(Ordering::SeqCst) {
+        return Err("SSH 会话繁忙（SFTP 操作中），请稍后重试".into());
+    }
+    Ok(())
+}
+
 fn write_all_retry(ch: &mut ssh2::Channel, data: &[u8]) -> std::io::Result<()> {
     let mut offset = 0;
     let mut spins = 0;
@@ -452,39 +469,57 @@ pub fn ssh_profiles_save(profiles: Vec<SshProfileStored>) -> CmdResult<()> {
 
 // ==================== SSH 凭据（磁盘 0600） ====================
 
+static CRED_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn cred_store_lock() -> &'static Mutex<()> {
+    CRED_STORE_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn load_cred_map_from_disk(path: &Path) -> CmdResult<HashMap<String, SshSecretStored>> {
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+fn save_cred_map_to_disk(path: &Path, map: &HashMap<String, SshSecretStored>) -> CmdResult<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let raw = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
+    std::fs::write(path, raw).map_err(|e| e.to_string())?;
+    set_file_private(path);
+    Ok(())
+}
+
+fn filter_nonempty_secret(secret: &SshSecretStored) -> Option<SshSecretStored> {
+    if secret.password.as_ref().is_some_and(|p| !p.is_empty())
+        || secret.passphrase.as_ref().is_some_and(|p| !p.is_empty())
+    {
+        Some(secret.clone())
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
 pub fn ssh_secret_get(profile_id: String) -> CmdResult<Option<SshSecretStored>> {
     let path = ssh_cred_store_path().ok_or_else(|| "无法定位凭据目录".to_string())?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let map: HashMap<String, SshSecretStored> =
-        serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    Ok(map.get(&profile_id).cloned().filter(|s| {
-        s.password.as_ref().is_some_and(|p| !p.is_empty())
-            || s.passphrase.as_ref().is_some_and(|p| !p.is_empty())
-    }))
+    let _guard = cred_store_lock().lock().map_err(|e| e.to_string())?;
+    let map = load_cred_map_from_disk(&path)?;
+    Ok(map.get(&profile_id).and_then(filter_nonempty_secret))
 }
 
 #[tauri::command]
 pub fn ssh_secret_set(profile_id: String, secret: SshSecretStored) -> CmdResult<()> {
     let path = ssh_cred_store_path().ok_or_else(|| "无法定位凭据目录".to_string())?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut map: HashMap<String, SshSecretStored> = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default();
+    let _guard = cred_store_lock().lock().map_err(|e| e.to_string())?;
+    let mut map = load_cred_map_from_disk(&path)?;
 
     let next = SshSecretStored {
-        password: secret
-            .password
-            .filter(|s| !s.is_empty()),
-        passphrase: secret
-            .passphrase
-            .filter(|s| !s.is_empty()),
+        password: secret.password.filter(|s| !s.is_empty()),
+        passphrase: secret.passphrase.filter(|s| !s.is_empty()),
     };
     if next.password.is_none() && next.passphrase.is_none() {
         map.remove(&profile_id);
@@ -499,29 +534,18 @@ pub fn ssh_secret_set(profile_id: String, secret: SshSecretStored) -> CmdResult<
         };
         map.insert(profile_id, merged);
     }
-    let raw = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
-    std::fs::write(&path, raw).map_err(|e| e.to_string())?;
-    set_file_private(&path);
-    Ok(())
+    save_cred_map_to_disk(&path, &map)
 }
 
 #[tauri::command]
 pub fn ssh_secret_remove(profile_id: String) -> CmdResult<()> {
     let path = ssh_cred_store_path().ok_or_else(|| "无法定位凭据目录".to_string())?;
-    if !path.exists() {
-        return Ok(());
-    }
-    let mut map: HashMap<String, SshSecretStored> = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default();
+    let _guard = cred_store_lock().lock().map_err(|e| e.to_string())?;
+    let mut map = load_cred_map_from_disk(&path)?;
     if map.remove(&profile_id).is_none() {
         return Ok(());
     }
-    let raw = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
-    std::fs::write(&path, raw).map_err(|e| e.to_string())?;
-    set_file_private(&path);
-    Ok(())
+    save_cred_map_to_disk(&path, &map)
 }
 
 // ==================== SSH Shell ====================
@@ -623,7 +647,7 @@ pub fn ssh_shell_open(
                     }
                     if is_soft_transport_error(&err) {
                         soft_err_streak = soft_err_streak.saturating_add(1);
-                        if soft_err_streak <= 12 {
+                        if soft_err_streak <= 60 {
                             thread::sleep(Duration::from_millis(25));
                             continue;
                         }
@@ -650,12 +674,20 @@ pub fn ssh_shell_open(
 
 #[tauri::command]
 pub fn ssh_shell_write(state: State<'_, SshState>, id: String, data: String) -> CmdResult<()> {
-    let shells = state.shells.lock().map_err(|e| e.to_string())?;
-    let shell = shells.get(&id).ok_or_else(|| "SSH 会话不存在".to_string())?;
-    if shell.stop.load(Ordering::SeqCst) {
-        return Err("SSH 会话已关闭".into());
-    }
-    let mut ch = shell.channel.lock().map_err(|e| e.to_string())?;
+    let (pause, channel, stop) = {
+        let shells = state.shells.lock().map_err(|e| e.to_string())?;
+        let shell = shells.get(&id).ok_or_else(|| "SSH 会话不存在".to_string())?;
+        if shell.stop.load(Ordering::SeqCst) {
+            return Err("SSH 会话已关闭".into());
+        }
+        (
+            Arc::clone(&shell.pause),
+            Arc::clone(&shell.channel),
+            Arc::clone(&shell.stop),
+        )
+    };
+    wait_shell_io_ready(&pause, &stop)?;
+    let mut ch = channel.lock().map_err(|e| e.to_string())?;
     write_all_retry(&mut ch, data.as_bytes()).map_err(|e| format!("写入失败: {e}"))?;
     Ok(())
 }
@@ -667,14 +699,22 @@ pub fn ssh_shell_resize(
     cols: u32,
     rows: u32,
 ) -> CmdResult<()> {
-    let shells = state.shells.lock().map_err(|e| e.to_string())?;
-    let shell = shells.get(&id).ok_or_else(|| "SSH 会话不存在".to_string())?;
-    if shell.stop.load(Ordering::SeqCst) {
-        return Ok(());
-    }
+    let (pause, channel, stop) = {
+        let shells = state.shells.lock().map_err(|e| e.to_string())?;
+        let shell = shells.get(&id).ok_or_else(|| "SSH 会话不存在".to_string())?;
+        if shell.stop.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        (
+            Arc::clone(&shell.pause),
+            Arc::clone(&shell.channel),
+            Arc::clone(&shell.stop),
+        )
+    };
+    let _ = wait_shell_io_ready(&pause, &stop);
     let cols = cols.max(20);
     let rows = rows.max(5);
-    let mut ch = shell.channel.lock().map_err(|e| e.to_string())?;
+    let mut ch = channel.lock().map_err(|e| e.to_string())?;
     let _ = ch.request_pty_size(cols, rows, None, None);
     Ok(())
 }
@@ -772,7 +812,8 @@ pub fn sftp_list(state: State<'_, SshState>, id: String, path: String) -> CmdRes
     } else {
         path.trim()
     };
-    if remote != "." {
+    // 浏览允许根目录；写入类操作仍走 validate_remote_path_str
+    if remote != "." && remote != "/" {
         validate_remote_path_str(remote)?;
     }
 

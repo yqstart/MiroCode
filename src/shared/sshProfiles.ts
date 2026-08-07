@@ -109,14 +109,21 @@ export async function removeSshProfile(id: string) {
 
 export async function getSshSecret(profileId: string): Promise<SshSecret | null> {
   await ensureMigrated();
-  try {
-    const secret = await invoke<SshSecret | null>("ssh_secret_get", { profileId });
-    if (!secret) return null;
-    if (!secret.password && !secret.passphrase) return null;
-    return secret;
-  } catch {
-    return null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const secret = await invoke<SshSecret | null>("ssh_secret_get", { profileId });
+      if (!secret) return null;
+      if (!secret.password && !secret.passphrase) return null;
+      return secret;
+    } catch {
+      if (attempt === 0) {
+        await new Promise((r) => window.setTimeout(r, 80));
+        continue;
+      }
+      return null;
+    }
   }
+  return null;
 }
 
 export async function setSshSecret(profileId: string, secret: SshSecret): Promise<void> {

@@ -219,7 +219,8 @@ export const useSessionsStore = defineStore("sessions", () => {
   function addRemoteSession(config: SshConnectConfig) {
     seq += 1;
     const id = `ssh-${seq}`;
-    const title = `${config.username}@${config.host}`;
+    const title =
+      config.displayName?.trim() || `${config.username}@${config.host}`;
     remoteSessions.value.push({
       id,
       title,

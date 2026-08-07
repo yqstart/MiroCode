@@ -180,6 +180,7 @@ function emitConnect(profile: SshProfile, pwd: string, pass: string) {
     port: Number(profile.port) || 22,
     username: profile.username,
     authKind: profile.authKind,
+    displayName: profile.name.trim() || undefined,
     password: profile.authKind === "password" ? pwd : undefined,
     privateKeyPath:
       profile.authKind === "key" ? profile.privateKeyPath : undefined,
@@ -215,8 +216,18 @@ async function onSaveOnly() {
 
 async function onCardClick(profile: SshProfile) {
   if (props.connecting) return;
-  const secret = await getSshSecret(profile.id);
   showEditor.value = false;
+  rememberSecret.value = profile.rememberSecret !== false;
+
+  // 未勾选「记住密码」：每次连接都需手动输入
+  if (profile.rememberSecret === false) {
+    unlockId.value = profile.id;
+    unlockPassword.value = "";
+    unlockPassphrase.value = "";
+    return;
+  }
+
+  const secret = await getSshSecret(profile.id);
 
   if (profile.authKind === "password") {
     const saved = secret?.password ?? "";
@@ -224,7 +235,6 @@ async function onCardClick(profile: SshProfile) {
       emitConnect(profile, saved, "");
       return;
     }
-    rememberSecret.value = profile.rememberSecret !== false;
     unlockId.value = profile.id;
     unlockPassword.value = "";
     unlockPassphrase.value = "";

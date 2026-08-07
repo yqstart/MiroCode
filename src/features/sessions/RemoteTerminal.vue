@@ -180,9 +180,7 @@ watch(theme, () => {
   height: 100%;
 }
 
-.terminal-host :deep(.xterm-viewport) {
-  overflow-y: auto !important;
-}
+/* 勿覆盖 viewport overflow：会破坏 Vim 等 TUI 的 alternate buffer */
 
 .terminal-host :deep(.composition-view) {
   background: var(--bg-panel);

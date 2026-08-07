@@ -12,6 +12,8 @@ export interface SshConnectConfig {
   passphrase?: string;
   /** 用户已确认信任未知主机密钥 */
   acceptUnknownHostKey?: boolean;
+  /** 主机显示名称（会话标签用） */
+  displayName?: string;
 }
 
 /** 解析后端 `SSH_HOST_KEY_UNKNOWN|指纹|host:port`（允许外层包一层错误文案） */
