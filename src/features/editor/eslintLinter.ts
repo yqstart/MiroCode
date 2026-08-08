@@ -28,13 +28,15 @@ function toDiagnostics(doc: Text, raw: EslintDiag[]): Diagnostic[] {
 
 const ESLINT_EXTS = /\.(?:[cm]?[jt]sx?|vue|mjs|cjs)$/i;
 
-/** 供 CodeMirrorEditor：防抖跑 ESLint 并 setDiagnostics */
+/** 供 CodeMirrorEditor：防抖跑 ESLint 并输出诊断 */
 export function createEslintScheduler(
   getView: () => EditorView | null,
   opts: {
     filePath: () => string;
     workspaceRoot: () => string | null;
     enabled: () => boolean;
+    /** 诊断结果回调（用于与 LSP 诊断合流）；不传则直接 setDiagnostics */
+    onDiagnostics?: (diagnostics: Diagnostic[]) => void;
   },
 ) {
   let timer: number | null = null;
@@ -44,13 +46,13 @@ export function createEslintScheduler(
     const view = getView();
     if (!view) return;
     if (!opts.enabled()) {
-      view.dispatch(setDiagnostics(view.state, []));
+      applyDiagnostics(view, []);
       return;
     }
     const root = opts.workspaceRoot();
     const path = opts.filePath();
     if (!root || !ESLINT_EXTS.test(path)) {
-      view.dispatch(setDiagnostics(view.state, []));
+      applyDiagnostics(view, []);
       return;
     }
     const my = ++seq;
@@ -58,10 +60,19 @@ export function createEslintScheduler(
       const rel = relativeToRoot(root, path);
       const raw = await lintWithEslint(root, rel);
       if (my !== seq || getView() !== view) return;
-      view.dispatch(setDiagnostics(view.state, toDiagnostics(view.state.doc, raw)));
+      applyDiagnostics(view, toDiagnostics(view.state.doc, raw));
     } catch {
       if (my !== seq || getView() !== view) return;
-      view.dispatch(setDiagnostics(view.state, []));
+      applyDiagnostics(view, []);
+    }
+  }
+
+  /** 应用诊断：有 onDiagnostics 回调走合流器，否则直接 setDiagnostics */
+  function applyDiagnostics(view: EditorView, diagnostics: Diagnostic[]) {
+    if (opts.onDiagnostics) {
+      opts.onDiagnostics(diagnostics);
+    } else {
+      view.dispatch(setDiagnostics(view.state, diagnostics));
     }
   }
 
@@ -80,7 +91,7 @@ export function createEslintScheduler(
     const view = getView();
     if (view) {
       try {
-        view.dispatch(setDiagnostics(view.state, []));
+        applyDiagnostics(view, []);
       } catch {
         /* ignore */
       }

@@ -249,6 +249,59 @@ function uiTheme(palette: ThemePalette): Extension {
       ".cm-lintRange-warning": {
         backgroundImage: "url('data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"6\" height=\"3\"><path d=\"m0 3 l2 -2 l1 0 l2 2\" fill=\"%23fbbf24\"/></svg>')",
       },
+      // LSP hover tooltip
+      ".cm-tooltip-hover": {
+        backgroundColor: "var(--bg-elevated, var(--bg-base))",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: "6px",
+        padding: "8px 12px",
+        maxWidth: "480px",
+        fontSize: "12px",
+        lineHeight: "1.5",
+        color: "var(--text-primary)",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+      },
+      ".cm-tooltip-hover .cm-hover-content": {
+        maxWidth: "460px",
+      },
+      ".cm-tooltip-hover .cm-hover-content p": {
+        margin: "0 0 4px 0",
+      },
+      ".cm-tooltip-hover .cm-hover-content code": {
+        backgroundColor: "var(--bg-selection)",
+        padding: "1px 4px",
+        borderRadius: "3px",
+        fontSize: "11px",
+      },
+      ".cm-tooltip-hover .cm-hover-content pre": {
+        backgroundColor: "var(--bg-selection)",
+        padding: "6px 8px",
+        borderRadius: "4px",
+        overflow: "auto",
+        margin: "4px 0",
+      },
+      // LSP 签名帮助 tooltip
+      ".cm-tooltip-signature": {
+        backgroundColor: "var(--bg-elevated, var(--bg-base))",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: "6px",
+        padding: "8px 12px",
+        maxWidth: "480px",
+        fontSize: "12px",
+        lineHeight: "1.5",
+        color: "var(--text-primary)",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+      },
+      ".cm-tooltip-signature .cm-sig-active": {
+        fontWeight: "bold",
+        color: "var(--accent)",
+      },
+      // LSP 引用面板
+      ".cm-lsp-references-panel": {
+        backgroundColor: "var(--bg-elevated, var(--bg-base))",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: "6px",
+      },
     },
     { dark: palette.isDark },
   );

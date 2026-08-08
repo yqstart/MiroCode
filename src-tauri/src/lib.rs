@@ -3,7 +3,7 @@ use tauri::{
     AppHandle, Emitter, Manager, Runtime,
 };
 
-mod commands;
+pub mod commands;
 
 struct NativeMenuLabels {
     file: &'static str,
@@ -160,6 +160,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(commands::ssh::SshState::default())
+        .manage(commands::lsp::LspManager::default())
         .setup(|app| {
             let handle = app.handle();
 
@@ -273,12 +274,32 @@ pub fn run() {
             commands::ssh::sftp_close,
             commands::tooling::format_with_prettier,
             commands::tooling::lint_with_eslint,
+            commands::lsp::lsp_check_runtime,
+            commands::lsp::lsp_start,
+            commands::lsp::lsp_send_request,
+            commands::lsp::lsp_send_notification,
+            commands::lsp::lsp_send_response,
+            commands::lsp::lsp_stop,
+            commands::lsp::lsp_stop_all,
+            commands::lsp::lsp_list_servers,
             commands::window_chrome::set_titlebar_background,
             commands::window_chrome::sync_traffic_lights,
             // dev-only：模拟"push 卡住 N ms"，让 __ipcSelfCheck 在真机
             // 量化"卡住期间并发 IPC 的最大耗时"。release 构建下函数立即返回错误。
             commands::git::dev_fake_block,
         ])
+        .on_window_event(|window, event| {
+            // 窗口关闭时清理 LSP 进程（避免子进程孤儿）
+            if let tauri::WindowEvent::Destroyed = event {
+                let app = window.app_handle();
+                if let Some(state) = app.try_state::<commands::lsp::LspManager>() {
+                    let state = state.inner().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = commands::lsp::lsp_stop_all_inner(&state).await;
+                    });
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

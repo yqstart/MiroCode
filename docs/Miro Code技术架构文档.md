@@ -15,7 +15,7 @@
 | 产品名 | Miro Code |
 | 技术栈 | Tauri 2 + Vue 3 + TypeScript |
 | 平台 | Windows / macOS / Linux |
-| 不在本期 | 顶部工具栏自定义、插件市场、完整 LSP 服务端自研 |
+| 不在本期 | 顶部工具栏自定义、插件市场（完整 LSP 服务端自研不在本期，二期接入官方/社区 LSP 已启动） |
 
 ---
 
@@ -64,7 +64,7 @@
 
 - 不自研文本缓冲与渲染引擎  
 - 不自研完整 Git 协议栈（用 libgit2）  
-- 不自研完整语言服务器协议实现（一期以编辑器扩展 + 轻量校验为主，LSP 作为二期增强）
+- 不自研完整语言服务器协议实现（一期以编辑器扩展 + 轻量校验为主；**二期已接入**：通过 Rust transport 层桥接 `typescript-language-server` + `@vue/language-server`，不自研 LSP 服务端，宿主提供 Node + 检测降级）
 
 ---
 
@@ -168,9 +168,9 @@ MiroCode/
 |---|---|---|
 | 语法高亮 | CM6 Language + HighlightStyle，绑定主题 token | Tree-sitter / 更细 grammar |
 | 代码折叠 | CM6 fold 扩展 | 语言感知折叠策略 |
-| 语法校验 | JSON/YAML/Env 等用轻量 linter；JS/TS 用诊断扩展 | 接入官方/社区 LSP |
-| 基础补全 | 关键字 / 片段 / 简易上下文补全 | LSP completion + AI（设计稿中有，需求未强制） |
-| 引用跳转 | 同文件符号 + 路径/import 解析 | 全项目符号索引 / LSP definition |
+| 语法校验 | JSON/YAML/Env 等用轻量 linter；JS/TS 用诊断扩展 | **二期已接入**：LSP publishDiagnostics（ts-ls / volar） + ESLint 合流 |
+| 基础补全 | 关键字 / 片段 / 简易上下文补全 | **二期已接入**：LSP completion（含跨文件类型补全） + AI（需求未强制） |
+| 引用跳转 | 同文件符号 + 路径/import 解析 | **二期已接入**：LSP definition / references / rename；v1 正则方案保留为降级 fallback |
 
 ### 6.2 语法覆盖优先级
 
@@ -321,7 +321,7 @@ settings.set(patch: Partial<AppSettings>): Promise<void>
 | 风险 | 影响 | 应对 |
 |---|---|---|
 | WebStorm 级 Git 全量复刻过大 | 排期失控 | 按 L1→L3 分层，冲突可视化后置 |
-| Vue/TS 深度语言能力不足 | 「专业编辑」感知弱 | 一期保基本体验，二期接 LSP |
+| Vue/TS 深度语言能力不足 | 「专业编辑」感知弱 | 一期保基本体验；**二期已接入 LSP**（ts-ls + volar，宿主提供 Node + 检测降级） |
 | Tailwind 自定义配置解析复杂 | 类名补全不准 | 先支持默认类表 + 简易 config 读取 |
 | 设计稿曾含 AI/MCP | 范围蔓延 | 已从产品中移除，仅保留本地语法补全 |
 

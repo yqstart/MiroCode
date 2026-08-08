@@ -4,6 +4,58 @@
 
 ## [Unreleased]
 
+### 新增（LSP 完整版 -- 二期）
+
+完整接入 Language Server Protocol，为 TS/JS/JSX/TSX/Vue SFC 提供 7 项语义能力。不自研 LSP 服务端（架构文档约束），通过 Rust transport 层桥接外部 `typescript-language-server` + `@vue/language-server`（Volar）。宿主提供 Node 运行时 + 检测降级：Node 不可用时自动降级回 v1 正则方案，不阻塞编辑。
+
+**架构（三层）**：
+
+```
+CodeMirror 扩展 ←-> 前端 LSP Client ←-> Tauri invoke/event ←-> Rust LSP Manager ←-> stdio JSON-RPC ←-> ts-ls / volar 进程
+```
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| Rust transport | `src-tauri/src/commands/lsp.rs`（新增 ~450 行） | 子进程管理（tokio::process）+ Content-Length 分帧 + JSON-RPC 读写循环 + 7 个 Tauri 命令 + 进程退出清理 |
+| 前端 client | `src/features/lsp/`（新增 6 文件） | `types.ts`（协议类型）/ `transport.ts`（invoke+listen）/ `client.ts`（LanguageClient 生命周期 + 文档同步）/ `manager.ts`（多 server 路由）/ `nodeDetector.ts`（运行时检测缓存） |
+| CM6 扩展 | `src/features/lsp/lspExtension.ts`（新增 ~600 行） | hover tooltip / 签名帮助 / 语义补全 / 诊断合流 / 定义跳转 / 引用查找 / 重命名 + 降级 |
+
+**7 项能力**：
+
+| 能力 | LSP 方法 | 快捷键 | 降级 |
+|---|---|---|---|
+| hover tooltip | `textDocument/hover` | 鼠标悬停 | 无（v1 空白） |
+| 签名帮助 | `textDocument/signatureHelp` | 括号内悬停 | 无（v1 空白） |
+| 语义补全 | `textDocument/completion` | 输入时 | v1 静态关键字表 |
+| 类型诊断 | `textDocument/publishDiagnostics` | 实时推送 | v1 ESLint + JSON/env 自检 |
+| 定义跳转 | `textDocument/definition` | F12 / ⌘+Click | v1 `navigation.ts` 正则 |
+| 引用查找 | `textDocument/references` | Shift+F12 | v1 `findReferences.ts` |
+| 重命名 | `textDocument/rename` | F2 | v1 `renameSymbol.ts` |
+
+**诊断合流**：LSP 类型诊断（source: ts/volar）+ ESLint 规则诊断（source: eslint）合流到同一 `setDiagnostics`，按 from-to-severity 去重。
+
+**设置与状态**：
+- 设置页「语言服务」分区：LSP 开关 + 运行时检测状态 + 安装指引
+- 状态栏 LSP 指示器：就绪（绿）/ 启动中（灰）/ 降级（黄）
+- `lspEnabled` 持久化到 `mirocode.settings.v1`（默认 true）
+- i18n 双语（`lsp.*` 段，zh-CN / en-US）
+
+**依赖**：
+- `vscode-languageserver-protocol@3.18.2`（纯协议类型，不依赖 VSCode 运行时）
+- Rust：tokio 加 `process` + `io-util` + `sync` feature
+
+**测试**：
+- Rust transport：5/5 绿（Content-Length 分帧单条/多条/带 Content-Type/空 body/缺 header）
+- 全量 cargo test：21/21 绿（12 单元 + 5 LSP + 1 git + 1 tauri + 2 fake_block）
+- `pnpm build`：绿（vue-tsc + vite 3.51s）
+
+**真机验证步骤**：
+1. 安装 language server：`npm i -g typescript-language-server typescript @vue/language-server`
+2. `pnpm tauri:dev`
+3. 打开一个 TS + Vue 项目
+4. 逐项验证：hover / 补全 / 诊断 / F12 跳转 / Shift+F12 引用 / F2 重命名
+5. 关掉 Node（PATH 移除）-> 确认降级回 v1
+
 ### 新增
 
 - 资源树右键菜单新增"在终端中打开"：目录直接进入，文件进入其父目录

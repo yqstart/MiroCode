@@ -677,4 +677,17 @@ export const enUS = {
     noFileToSave: "No active file to save",
     noPathToReveal: "No path to reveal",
   },
+  lsp: {
+    title: "Language Server",
+    enabled: "Enable LSP Language Server",
+    enabledDesc: "Provides type diagnostics, smart completion, go-to-definition, references and rename for TS/JS/Vue. Requires Node and language servers installed on host",
+    runtimeNoNode: "⚠ Node.js not detected. Install Node and restart to enable LSP",
+    runtimeNoServer: "⚠ Node detected but language servers not installed. Run: npm i -g typescript-language-server typescript @vue/language-server",
+    runtimeReady: "✓ Runtime ready: ",
+    runtimeUnknown: "Cannot detect runtime (not in Tauri environment)",
+    statusReady: "LSP Ready",
+    statusStarting: "LSP Starting",
+    statusUnavailable: "LSP Fallback",
+    statusDisabled: "LSP Off",
+  },
 } as const;

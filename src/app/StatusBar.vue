@@ -43,6 +43,37 @@ const syncLabel = computed(() => {
 });
 const themeLabel = computed(() => THEME_LABELS[theme.value]);
 
+// LSP 状态指示器
+const lspStatus = ref<string>("disabled");
+
+const lspStatusLabel = computed(() => {
+  if (!editorPrefs.value.lspEnabled) return "";
+  switch (lspStatus.value) {
+    case "ready":
+      return t("lsp.statusReady");
+    case "starting":
+    case "checking":
+      return t("lsp.statusStarting");
+    case "unavailable":
+    case "error":
+      return t("lsp.statusUnavailable");
+    default:
+      return "";
+  }
+});
+
+const lspStatusClass = computed(() => {
+  switch (lspStatus.value) {
+    case "ready":
+      return "lsp-ok";
+    case "unavailable":
+    case "error":
+      return "lsp-warn";
+    default:
+      return "lsp-info";
+  }
+});
+
 const themeOptions = computed(() =>
   THEME_ORDER.map((id) => ({ id, label: THEME_LABELS[id] })),
 );
@@ -75,8 +106,26 @@ function onDocClick() {
   themeMenuOpen.value = false;
 }
 
-onMounted(() => window.addEventListener("click", onDocClick));
-onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
+// LSP 状态轮询（每 2s 检查 lspManager.status）
+let lspPollTimer: ReturnType<typeof setInterval> | null = null;
+
+onMounted(() => {
+  window.addEventListener("click", onDocClick);
+  // LSP 状态轮询
+  lspPollTimer = setInterval(async () => {
+    try {
+      const { lspManager } = await import("@/features/lsp/manager");
+      lspStatus.value = lspManager.status;
+    } catch {
+      // 忽略
+    }
+  }, 2000);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("click", onDocClick);
+  if (lspPollTimer != null) clearInterval(lspPollTimer);
+});
 </script>
 
 <template>
@@ -111,6 +160,12 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
       >
         {{ t("status.conflicts", { count: snapshot.conflictCount }) }}
       </button>
+      <span
+        v-if="lspStatusLabel"
+        class="lsp-status"
+        :class="lspStatusClass"
+        :title="lspStatusLabel"
+      >{{ lspStatusLabel }}</span>
       <span v-if="workspace.notice" class="notice">{{ workspace.notice }}</span>
     </div>
     <div class="right">
@@ -266,6 +321,25 @@ onBeforeUnmount(() => window.removeEventListener("click", onDocClick));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.lsp-status {
+  font-size: 11px;
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.lsp-ok {
+  color: var(--success, #22c55e);
+}
+
+.lsp-warn {
+  color: var(--warning, #f59e0b);
+}
+
+.lsp-info {
+  color: var(--text-muted);
 }
 
 .theme-switch {

@@ -49,6 +49,7 @@
     "material-icon-theme": "^5.37.0",
     "pinia": "^3.0.4",
     "tauri-pty": "^0.3.1",
+    "vscode-languageserver-protocol": "^3.18.2",
     "vue": "^3.5.13"
   },
   "devDependencies": {

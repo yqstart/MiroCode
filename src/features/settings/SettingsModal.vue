@@ -28,6 +28,42 @@ onMounted(async () => {
   appVersion.value = await getAppVersion();
 });
 
+// ==================== LSP 语言服务 ====================
+
+const lspRuntimeStatus = ref("");
+
+async function updateLspStatus() {
+  try {
+    const { detectRuntime } = await import("@/features/lsp/nodeDetector");
+    const r = await detectRuntime();
+    if (!r.node) {
+      lspRuntimeStatus.value = t("lsp.runtimeNoNode");
+    } else if (!r.tsLs && !r.volar) {
+      lspRuntimeStatus.value = t("lsp.runtimeNoServer");
+    } else {
+      const parts: string[] = [];
+      if (r.tsLs) parts.push("typescript-language-server");
+      if (r.volar) parts.push("vue-language-server");
+      lspRuntimeStatus.value = t("lsp.runtimeReady") + parts.join(" / ");
+    }
+  } catch {
+    lspRuntimeStatus.value = t("lsp.runtimeUnknown");
+  }
+}
+
+async function toggleLsp(enabled: boolean) {
+  settings.patchEditor({ lspEnabled: enabled });
+  const { lspManager } = await import("@/features/lsp/manager");
+  lspManager.setEnabled(enabled);
+  if (enabled && workspace.rootPath) {
+    void lspManager.start(workspace.rootPath);
+  }
+  void updateLspStatus();
+}
+
+// 设置页打开时检测运行时
+void updateLspStatus();
+
 async function onCheckUpdate() {
   if (checkingUpdate.value) return;
   checkingUpdate.value = true;
@@ -304,6 +340,26 @@ function onOverlayClick(event: MouseEvent) {
                   <option value="never">{{ t("settings.updateImportsOnMoveNever") }}</option>
                 </select>
               </label>
+            </div>
+
+            <div class="ui-card section">
+              <h3>{{ t("lsp.title") }}</h3>
+              <div class="save-row">
+                <div class="save-copy">
+                  <span class="field-label">{{ t("lsp.enabled") }}</span>
+                  <p class="desc">{{ t("lsp.enabledDesc") }}</p>
+                </div>
+                <button
+                  type="button"
+                  class="ui-toggle"
+                  role="switch"
+                  :aria-checked="editor.lspEnabled"
+                  :data-on="editor.lspEnabled"
+                  :title="editor.lspEnabled ? t('settings.enabled') : t('settings.disabled')"
+                  @click="toggleLsp(!editor.lspEnabled)"
+                />
+              </div>
+              <p class="desc">{{ lspRuntimeStatus }}</p>
             </div>
 
             <div class="ui-card section">

@@ -39,15 +39,17 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 ```
 src/
   app/                 # AppShell、TitleBar、ActivityBar、SideBar、EditorArea、StatusBar
-  features/            # explorer / git / search / editor / settings / sessions
+  features/            # explorer / git / search / editor / settings / sessions / lsp
   stores/              # settings / workspace / ui / editor / git / search / sessions
   styles/              # tokens、themes、global
   shared/
-src-tauri/             # Tauri 后端、Git/搜索命令、PTY 插件
+src-tauri/             # Tauri 后端、Git/搜索命令、PTY 插件、LSP transport
 .github/               # CI、Issue / PR 模板
 ```
 
 Git（`features/git`）对标 **VS Code Source Control + Git Graph**：左侧 Commit（暂存的更改 / 更改分组 + 行内暂存·回滚 + 点选打开编辑区 Diff + Rebase Continue/Abort）；编辑区标签 **Git Log**（过滤 / 详情侧栏 / Revert / Cherry-pick / Checkout / New Branch / Diff / Interactive Rebase）；Branches 弹层（Compare/Upstream/删远程）；冲突分栏（Base/导航）；⌘K 打开 Commit；活动栏 Project / Commit / History。
+
+LSP（`features/lsp`）二期已接入：Rust transport 层（`src-tauri/src/commands/lsp.rs`）管理 `typescript-language-server` + `@vue/language-server` 子进程，stdio JSON-RPC + Content-Length 分帧；前端 `lsp/` 模块封装 LanguageClient 生命周期 + 文档同步 + 多 server 路由；`lspExtension.ts` 桥接 CodeMirror 6 的 7 项能力（hover/签名/补全/诊断/跳转/引用/重命名）。宿主提供 Node + 检测降级回 v1 正则方案。
 
 会话视图（`features/sessions`）以编辑区标签打开：本地终端 / SSH（主机卡片列表 + 终端/SFTP）。
 - 本地终端：随工作区切换重建（cwd = 项目根），并强制切回「本地终端」子视图；本地 ↔ SSH 子视图切换保活 PTY/连接（v-show），仅关闭标签或切换工作区时销毁

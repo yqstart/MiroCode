@@ -1,5 +1,6 @@
 pub mod fs;
 pub mod git;
+pub mod lsp;
 pub mod path_util;
 pub mod search;
 pub mod ssh;

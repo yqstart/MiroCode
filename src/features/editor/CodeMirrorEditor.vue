@@ -17,7 +17,7 @@ import {
   foldKeymap,
   indentOnInput,
 } from "@codemirror/language";
-import { lintGutter } from "@codemirror/lint";
+import { lintGutter, setDiagnostics } from "@codemirror/lint";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorState, Prec } from "@codemirror/state";
 import {
@@ -42,9 +42,10 @@ import {
   goBackKeymap,
   goToDefinitionKeymap,
 } from "@/features/editor/navigation";
-import { renameSymbol } from "@/features/editor/renameSymbol";
 import { editorThemeExtensions } from "@/features/editor/theme";
 import { createMiroFindPanel, openFindPanel, openFindReplacePanel } from "@/features/editor/findPanel";
+import { createLspExtension, createLspReferencesKeymap, createDiagnosticsManager, lspRename } from "@/features/lsp/lspExtension";
+import { lspManager } from "@/features/lsp/manager";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
@@ -67,7 +68,17 @@ let view: EditorView | null = null;
 const themeComp = new Compartment();
 const langComp = new Compartment();
 const prefsComp = new Compartment();
+const lspComp = new Compartment();
 let applyingExternal = false;
+
+// LSP 诊断合流器（LSP 类型诊断 + ESLint 规则诊断 -> 同一 setDiagnostics）
+let diagManager: ReturnType<typeof createDiagnosticsManager> | null = null;
+
+// LSP 文档同步：didChange 防抖
+let lspChangeTimer: ReturnType<typeof setTimeout> | null = null;
+
+// LSP 诊断订阅标记（onDiagnostics 只需订阅一次，handler 内引用最新 diagManager）
+let lspDiagSubscribed = false;
 
 const eslint = createEslintScheduler(
   () => view,
@@ -75,6 +86,15 @@ const eslint = createEslintScheduler(
     filePath: () => props.path,
     workspaceRoot: () => workspace.rootPath,
     enabled: () => editor.value.eslintEnabled,
+    onDiagnostics: (diags) => {
+      // ESLint 诊断走合流器（与 LSP 类型诊断合流）
+      if (diagManager && view) {
+        diagManager.setEslintDiagnostics(view, diags);
+      } else if (view) {
+        // LSP 不可用时直接 setDiagnostics
+        view.dispatch(setDiagnostics(view.state, diags));
+      }
+    },
   },
 );
 
@@ -106,6 +126,42 @@ function buildPrefs() {
     exts.push(EditorView.lineWrapping);
   }
   return exts;
+}
+
+// ==================== LSP 文档同步 ====================
+
+/** 防抖发送 didChange（增量同步） */
+function scheduleLspChange(path: string) {
+  if (lspChangeTimer != null) clearTimeout(lspChangeTimer);
+  lspChangeTimer = setTimeout(() => {
+    lspChangeTimer = null;
+    if (!view) return;
+    // 简化：发送全量文本（增量需跟踪 changes，后续优化）
+    const text = view.state.doc.toString();
+    void lspManager.didChange(path, [], text);
+  }, 300);
+}
+
+/** 刷新 LSP 文档同步（挂载/切换文件时调用） */
+async function refreshLspDoc(path: string, text: string) {
+  // 先 flush 待发送的 didChange
+  if (lspChangeTimer != null) {
+    clearTimeout(lspChangeTimer);
+    lspChangeTimer = null;
+  }
+  // 设置诊断合流器
+  diagManager = createDiagnosticsManager(path);
+  // 订阅 LSP 诊断（仅订阅一次，handler 始终引用最新的 diagManager）
+  if (!lspDiagSubscribed) {
+    lspDiagSubscribed = true;
+    lspManager.onDiagnostics((uri, diagnostics) => {
+      if (diagManager && view) {
+        diagManager.setLspDiagnostics(view, uri, diagnostics);
+      }
+    });
+  }
+  // didOpen
+  void lspManager.didOpen(path, text);
 }
 
 function emitCursor(current: EditorView) {
@@ -171,19 +227,18 @@ function createEditor() {
           ...completionKeymap,
           ...goToDefinitionKeymap(navHandlers),
           goBackKeymap(navHandlers),
-          // F2：rename symbol（LSP 简化版 v1）
+          // F2：rename symbol（LSP 优先，降级回 v1 正则）
           {
             key: "F2",
-            run: (view) => {
+            run: (v) => {
               const root = workspace.rootPath;
               if (!root) {
                 workspace.showNotice("未打开工作区", 2000);
                 return true;
               }
-              // 简单 prompt：v1 不上复杂对话框；用户可 Esc 取消
               const newName = window.prompt("重命名为：");
               if (newName == null) return true; // 取消
-              void renameSymbol(view, newName, root, props.path);
+              void lspRename(v, props.path, root, newName);
               return true;
             },
           },
@@ -216,6 +271,9 @@ function createEditor() {
           ]),
         ),
         langComp.of(lang ? [lang] : []),
+        // LSP 扩展（hover/签名/语义补全/诊断/引用面板）；LSP 不可用时各扩展内部降级
+        lspComp.of(createLspExtension(props.path)),
+        createLspReferencesKeymap(props.path, () => workspace.rootPath),
         themeComp.of(editorThemeExtensions(theme.value)),
         prefsComp.of(buildPrefs()),
         EditorView.updateListener.of((update) => {
@@ -223,6 +281,8 @@ function createEditor() {
           if (update.docChanged && !applyingExternal) {
             editorStore.setContent(props.path, update.state.doc.toString());
             eslint.schedule();
+            // LSP 文档同步：didChange 防抖 300ms
+            scheduleLspChange(props.path);
           }
           if (update.selectionSet || update.docChanged) {
             emitCursor(view);
@@ -233,6 +293,8 @@ function createEditor() {
   });
   emitCursor(view);
   eslint.schedule();
+  // LSP 文档同步：didOpen
+  void refreshLspDoc(props.path, props.content);
 }
 
 onMounted(() => {
@@ -242,6 +304,14 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  // LSP didClose
+  void lspManager.didClose(props.path);
+  if (lspChangeTimer != null) {
+    clearTimeout(lspChangeTimer);
+    lspChangeTimer = null;
+  }
+  diagManager?.dispose();
+  diagManager = null;
   eslint.dispose();
   view?.destroy();
   view = null;
@@ -249,7 +319,15 @@ onBeforeUnmount(() => {
 
 watch(
   () => props.path,
-  () => {
+  (_newPath, oldPath) => {
+    // LSP didClose 旧文件
+    if (oldPath) void lspManager.didClose(oldPath);
+    if (lspChangeTimer != null) {
+      clearTimeout(lspChangeTimer);
+      lspChangeTimer = null;
+    }
+    diagManager?.dispose();
+    diagManager = null;
     eslint.dispose();
     view?.destroy();
     view = null;

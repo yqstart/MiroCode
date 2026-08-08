@@ -667,4 +667,17 @@ export const zhCN = {
     noFileToSave: "当前无活动文件可保存",
     noPathToReveal: "没有可显示的路径",
   },
+  lsp: {
+    title: "语言服务",
+    enabled: "启用 LSP 语言服务",
+    enabledDesc: "为 TS/JS/Vue 提供类型诊断、智能补全、跳转、引用与重命名。需宿主已安装 Node 与 language server",
+    runtimeNoNode: "⚠ 未检测到 Node.js，请安装 Node 后重启应用以启用 LSP",
+    runtimeNoServer: "⚠ 已检测到 Node，但未安装 language server。请运行：npm i -g typescript-language-server typescript @vue/language-server",
+    runtimeReady: "✓ 运行时就绪：",
+    runtimeUnknown: "无法检测运行时（可能未在 Tauri 环境）",
+    statusReady: "LSP 就绪",
+    statusStarting: "LSP 启动中",
+    statusUnavailable: "LSP 降级",
+    statusDisabled: "LSP 已关闭",
+  },
 } as const;

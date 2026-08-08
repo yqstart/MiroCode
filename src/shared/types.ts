@@ -20,6 +20,8 @@ export interface EditorPreferences {
   prettierEnabled: boolean;
   /** 移动文件/文件夹后如何更新相对 import 引用 */
   updateImportsOnMove: UpdateImportsOnMove;
+  /** 启用 LSP 语言服务（TS/JS/Vue）。需宿主已安装 Node + language server */
+  lspEnabled: boolean;
 }
 
 /** 历史兼容：曾用底栏 Git Log 高度；现 Git Log 为编辑区标签，open 不再驱动布局 */
@@ -57,6 +59,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     eslintEnabled: false,
     prettierEnabled: false,
     updateImportsOnMove: "prompt",
+    lspEnabled: true,
   },
   layout: {
     sidebarCollapsed: false,
