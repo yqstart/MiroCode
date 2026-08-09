@@ -92,3 +92,9 @@ export interface EditorOpenAt {
   column: number;
   requestId: number;
 }
+
+/** 查找面板打开请求（原生菜单 ⌘F -> store 信号 -> 编辑器 watcher 消费） */
+export interface EditorFindRequest {
+  path: string | null;
+  requestId: number;
+}

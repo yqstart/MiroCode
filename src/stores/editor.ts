@@ -19,7 +19,7 @@ import {
 import { sftpRead, sftpWrite } from "@/shared/sshApi";
 import type { SshConnectConfig } from "@/shared/sshApi";
 import { formatWithPrettier } from "@/shared/toolingApi";
-import type { EditorJumpTarget, EditorOpenAt } from "@/shared/types";
+import type { EditorFindRequest, EditorJumpTarget, EditorOpenAt } from "@/shared/types";
 import { useCompareStore } from "@/stores/compare";
 import { useGitStore } from "@/stores/git";
 import { useSessionsStore } from "@/stores/sessions";
@@ -46,6 +46,9 @@ export const useEditorStore = defineStore("editor", () => {
   const jumpStack = ref<EditorJumpTarget[]>([]);
   const openAt = ref<EditorOpenAt | null>(null);
   let openAtSeq = 0;
+  // 查找面板打开信号（原生菜单 ⌘F -> store -> 编辑器 watcher 消费）
+  const findRequest = ref<EditorFindRequest | null>(null);
+  let findRequestSeq = 0;
 
   /**
    * 外部修改标记：当 syncFromDisk / reloadAfterDiscard / formatDocument /
@@ -102,6 +105,12 @@ export const useEditorStore = defineStore("editor", () => {
   function requestOpenAt(path: string, line: number, column: number) {
     openAtSeq += 1;
     openAt.value = { path, line, column, requestId: openAtSeq };
+  }
+
+  /** 请求打开当前活动编辑器的查找面板（原生菜单 ⌘F 触发） */
+  function requestFind() {
+    findRequestSeq += 1;
+    findRequest.value = { path: activePath.value, requestId: findRequestSeq };
   }
 
   async function openRemoteFile(
@@ -701,10 +710,12 @@ export const useEditorStore = defineStore("editor", () => {
     dirtyPaths,
     jumpStack,
     openAt,
+    findRequest,
     isDirty,
     pushJump,
     popJump,
     requestOpenAt,
+    requestFind,
     openFile,
     openRemoteFile,
     openFileAt,

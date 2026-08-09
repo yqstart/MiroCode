@@ -97,6 +97,7 @@ function handleMenuAction(action: string) {
   if (action === "save") void editor.saveActive();
   if (action === "settings") ui.openSettings();
   if (action === "find_file") search.openQuickOpen();
+  if (action === "find_in_editor") editor.requestFind();
   if (action === "search") search.openFindInFiles();
   if (action === "terminal") toggleTerminal();
   if (action === "toggle_sidebar") toggleSidebar();

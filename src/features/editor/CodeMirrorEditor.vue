@@ -62,7 +62,7 @@ const settings = useSettingsStore();
 const workspace = useWorkspaceStore();
 const git = useGitStore();
 const { theme, editor } = storeToRefs(settings);
-const { openAt } = storeToRefs(editorStore);
+const { openAt, findRequest } = storeToRefs(editorStore);
 
 let view: EditorView | null = null;
 const themeComp = new Compartment();
@@ -393,6 +393,12 @@ watch(
 watch(openAt, (target) => {
   if (!target || target.path !== props.path) return;
   scrollTo(target.line, target.column);
+});
+
+// 原生菜单 ⌘F -> store 信号 -> 打开查找面板（macOS 键盘事件被原生层占用时的兜底路由）
+watch(findRequest, (req) => {
+  if (!req || !view || req.path !== props.path) return;
+  openFindPanel(view);
 });
 
 watch(theme, (next) => {

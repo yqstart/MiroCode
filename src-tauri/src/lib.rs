@@ -23,6 +23,7 @@ struct NativeMenuLabels {
     copy: &'static str,
     paste: &'static str,
     select_all: &'static str,
+    find_in_editor: &'static str,
 }
 
 fn menu_labels(locale: &str) -> NativeMenuLabels {
@@ -45,6 +46,7 @@ fn menu_labels(locale: &str) -> NativeMenuLabels {
             copy: "Copy",
             paste: "Paste",
             select_all: "Select All",
+            find_in_editor: "Find…",
         }
     } else {
         NativeMenuLabels {
@@ -65,6 +67,7 @@ fn menu_labels(locale: &str) -> NativeMenuLabels {
             copy: "复制",
             paste: "粘贴",
             select_all: "全选",
+            find_in_editor: "查找…",
         }
     }
 }
@@ -99,6 +102,13 @@ fn build_app_menu<R: Runtime>(
         Some("CmdOrCtrl+B"),
     )?;
     let settings = MenuItem::with_id(handle, "settings", l.settings, true, Some("CmdOrCtrl+,"))?;
+    let find_in_editor = MenuItem::with_id(
+        handle,
+        "find_in_editor",
+        l.find_in_editor,
+        true,
+        Some("CmdOrCtrl+F"),
+    )?;
     let separator = PredefinedMenuItem::separator(handle)?;
     let quit = PredefinedMenuItem::quit(handle, Some(l.quit))?;
 
@@ -136,6 +146,8 @@ fn build_app_menu<R: Runtime>(
             &PredefinedMenuItem::copy(handle, Some(l.copy))?,
             &PredefinedMenuItem::paste(handle, Some(l.paste))?,
             &PredefinedMenuItem::select_all(handle, Some(l.select_all))?,
+            &separator,
+            &find_in_editor,
         ],
     )?;
 
