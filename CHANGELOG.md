@@ -4,7 +4,23 @@
 
 ## [Unreleased]
 
-### 新增（LSP 完整版 -- 二期）
+### 优化：SSH 独立入口 / 终端输入 / 流畅度（综合优化）
+
+**SSH 独立入口（架构级）**
+- SSH 远程视图从「终端」标签拆分为独立编辑区标签，与本地终端彻底解耦：本地终端（⌘J）只含本地 PTY，SSH（含主机列表 / 远程终端 / SFTP）由**状态栏左下角 SSH 图标按钮**独立打开
+- 关闭 SSH 标签不再影响本地终端，反之亦然；切换工作区仍强制断开全部 SSH/SFTP 远程连接
+- 新增 `stores/ssh.ts` + `features/sessions/SshView.vue`；`stores/sessions.ts` 精简为纯本地终端
+
+**终端输入修复**
+- 修复按删除键偶发出现空格的问题：`terminalInputBridge.ts` 统一由键处理单一入口拦截纯 Backspace/Delete 并直接写控制字符（`\x7f` / `\x1b[3~`），避免 WKWebView 将删除误报为空格；按住删除键可连续删除（绕过去重）
+- 终端右键点按选中整词（`rightClickSelectsWord`，macOS 终端惯例）
+
+**流畅度 / 性能**
+- 状态栏 LSP 指示器由每 2s 轮询改为事件订阅（`lspManager.onStatusChange`）
+- `git.refresh()` 内部 5 项查询并行化（branches/stashes/rebase/conflict）
+- 资源管理器文件变更由全量重列改为**只重列受影响父目录**的局部刷新
+- 清理 `documentSymbols.ts` 冗余分支
+
 
 完整接入 Language Server Protocol，为 TS/JS/JSX/TSX/Vue SFC 提供 7 项语义能力。不自研 LSP 服务端（架构文档约束），通过 Rust transport 层桥接外部 `typescript-language-server` + `@vue/language-server`（Volar）。宿主提供 Node 运行时 + 检测降级：Node 不可用时自动降级回 v1 正则方案，不阻塞编辑。
 

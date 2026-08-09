@@ -44,6 +44,7 @@ export const enUS = {
     switchTheme: "Click to switch theme",
     switchThemeHint: "Click to switch theme · right-click to cycle",
     themeMenu: "Theme menu",
+    ssh: "SSH Remote (connect to server)",
   },
   editor: {
     openFolder: "Open Folder…",
@@ -67,6 +68,8 @@ export const enUS = {
     closeAll: "Close All",
     terminalTab: "Terminal",
     gitLogTab: "Git Log",
+    sshTab: "SSH",
+    closeSsh: "Close SSH (disconnect)",
     showDiff: "Show Diff",
     discardChanges: "Discard Changes…",
     discardConfirm:

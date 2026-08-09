@@ -264,15 +264,15 @@ export function attachTerminalInputBridge(
       return false;
     }
 
-    const imeRecentlyActive =
-      performance.now() - ime.last229At < 800 ||
-      performance.now() - ime.lastCompositionEndAt < 800 ||
-      performance.now() - ime.lastNonAsciiCommitAt < 800;
-    if (!imeRecentlyActive) {
+    // 带修饰键（⌘/⌥/⌃/⇧）的删除（如 shell 的整词删除）交给 xterm 原样处理
+    if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) {
       return true;
     }
 
-    safeWrite(isBackspace ? "\x7f" : "\x1b[3~");
+    // 统一由本桥接处理纯删除键：直接写控制字符并阻止浏览器默认，
+    // 避免 WKWebView 把 Backspace 上报为空格等错误输入（「按删除键出空格」根因）。
+    // 用 rawWrite 绕过 safeWrite 去重，保证按住删除键可连续删除。
+    rawWrite(isBackspace ? "\x7f" : "\x1b[3~");
     textarea.value = "";
     e.preventDefault();
     return false;
@@ -297,6 +297,8 @@ export function terminalBaseOptions() {
     allowProposedApi: true as const,
     macOptionIsMeta: true,
     scrollback: 10000,
+    /** 右键点按选中整词（macOS 终端惯例） */
+    rightClickSelectsWord: true,
     /** Shift+滚轮加速滚动回滚区（非 Vim 全屏时） */
     fastScrollModifier: "shift" as const,
   };

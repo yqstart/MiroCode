@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Columns2, Eye, FileCode, GitCommitHorizontal, Pin, TerminalSquare, X } from "lucide-vue-next";
+import { Columns2, Eye, FileCode, GitCommitHorizontal, Pin, Server, TerminalSquare, X } from "lucide-vue-next";
 import { marked } from "marked";
 import { storeToRefs } from "pinia";
 import CodeMirrorEditor from "@/features/editor/CodeMirrorEditor.vue";
@@ -8,6 +8,7 @@ import ImagePreview from "@/features/editor/ImagePreview.vue";
 import CompareView from "@/features/git/CompareView.vue";
 import GitLogPanel from "@/features/git/GitLogPanel.vue";
 import SessionsView from "@/features/sessions/SessionsView.vue";
+import SshView from "@/features/sessions/SshView.vue";
 import { basename, relativeToRoot } from "@/shared/fs";
 import { isRasterImagePath, isSvgPath } from "@/shared/media";
 import { formatShortcut } from "@/shared/platform";
@@ -20,6 +21,7 @@ import { useGitLogStore } from "@/stores/gitLog";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
 import { useSessionsStore } from "@/stores/sessions";
+import { useSshStore } from "@/stores/ssh";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useI18n } from "@/i18n";
 
@@ -35,6 +37,7 @@ const welcomeShortcutHint = computed(() =>
 
 const editor = useEditorStore();
 const sessions = useSessionsStore();
+const ssh = useSshStore();
 const compare = useCompareStore();
 const gitLog = useGitLogStore();
 const workspace = useWorkspaceStore();
@@ -48,6 +51,12 @@ const {
   isFocused: sessionsFocused,
   tabId: sessionsTabId,
 } = storeToRefs(sessions);
+const {
+  open: sshOpen,
+  mounted: sshMounted,
+  isFocused: sshFocused,
+  tabId: sshTabId,
+} = storeToRefs(ssh);
 const {
   tabs: compareTabs,
   activeId: compareActiveId,
@@ -79,6 +88,7 @@ const isRaster = computed(() =>
 const showFileEditor = computed(
   () =>
     !sessionsFocused.value &&
+    !sshFocused.value &&
     !compareFocused.value &&
     !gitLogFocused.value &&
     Boolean(activeTab.value),
@@ -131,6 +141,7 @@ const previewHtml = computed(() => {
     !markdownPreview.value ||
     !isMarkdown.value ||
     sessionsFocused.value ||
+    sshFocused.value ||
     compareFocused.value ||
     gitLogFocused.value
   ) {
@@ -143,6 +154,7 @@ const hasAnyTab = computed(
   () =>
     tabs.value.length > 0 ||
     sessionsOpen.value ||
+    sshOpen.value ||
     compareTabs.value.length > 0 ||
     gitLogOpen.value,
 );
@@ -185,31 +197,58 @@ function togglePreview() {
 
 function activateFile(path: string) {
   sessions.blurSessions();
+  ssh.blurSsh();
   compare.blurCompare();
   gitLog.blurLog();
   editor.activate(path);
 }
 
 function activateSessions() {
+  ssh.blurSsh();
   compare.blurCompare();
   gitLog.blurLog();
   sessions.focusSessions();
 }
 
+function activateSsh() {
+  sessions.blurSessions();
+  compare.blurCompare();
+  gitLog.blurLog();
+  ssh.focusSsh();
+}
+
 function activateCompare(id: string) {
   sessions.blurSessions();
+  ssh.blurSsh();
   gitLog.blurLog();
   compare.activate(id);
 }
 
 function activateGitLog() {
   sessions.blurSessions();
+  ssh.blurSsh();
   compare.blurCompare();
   gitLog.focusLog();
 }
 
 async function closeSessionsTab() {
   const ok = await sessions.closeSessions();
+  if (!ok) return;
+  if (gitLogOpen.value && !editor.activePath && !compareTabs.value.length) {
+    gitLog.focusLog();
+    return;
+  }
+  if (compareTabs.value.length && !editor.activePath) {
+    compare.focusCompare();
+    return;
+  }
+  if (!editor.activePath && editor.tabs.length) {
+    editor.activate(editor.tabs[0].path);
+  }
+}
+
+async function closeSshTab() {
+  const ok = await ssh.closeSsh();
   if (!ok) return;
   if (gitLogOpen.value && !editor.activePath && !compareTabs.value.length) {
     gitLog.focusLog();
@@ -240,6 +279,7 @@ function closeCompareTab(id: string) {
   if (
     !compare.tabs.length &&
     !sessionsFocused.value &&
+    !sshFocused.value &&
     !gitLogFocused.value &&
     editor.activePath
   ) {
@@ -543,6 +583,26 @@ onBeforeUnmount(() =>
         </button>
 
         <button
+          v-if="sshOpen"
+          type="button"
+          class="tab ssh-tab"
+          :class="{ active: sshFocused }"
+          :data-id="sshTabId"
+          @click="activateSsh"
+          @auxclick.middle.prevent="closeSshTab"
+        >
+          <Server :size="12" class="ssh-icon" />
+          <span class="name">{{ t("editor.sshTab") }}</span>
+          <span
+            class="close"
+            :title="t('editor.closeSsh')"
+            @click.stop="closeSshTab"
+          >
+            <X :size="12" />
+          </span>
+        </button>
+
+        <button
           v-if="gitLogOpen"
           type="button"
           class="tab gitlog-tab"
@@ -579,6 +639,8 @@ onBeforeUnmount(() =>
     <div class="canvas">
       <SessionsView v-if="sessionsMounted" v-show="sessionsFocused" />
 
+      <SshView v-if="sshMounted" v-show="sshFocused" />
+
       <GitLogPanel v-if="gitLogOpen" v-show="gitLogFocused" />
 
       <CompareView
@@ -612,7 +674,7 @@ onBeforeUnmount(() =>
       </template>
 
       <div
-        v-else-if="!sessionsFocused && !compareFocused && !gitLogFocused && !activeTab"
+        v-else-if="!sessionsFocused && !sshFocused && !compareFocused && !gitLogFocused && !activeTab"
         class="welcome"
       >
         <h1>{{ t("app.name") }}</h1>
@@ -775,6 +837,7 @@ onBeforeUnmount(() =>
 }
 
 .session-tab .term-icon,
+.ssh-tab .ssh-icon,
 .compare-tab .cmp-icon,
 .gitlog-tab .gitlog-icon {
   color: var(--accent);

@@ -200,25 +200,23 @@ export const useGitStore = defineStore("git", () => {
         if (seq !== refreshSeq) return;
         snapshot.value = next;
         if (snapshot.value.initialized) {
-          branches.value = await gitBranches(workspace.rootPath);
+          // 与 gitStatus 结果相互独立的 4 项查询并行化，缩短整体阻塞
+          const [branchesRes, stashesRes, rebaseRes, conflictRes] =
+            await Promise.all([
+              gitBranches(workspace.rootPath),
+              gitStashList(workspace.rootPath).catch(() => []),
+              gitRebaseStatus(workspace.rootPath).catch(() => ({
+                ...EMPTY_REBASE,
+              })),
+              snapshot.value.conflictCount > 0
+                ? gitConflictFiles(workspace.rootPath)
+                : Promise.resolve([]),
+            ]);
           if (seq !== refreshSeq) return;
-          try {
-            stashes.value = await gitStashList(workspace.rootPath);
-          } catch {
-            stashes.value = [];
-          }
-          if (seq !== refreshSeq) return;
-          try {
-            rebaseStatus.value = await gitRebaseStatus(workspace.rootPath);
-          } catch {
-            rebaseStatus.value = { ...EMPTY_REBASE };
-          }
-          if (seq !== refreshSeq) return;
-          if (snapshot.value.conflictCount > 0) {
-            conflictFiles.value = await gitConflictFiles(workspace.rootPath);
-          } else {
-            conflictFiles.value = [];
-          }
+          branches.value = branchesRes;
+          stashes.value = stashesRes as typeof stashes.value;
+          rebaseStatus.value = rebaseRes;
+          conflictFiles.value = conflictRes;
         } else {
           branches.value = [];
           stashes.value = [];

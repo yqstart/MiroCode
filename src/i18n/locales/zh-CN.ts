@@ -44,6 +44,7 @@ export const zhCN = {
     switchTheme: "点击切换主题",
     switchThemeHint: "点击切换主题 · 右键循环",
     themeMenu: "主题菜单",
+    ssh: "SSH 远程（连接服务器）",
   },
   editor: {
     openFolder: "打开文件夹…",
@@ -67,6 +68,8 @@ export const zhCN = {
     closeAll: "全部关闭",
     terminalTab: "终端",
     gitLogTab: "Git Log",
+    sshTab: "SSH",
+    closeSsh: "关闭 SSH（断开连接）",
     showDiff: "显示 Diff",
     discardChanges: "回滚变更…",
     discardConfirm:

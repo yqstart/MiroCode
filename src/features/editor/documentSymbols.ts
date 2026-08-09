@@ -196,15 +196,7 @@ export function indexDocumentSymbols(
     appendVueBlockSymbols(doc, "style", map);
     return map;
   }
-  // 纯 CSS/SCSS/Less 文件：全文索引（CSS_CLASS_RE 会命中）
-  if (
-    name.endsWith(".css") ||
-    name.endsWith(".scss") ||
-    name.endsWith(".sass") ||
-    name.endsWith(".less")
-  ) {
-    return indexLines(doc);
-  }
+  // CSS/SCSS/Less 及普通脚本文件：全文索引（CSS_CLASS_RE 会命中 CSS 选择器）
   return indexLines(doc);
 }
 

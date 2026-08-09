@@ -42,12 +42,37 @@ class LspManagerImpl {
   private unlistenFns: UnlistenFn[] = [];
   /** 诊断回调列表 */
   private diagnosticsHandlers: DiagnosticsHandler[] = [];
+  /** 状态变化订阅者 */
+  private statusHandlers: Array<(status: LspStatus) => void> = [];
   /** 是否启用（用户设置） */
   private enabled = true;
 
   /** 获取当前状态 */
   get status(): LspStatus {
     return this._status;
+  }
+
+  /** 统一设置状态并通知订阅者（替代轮询） */
+  private setStatus(status: LspStatus): void {
+    if (status === this._status) return;
+    this._status = status;
+    for (const handler of this.statusHandlers) {
+      try {
+        handler(status);
+      } catch {
+        // 订阅者异常不影响状态机
+      }
+    }
+  }
+
+  /** 订阅状态变化，返回取消函数（避免 StatusBar 每 2s 轮询） */
+  onStatusChange(handler: (status: LspStatus) => void): () => void {
+    this.statusHandlers.push(handler);
+    handler(this._status);
+    return () => {
+      const idx = this.statusHandlers.indexOf(handler);
+      if (idx >= 0) this.statusHandlers.splice(idx, 1);
+    };
   }
 
   /** 是否有可用的 LSP（至少一个 server 已就绪） */
@@ -91,7 +116,7 @@ class LspManagerImpl {
       }
       // 如果全部退出，标记为不可用
       if (this.clients.size === 0 && this.enabled) {
-        this._status = "unavailable";
+        this.setStatus("unavailable");
       }
     });
 
@@ -101,7 +126,7 @@ class LspManagerImpl {
   /** 启动工作区的 language server */
   async start(root: string): Promise<void> {
     if (!this.enabled) {
-      this._status = "disabled";
+      this.setStatus("disabled");
       return;
     }
 
@@ -111,18 +136,18 @@ class LspManagerImpl {
     }
 
     this.root = root;
-    this._status = "checking";
+    this.setStatus("checking");
 
     // 检测运行时
     const runtime = await detectRuntime();
     if (!runtime.node) {
-      this._status = "unavailable";
+      this.setStatus("unavailable");
       return;
     }
 
     await this.initListeners();
 
-    this._status = "starting";
+    this.setStatus("starting");
 
     // 启动 TS server（如果可用）
     if (runtime.tsLs && !this.clients.has("ts")) {
@@ -160,9 +185,9 @@ class LspManagerImpl {
     }
 
     if (this.clients.size > 0) {
-      this._status = "ready";
+      this.setStatus("ready");
     } else {
-      this._status = "unavailable";
+      this.setStatus("unavailable");
     }
   }
 
@@ -177,7 +202,7 @@ class LspManagerImpl {
     }
     this.clients.clear();
     await stopAllServers();
-    this._status = this.enabled ? "disabled" : "disabled";
+    this.setStatus(this.enabled ? "disabled" : "disabled");
   }
 
   /** 销毁（取消事件监听） */

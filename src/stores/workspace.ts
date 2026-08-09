@@ -243,7 +243,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (!rootPath.value || refreshing.value) return;
     refreshing.value = true;
     try {
-      await refreshTree();
+      // 仅重列受影响的父目录（文件变更局部刷新），避免大目录全量重列卡顿
+      if (changedAbsPaths.length) {
+        await refreshDirsForPaths(changedAbsPaths);
+      } else {
+        await refreshTree();
+      }
       const root = rootPath.value;
       const { useEditorStore } = await import("@/stores/editor");
       const editor = useEditorStore();
@@ -304,6 +309,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         useEditorStore().clearForWorkspaceSwitch();
         useCompareStore().clearAll();
         await useSessionsStore().resetLocalForWorkspace(selected);
+        const { useSshStore } = await import("@/stores/ssh");
+        await useSshStore().resetForWorkspace();
         const search = useSearchStore();
         search.clearResults();
         search.closeQuickOpen();
@@ -379,6 +386,40 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     );
     nextExpanded.add(root);
     expanded.value = nextExpanded;
+  }
+
+  /**
+   * 只重列受变更影响的父目录（文件变更局部刷新）。
+   * 相比 refreshTree 的全量重列，大目录下显著降低保存/变更时的卡顿。
+   */
+  async function refreshDirsForPaths(changedAbsPaths: string[]) {
+    const root = rootPath.value;
+    if (!root) return;
+    const dirs = new Set<string>();
+    for (const p of changedAbsPaths) {
+      if (!p.startsWith(root)) continue;
+      // 变更本身是目录则刷新它，否则刷新其父目录
+      const target = childrenMap.value[p] !== undefined ? p : dirname(p);
+      if (target.startsWith(root) && childrenMap.value[target] !== undefined) {
+        dirs.add(target);
+      }
+    }
+    dirs.add(root);
+    const nextMap = { ...childrenMap.value };
+    await Promise.all(
+      [...dirs].map(async (d) => {
+        try {
+          if (d !== root && !(await pathExists(root, d))) {
+            delete nextMap[d];
+            return;
+          }
+          nextMap[d] = await listDir(root, d, extraIgnores.value);
+        } catch {
+          delete nextMap[d];
+        }
+      }),
+    );
+    childrenMap.value = nextMap;
   }
 
   async function createIn(parent: string, isDir: boolean) {

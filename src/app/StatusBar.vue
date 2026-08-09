@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { GitBranch } from "lucide-vue-next";
+import { GitBranch, Server } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import BranchesPopup from "@/features/git/BranchesPopup.vue";
 import { THEME_LABELS, THEME_ORDER } from "@/features/editor/theme";
@@ -8,6 +8,7 @@ import type { ThemeId } from "@/shared/types";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
+import { useSshStore } from "@/stores/ssh";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useI18n } from "@/i18n";
 
@@ -19,6 +20,8 @@ const git = useGitStore();
 const { editor: editorPrefs, theme } = storeToRefs(settings);
 const { activeTab } = storeToRefs(editor);
 const { snapshot } = storeToRefs(git);
+const ssh = useSshStore();
+const { isFocused: sshFocused } = storeToRefs(ssh);
 
 const themeMenuOpen = ref(false);
 const branchesOpen = ref(false);
@@ -106,31 +109,37 @@ function onDocClick() {
   themeMenuOpen.value = false;
 }
 
-// LSP 状态轮询（每 2s 检查 lspManager.status）
-let lspPollTimer: ReturnType<typeof setInterval> | null = null;
+// LSP 状态订阅（替代每 2s 轮询）
+let unsubLsp: (() => void) | null = null;
 
 onMounted(() => {
   window.addEventListener("click", onDocClick);
-  // LSP 状态轮询
-  lspPollTimer = setInterval(async () => {
-    try {
-      const { lspManager } = await import("@/features/lsp/manager");
-      lspStatus.value = lspManager.status;
-    } catch {
-      // 忽略
-    }
-  }, 2000);
+  void import("@/features/lsp/manager").then(({ lspManager }) => {
+    unsubLsp = lspManager.onStatusChange((status) => {
+      lspStatus.value = status;
+    });
+  });
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("click", onDocClick);
-  if (lspPollTimer != null) clearInterval(lspPollTimer);
+  unsubLsp?.();
+  unsubLsp = null;
 });
 </script>
 
 <template>
   <footer class="status-bar">
     <div class="left">
+      <button
+        type="button"
+        class="ssh-btn"
+        :class="{ active: sshFocused }"
+        :title="t('status.ssh')"
+        @click="ssh.toggleSsh()"
+      >
+        <Server :size="13" />
+      </button>
       <span class="root-name" :title="workspace.rootName">{{
         workspace.rootName
       }}</span>
@@ -244,6 +253,26 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ssh-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+.ssh-btn:hover {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.ssh-btn.active {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .branch-switch {
