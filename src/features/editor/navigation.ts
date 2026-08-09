@@ -21,6 +21,11 @@ export interface NavTarget {
   kind: "import" | "symbol";
 }
 
+/** 是否为本地模块 spec（相对路径或 `@/` 路径别名），可参与磁盘跳转 */
+function isLocalImportSpec(spec: string | null | undefined): spec is string {
+  return !!spec && (spec.startsWith(".") || spec.startsWith("@/"));
+}
+
 function findImportSpecAtPos(doc: string, pos: number): string | null {
   for (const re of [IMPORT_RE, PATH_RE]) {
     re.lastIndex = 0;
@@ -112,7 +117,7 @@ export function findTargetAtPos(
   currentFile: string,
 ): NavTarget | null {
   const spec = findImportSpecAtPos(doc, pos);
-  if (spec?.startsWith(".")) {
+  if (isLocalImportSpec(spec)) {
     const resolved = resolveImportCandidate(workspaceRoot, currentFile, spec);
     if (resolved) {
       return { path: resolved, line: 1, column: 1, kind: "import" };
@@ -162,7 +167,7 @@ export async function findTargetAtPosAsync(
   currentFile: string,
 ): Promise<NavTarget | null> {
   const spec = findImportSpecAtPos(doc, pos);
-  if (spec?.startsWith(".") && workspaceRoot) {
+  if (isLocalImportSpec(spec) && workspaceRoot) {
     const resolved = await resolveImportPath(workspaceRoot, currentFile, spec);
     if (resolved) {
       return { path: resolved, line: 1, column: 1, kind: "import" };

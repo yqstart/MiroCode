@@ -5,6 +5,7 @@ import {
   readTextFile,
   relativePath,
   resolveRelativePath,
+  resolveAliasPath,
   writeTextFile,
   normalizeAbsPath,
   isPathUnder,
@@ -73,12 +74,22 @@ export interface ImportPatch {
   preview: string;
 }
 
-function importTargetBase(currentFile: string, spec: string): string {
+function importTargetBase(currentFile: string, spec: string, root?: string): string | null {
+  // 路径别名（如 `@/foo`）：映射到工作区根下的 src 等目录
+  if (spec.startsWith("@/") && root) {
+    const aliased = resolveAliasPath(root, spec);
+    return aliased;
+  }
   return resolveRelativePath(dirname(currentFile), spec);
 }
 
 function underWorkspace(root: string, path: string): boolean {
   return isPathUnder(root, path);
+}
+
+/** 该 spec 是否可能是本地模块（相对路径或路径别名），即值得做磁盘解析 */
+function isLocalSpec(spec: string): boolean {
+  return spec.startsWith(".") || spec.startsWith("@/");
 }
 
 /** 同步解析（下划线提示用；不查磁盘，优先带扩展名猜测） */
@@ -87,8 +98,9 @@ export function resolveImportCandidate(
   currentFile: string,
   spec: string,
 ): string | null {
-  if (!workspaceRoot || !spec.startsWith(".")) return null;
-  const target = importTargetBase(currentFile, spec);
+  if (!workspaceRoot || !isLocalSpec(spec)) return null;
+  const target = importTargetBase(currentFile, spec, workspaceRoot);
+  if (!target) return null;
   if (!underWorkspace(workspaceRoot, target) && !underWorkspace(workspaceRoot, dirname(target))) {
     return null;
   }
@@ -108,14 +120,15 @@ export function resolveImportCandidate(
   return underWorkspace(workspaceRoot, target) ? target : null;
 }
 
-/** 解析相对 import 为工作区内绝对路径（需磁盘存在） */
+/** 解析本地 import（相对路径或 `@/` 别名）为工作区内绝对路径（需磁盘存在） */
 export async function resolveImportPath(
   root: string,
   currentFile: string,
   spec: string,
 ): Promise<string | null> {
-  if (!spec.startsWith(".")) return null;
-  const target = importTargetBase(currentFile, spec);
+  if (!isLocalSpec(spec)) return null;
+  const target = importTargetBase(currentFile, spec, root);
+  if (!target) return null;
 
   for (const ext of RESOLVE_EXTENSIONS) {
     const candidate = ext.startsWith("/") ? `${target}${ext}` : `${target}${ext}`;
@@ -235,7 +248,7 @@ export async function scanImportReferences(
       let match: RegExpExecArray | null;
       while ((match = re.exec(content))) {
         const spec = match[1];
-        if (!spec.startsWith(".")) continue;
+        if (!isLocalSpec(spec)) continue;
         const resolved = await resolveImportPath(root, file, spec);
         if (!resolved) continue;
         const newResolved = remapResolved(resolved, fromAbs, toAbs, isDir);

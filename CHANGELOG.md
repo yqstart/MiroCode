@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 新增 / 优化
+
+- **`@/` 路径别名 import 跳转**：对齐 tsconfig `paths: { "@/*": ["src/*"] }`，支持 `@/...` 别名的跨文件 go-to-definition / 下划线提示 / 符号索引 / 引用 / 重命名 / 移动文件时改写。解析层 `shared/fs.ts` 新增 `resolveAliasPath`（默认映射 `<root>/src`，可配置前缀与映射根）；`importReferences.ts` 的 `resolveImportPath` / `resolveImportCandidate` / `scanImportReferences` 放开相对路径限制统一支持别名；`navigation.ts` / `workspaceSymbols.ts` 的 import 链解析同步生效
+- **全局搜索索引优化**：
+  - `search_content` / `search_files` / `replace_in_files` 由同步命令改为 `async` + `spawn_blocking` + 超时（对齐 git 网络命令防阻塞约定），避免大仓库 / 慢磁盘全量遍历阻塞 Tauri IPC worker 线程（此前与 git push 卡死同款根因）
+  - 新增工作区文件列表 LRU 缓存（root + 忽略规则为 key，上限 32），避免每次搜索重复全量遍历目录树
+  - 前端搜索加请求序号竞态保护：发起新搜索或关闭面板后自动丢弃过期 in-flight 结果
+
 ## [0.10.0] - 2026-08-09
 
 ### 优化：SSH 独立入口 / 终端输入 / 流畅度（综合优化）

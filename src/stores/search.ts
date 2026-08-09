@@ -22,6 +22,8 @@ export const useSearchStore = defineStore("search", () => {
   const loading = ref(false);
   const quickOpenVisible = ref(false);
   const findInFilesVisible = ref(false);
+  // 请求序号：只应用最后一次发起的搜索，丢弃过期（被后续搜索/关闭覆盖）的结果
+  let contentSearchSeq = 0;
 
   function parseExtensions(): string[] | undefined {
     const raw = extensions.value.trim();
@@ -66,22 +68,27 @@ export const useSearchStore = defineStore("search", () => {
       contentResults.value = [];
       return;
     }
+    const seq = ++contentSearchSeq;
     loading.value = true;
     try {
-      contentResults.value = await searchContent(workspace.rootPath, q, {
+      const result = await searchContent(workspace.rootPath, q, {
         maxResults: 200,
         caseSensitive: caseSensitive.value,
         extraIgnores: workspace.extraIgnores,
         extensions: parseExtensions(),
         contextLines: 0,
       });
+      // 若期间发起了新的搜索或已关闭，丢弃本次过期结果
+      if (seq !== contentSearchSeq) return;
+      contentResults.value = result;
     } catch (error) {
+      if (seq !== contentSearchSeq) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
       );
     } finally {
-      loading.value = false;
+      if (seq === contentSearchSeq) loading.value = false;
     }
   }
 
@@ -164,12 +171,18 @@ export const useSearchStore = defineStore("search", () => {
 
   function closeFindInFiles() {
     findInFilesVisible.value = false;
+    // 使进行中的搜索结果失效
+    contentSearchSeq += 1;
+    loading.value = false;
   }
 
   function clearResults() {
     fileResults.value = [];
     contentResults.value = [];
     replacePreview.value = null;
+    // 使进行中的搜索结果失效
+    contentSearchSeq += 1;
+    loading.value = false;
   }
 
   return {

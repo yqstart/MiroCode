@@ -200,7 +200,7 @@ class WorkspaceSymbolCache {
     const specList: string[] = [];
     while ((m = re.exec(content))) {
       const spec = m[1];
-      if (spec.startsWith(".") && !specList.includes(spec)) specList.push(spec);
+      if ((spec.startsWith(".") || spec.startsWith("@/")) && !specList.includes(spec)) specList.push(spec);
     }
     // 解析每个 spec 到绝对路径，加载其符号表
     for (const spec of specList) {
@@ -282,7 +282,7 @@ class WorkspaceSymbolCache {
         let m: RegExpExecArray | null;
         while ((m = re.exec(text))) {
           const spec = m[1];
-          if (spec.startsWith(".")) {
+          if (spec.startsWith(".") || spec.startsWith("@/")) {
             const { resolveImportPath } = await import("@/shared/importReferences");
             const resolved = await resolveImportPath(root, file, spec);
             if (resolved === target && !result.has(file)) {

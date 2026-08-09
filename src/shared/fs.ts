@@ -140,6 +140,32 @@ export function resolveRelativePath(fromDir: string, spec: string): string {
   return parts.join("/");
 }
 
+/**
+ * 路径别名解析：将 `@/foo` 等别名 spec 映射为工作区内的绝对路径。
+ * 默认对齐本项目 tsconfig：`baseUrl: "."` + `paths: { "@/*": ["src/*"] }`，
+ * 即 `@/foo` → `<root>/src/foo`。别名前缀（`@`）与映射根（默认 `src`）可配置。
+ * 非别名 spec 原样返回 null。
+ */
+export function resolveAliasPath(
+  root: string,
+  spec: string,
+  options?: { prefix?: string; baseDir?: string },
+): string | null {
+  const prefix = options?.prefix ?? "@";
+  const baseDir = options?.baseDir ?? "src";
+  const head = `${prefix}/`;
+  if (!spec.startsWith(head)) return null;
+  const rest = spec.slice(head.length);
+  if (!rest) return null;
+  const rootClean = root.replace(/[/\\]+$/, "");
+  // 有的项目把 baseDir 直接设为项目根（如 `./`），此处兼容空串与 `.`
+  if (!baseDir || baseDir === "." || baseDir === "./") {
+    return `${rootClean}/${rest}`;
+  }
+  const bd = baseDir.replace(/^\.\//, "").replace(/[/\\]+$/, "");
+  return `${rootClean}/${bd}/${rest}`;
+}
+
 /** to 是否在 prefix 目录下（含自身） */
 export function isPathUnder(prefix: string, target: string): boolean {
   const p = normalizeAbsPath(prefix);
