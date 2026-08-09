@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-09
+
 ### 优化：SSH 独立入口 / 终端输入 / 流畅度（综合优化）
 
 **SSH 独立入口（架构级）**
@@ -427,7 +429,8 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/yqstart/MiroCode/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/yqstart/MiroCode/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/yqstart/MiroCode/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/yqstart/MiroCode/compare/v0.6.0...v0.7.0
