@@ -19,6 +19,7 @@ import {
   type AiCompleteRequest,
 } from "@/shared/aiApi";
 import { getCompletionTemplate, type CompletionParams } from "./fimTemplates";
+import { trimPromptToTokenLimit } from "./promptBudget";
 import { getPreset } from "./providers";
 import type { AiCompletionPrefs } from "@/shared/types";
 
@@ -175,9 +176,16 @@ class AiManagerImpl {
     // 构造补全请求参数（根据 provider 模板自动选择请求端点 + 多行策略）
     const preset = getPreset(prefs.provider);
     const template = getCompletionTemplate(preset?.fimTemplate);
-    const params: CompletionParams = template.buildParams(
+    // Token 预算裁剪：超预算时 prefix 保底部、suffix 保顶部（贴近光标最重要）
+    const { prefix: trimmedPrefix, suffix: trimmedSuffix } = trimPromptToTokenLimit(
       opts.prefix,
       opts.suffix,
+      prefs.maxPromptTokens,
+      prefs.maxTokens,
+    );
+    const params: CompletionParams = template.buildParams(
+      trimmedPrefix,
+      trimmedSuffix,
       prefs.maxTokens,
       prefs.temperature,
       prefs.multiline,
