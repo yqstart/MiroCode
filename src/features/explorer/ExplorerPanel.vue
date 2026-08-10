@@ -62,6 +62,7 @@ const menu = ref<{
   isDir: boolean;
   isRoot: boolean;
 } | null>(null);
+const menuRef = ref<HTMLElement | null>(null);
 const treeBodyRef = ref<HTMLElement | null>(null);
 const projectMenuOpen = ref(false);
 const pendingOpenPath = ref<string | null>(null);
@@ -440,20 +441,34 @@ async function onRowClick(path: string, isDir: boolean) {
   await editor.openFile(path);
 }
 
-function onContext(event: MouseEvent, path: string, isDir: boolean) {
+async function onContext(event: MouseEvent, path: string, isDir: boolean) {
   event.preventDefault();
   event.stopPropagation();
   workspace.selectPath(path);
-  const menuWidth = 200;
-  const menuHeight = 320;
-  const x = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
-  const y = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
+  // 先用估算定位占位，渲染后再按真实尺寸校正：
+  // 估算高度（320）小于实际渲染高度，直接按估算 clamp 会让底部越出窗口被裁掉
+  const estWidth = 200;
+  const estHeight = 320;
+  const x = Math.min(event.clientX, window.innerWidth - estWidth - 8);
+  const y = Math.min(event.clientY, window.innerHeight - estHeight - 8);
   menu.value = {
     x: Math.max(8, x),
     y: Math.max(8, y),
     path,
     isDir,
     isRoot: Boolean(rootPath.value && path === rootPath.value),
+  };
+  await nextTick();
+  if (!menu.value) return;
+  const el = menuRef.value;
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  if (rect.right <= window.innerWidth && rect.bottom <= window.innerHeight) return;
+  menu.value = {
+    ...menu.value,
+    // 越界时反向回拉，保证菜单完整落在窗口内（含底部按钮可见可点）
+    x: Math.max(8, Math.min(menu.value.x, window.innerWidth - rect.width - 8)),
+    y: Math.max(8, Math.min(menu.value.y, window.innerHeight - rect.height - 8)),
   };
 }
 
@@ -816,6 +831,7 @@ defineExpose({ locateActiveFile });
 
     <div
       v-if="menu"
+      ref="menuRef"
       class="menu"
       :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
       @click.stop
@@ -1379,7 +1395,8 @@ defineExpose({ locateActiveFile });
 
 .menu {
   position: fixed;
-  z-index: 40;
+  /* 与 GitLog/Branches 等浮层同级，避免被编辑器等更高 z-index 浮层遮挡 */
+  z-index: 90;
   min-width: 180px;
   padding: 6px;
   border-radius: 10px;
