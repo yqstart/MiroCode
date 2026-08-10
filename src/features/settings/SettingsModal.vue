@@ -168,13 +168,6 @@ async function testConnection() {
     const { getCompletionTemplate } = await import("@/features/ai/fimTemplates");
     const { getPreset } = await import("@/features/ai/providers");
     const testId = `test-${Date.now()}`;
-    let gotText = false;
-    const unlisten = await listen(`ai://done/${testId}`, () => {
-      gotText = true;
-    });
-    const unlistenErr = await listen<string>(`ai://error/${testId}`, (e) => {
-      workspace.showNotice(t("settings.ai.testFailed") + ": " + e.payload);
-    });
     // 用当前 provider 的模板构造测试请求
     const preset = getPreset(aiPrefs.value.provider);
     const template = getCompletionTemplate(preset?.fimTemplate);
@@ -184,24 +177,50 @@ async function testConnection() {
       32,
       0,
     );
-    await aiCompleteStream({
-      reqId: testId,
-      apiBase: aiPrefs.value.apiBase,
-      apiKey: key,
-      model: aiPrefs.value.model,
-      mode: params.mode,
-      prompt: params.prompt ?? "",
-      suffix: params.suffix ?? "",
-      messages: params.messages,
-      maxTokens: 32,
-      temperature: 0,
-      stop: params.stop,
+    // 先注册监听再发请求，避免首 token 过快丢失事件。
+    // 首个增量 delta 到达即判定连接成功；10 秒无任何响应判定失败
+    const ok = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      let unlistenDelta: () => void = () => {};
+      let unlistenErr: () => void = () => {};
+      const finish = (success: boolean) => {
+        if (settled) return;
+        settled = true;
+        unlistenDelta();
+        unlistenErr();
+        resolve(success);
+      };
+      const timer = setTimeout(() => finish(false), 10000);
+      void (async () => {
+        unlistenDelta = await listen<string>(`ai://delta/${testId}`, () => {
+          clearTimeout(timer);
+          finish(true);
+        });
+        unlistenErr = await listen<string>(`ai://error/${testId}`, (e) => {
+          clearTimeout(timer);
+          finish(false);
+          workspace.showNotice(t("settings.ai.testFailed") + ": " + e.payload);
+        });
+        await aiCompleteStream({
+          reqId: testId,
+          apiBase: aiPrefs.value.apiBase,
+          apiKey: key,
+          model: aiPrefs.value.model,
+          mode: params.mode,
+          prompt: params.prompt ?? "",
+          suffix: params.suffix ?? "",
+          messages: params.messages,
+          maxTokens: 32,
+          temperature: 0,
+          stop: params.stop,
+        }).catch((e: unknown) => {
+          clearTimeout(timer);
+          finish(false);
+          workspace.showNotice(t("settings.ai.testFailed") + ": " + String(e));
+        });
+      })();
     });
-    // 等待 5 秒看是否有响应
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    unlisten();
-    unlistenErr();
-    if (gotText) {
+    if (ok) {
       workspace.showNotice(t("settings.ai.testSuccess"));
     }
   } catch (e) {
