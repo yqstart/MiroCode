@@ -33,6 +33,7 @@ import { completionStatus } from "@codemirror/autocomplete";
 import { aiManager } from "@/features/ai/manager";
 import { shouldRequestCompletion } from "@/features/ai/contextFilter";
 import { StreamFilter } from "@/features/ai/streamFilter";
+import { buildSnippetContext } from "@/features/ai/snippets";
 import { useSettingsStore } from "@/stores/settings";
 import { useEditorStore } from "@/stores/editor";
 import { languageFromPath } from "@/shared/fs";
@@ -204,6 +205,13 @@ function createFetchPlugin(filePath: string): Extension {
       // Contextual filter：语句已闭合 / 纯注释行等场景跳过，避免劣质请求
       if (!shouldRequestCompletion(prefix)) return;
 
+      // 跨文件 snippet 上下文：从已打开的同语言文件抽取相似片段，拼到 prompt 头部
+      // （snippet 段预算取 maxPromptTokens 的 30%，由 token 预算裁剪兜底）
+      const snippetBudget = Math.max(128, Math.floor(prefs.maxPromptTokens * 0.3));
+      const editorStore = useEditorStore();
+      const snippet = buildSnippetContext(filePath, prefix, editorStore.tabs, snippetBudget);
+      const fullPrefix = snippet ? snippet + prefix : prefix;
+
       // 行级稳定更新：完整行 flush / 300ms 首字提示 / 结束 flush 剩余
       const renderStreamText = (): void => {
         const text = this.stream?.displayText() ?? "";
@@ -226,7 +234,7 @@ function createFetchPlugin(filePath: string): Extension {
       );
 
       aiManager.requestCompletion(
-        { filePath, prefix, suffix, language },
+        { filePath, prefix: fullPrefix, suffix, language },
         prefs,
         {
           onDelta: (text) => {
