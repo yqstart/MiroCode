@@ -4,7 +4,6 @@ use std::path::{Component, Path, PathBuf};
 pub const DEFAULT_IGNORES: &[&str] = &[
     "node_modules",
     ".git",
-    "dist",
     "target",
     ".DS_Store",
     ".next",

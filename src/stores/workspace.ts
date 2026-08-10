@@ -34,7 +34,6 @@ const WATCH_IGNORE_NAMES = new Set([
   ".git",
   "node_modules",
   "target",
-  "dist",
   ".mirocode",
   ".mirocode-index",
   ".DS_Store",
