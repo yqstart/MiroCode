@@ -172,7 +172,7 @@ class AiManagerImpl {
     });
     this.unlistenFns = [unlistenDelta, unlistenDone, unlistenError];
 
-    // 构造补全请求参数（根据 provider 模板自动选择请求端点）
+    // 构造补全请求参数（根据 provider 模板自动选择请求端点 + 多行策略）
     const preset = getPreset(prefs.provider);
     const template = getCompletionTemplate(preset?.fimTemplate);
     const params: CompletionParams = template.buildParams(
@@ -180,6 +180,7 @@ class AiManagerImpl {
       opts.suffix,
       prefs.maxTokens,
       prefs.temperature,
+      prefs.multiline,
     );
 
     // 构造请求参数

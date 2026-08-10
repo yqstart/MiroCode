@@ -176,6 +176,7 @@ async function testConnection() {
       ");\n}",
       32,
       0,
+      aiPrefs.value.multiline,
     );
     // 先注册监听再发请求，避免首 token 过快丢失事件。
     // 首个增量 delta 到达即判定连接成功；10 秒无任何响应判定失败
