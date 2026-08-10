@@ -21,6 +21,7 @@ import {
 } from "@/shared/aiApi";
 import { getCompletionTemplate, type CompletionParams } from "./fimTemplates";
 import { trimPromptToTokenLimit } from "./promptBudget";
+import { postprocessCompletion } from "./postprocess";
 import { getPreset } from "./providers";
 import type { AiCompletionPrefs } from "@/shared/types";
 
@@ -164,7 +165,9 @@ class AiManagerImpl {
     });
     const unlistenDone = await onAiDone(reqId, () => {
       if (this.currentReqId !== reqId) return;
-      callbacks.onDone(this.accumulatedText);
+      // 后处理：剥围栏 / 括号平衡截断 / 去重判定（劣质建议返回 null 由前端清除）
+      const final = postprocessCompletion(this.accumulatedText);
+      callbacks.onDone(final ?? "");
       this.cleanup(reqId);
       this.setStatus("idle");
     });

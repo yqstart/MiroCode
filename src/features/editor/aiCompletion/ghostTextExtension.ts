@@ -225,9 +225,12 @@ function createFetchPlugin(filePath: string): Extension {
           onDone: (fullText) => {
             // 防竞态：文档已变则丢弃
             if (view.state.doc !== docSnapshot) return;
-            // 用 manager 聚合的完整文本（可能比 onDelta 累积的更完整）
-            const finalText = fullText || this.accumulated;
-            if (!finalText) return;
+            // manager 已做后处理（剥围栏/括号截断/去重）；空串表示判定为劣质建议，清除
+            const finalText = fullText;
+            if (!finalText) {
+              view.dispatch({ effects: clearSuggestionEffect.of(undefined) });
+              return;
+            }
             view.dispatch({
               effects: setSuggestionEffect.of({
                 text: finalText,
