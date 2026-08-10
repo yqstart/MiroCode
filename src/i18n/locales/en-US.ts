@@ -183,6 +183,7 @@ export const enUS = {
       apiBase: "API Base URL",
       model: "Model",
       debounceMs: "Debounce Delay (ms)",
+      showWhateverMs: "First Token (ms)",
       maxPromptTokens: "Max Context Tokens",
       maxTokens: "Max Output Tokens",
       temperature: "Temperature",

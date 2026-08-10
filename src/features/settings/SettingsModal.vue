@@ -635,6 +635,19 @@ function onOverlayClick(event: MouseEvent) {
                   />
                 </label>
                 <label class="field">
+                  <span class="field-label">{{ t("settings.ai.showWhateverMs") }}</span>
+                  <input
+                    class="ui-input"
+                    type="number"
+                    min="0"
+                    max="2000"
+                    step="50"
+                    :value="aiPrefs.showWhateverMs"
+                    v-bind="PLAIN_INPUT_ATTRS"
+                    @input="patchAi({ showWhateverMs: Number(($event.target as HTMLInputElement).value) || 300 })"
+                  />
+                </label>
+                <label class="field">
                   <span class="field-label">{{ t("settings.ai.maxTokens") }}</span>
                   <input
                     class="ui-input"
@@ -1158,5 +1171,10 @@ function onOverlayClick(event: MouseEvent) {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+/* 奇数个字段时（当前 5 个），最后一个跨全宽避免孤立 */
+.ai-params-grid > .field:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
 }
 </style>

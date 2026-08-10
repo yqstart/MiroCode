@@ -180,6 +180,7 @@ export const zhCN = {
       apiBase: "服务地址",
       model: "模型",
       debounceMs: "触发延迟（毫秒）",
+      showWhateverMs: "首字提示（毫秒）",
       maxPromptTokens: "上下文 Token 上限",
       maxTokens: "生成长度上限",
       temperature: "温度",

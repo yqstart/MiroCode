@@ -32,6 +32,7 @@ import { completionStatus } from "@codemirror/autocomplete";
 
 import { aiManager } from "@/features/ai/manager";
 import { shouldRequestCompletion } from "@/features/ai/contextFilter";
+import { StreamFilter } from "@/features/ai/streamFilter";
 import { useSettingsStore } from "@/stores/settings";
 import { useEditorStore } from "@/stores/editor";
 import { languageFromPath } from "@/shared/fs";
@@ -152,8 +153,8 @@ function createFetchPlugin(filePath: string): Extension {
   class FetchPlugin {
     /** 防抖计时器 */
     private timer: ReturnType<typeof setTimeout> | null = null;
-    /** 流式聚合的文本 */
-    private accumulated = "";
+    /** 流式过滤管道（行级稳定更新 + 300ms 首字提示） */
+    private stream: StreamFilter | null = null;
 
     update(u: ViewUpdate): void {
       // 仅文档变化或光标移动时触发
@@ -184,7 +185,6 @@ function createFetchPlugin(filePath: string): Extension {
       }
 
       // 防抖后发起请求
-      this.accumulated = "";
       this.timer = setTimeout(() => {
         this.timer = null;
         this.doRequest(u.view);
@@ -204,6 +204,27 @@ function createFetchPlugin(filePath: string): Extension {
       // Contextual filter：语句已闭合 / 纯注释行等场景跳过，避免劣质请求
       if (!shouldRequestCompletion(prefix)) return;
 
+      // 行级稳定更新：完整行 flush / 300ms 首字提示 / 结束 flush 剩余
+      const renderStreamText = (): void => {
+        const text = this.stream?.displayText() ?? "";
+        if (!text) {
+          view.dispatch({ effects: clearSuggestionEffect.of(undefined) });
+          return;
+        }
+        view.dispatch({
+          effects: setSuggestionEffect.of({
+            text,
+            pos: view.state.selection.main.head,
+            doc: view.state.doc,
+          }),
+        });
+      };
+      this.stream = new StreamFilter(
+        renderStreamText,
+        renderStreamText,
+        prefs.showWhateverMs,
+      );
+
       aiManager.requestCompletion(
         { filePath, prefix, suffix, language },
         prefs,
@@ -211,20 +232,13 @@ function createFetchPlugin(filePath: string): Extension {
           onDelta: (text) => {
             // 防竞态：文档已变则丢弃
             if (view.state.doc !== docSnapshot) return;
-            this.accumulated += text;
-            if (this.accumulated) {
-              view.dispatch({
-                effects: setSuggestionEffect.of({
-                  text: this.accumulated,
-                  pos: view.state.selection.main.head,
-                  doc: view.state.doc,
-                }),
-              });
-            }
+            this.stream?.push(text);
           },
           onDone: (fullText) => {
             // 防竞态：文档已变则丢弃
             if (view.state.doc !== docSnapshot) return;
+            // 结束流式，flush 剩余 buffer
+            this.stream?.finish();
             // manager 已做后处理（剥围栏/括号截断/去重）；空串表示判定为劣质建议，清除
             const finalText = fullText;
             if (!finalText) {
@@ -240,6 +254,8 @@ function createFetchPlugin(filePath: string): Extension {
             });
           },
           onError: (_msg) => {
+            this.stream?.cancel();
+            this.stream = null;
             view.dispatch({ effects: clearSuggestionEffect.of(undefined) });
           },
         },
@@ -251,6 +267,8 @@ function createFetchPlugin(filePath: string): Extension {
         clearTimeout(this.timer);
         this.timer = null;
       }
+      this.stream?.cancel();
+      this.stream = null;
     }
   }
 

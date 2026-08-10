@@ -22,6 +22,8 @@ export interface AiCompletionPrefs {
   model: string;
   /** 防抖延迟（毫秒） */
   debounceMs: number;
+  /** 流式首字提示延迟（毫秒）：超时后先展示已有内容，不等整行生成完 */
+  showWhateverMs: number;
   /** prompt token 预算上限 */
   maxPromptTokens: number;
   /** 生成 max_tokens */
@@ -95,6 +97,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
       apiBase: "https://api.deepseek.com/beta",
       model: "deepseek-v4-pro",
       debounceMs: 350,
+      showWhateverMs: 300,
       maxPromptTokens: 1024,
       maxTokens: 256,
       temperature: 0.2,
