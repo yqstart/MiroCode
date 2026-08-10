@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **AI 行内智能补全（ghost text）**：类似 GitHub Copilot 的行内补全体验，输入时自动请求 AI 生成建议，灰色 ghost text 预览，Tab 接受 / Esc 取消
+  - **多 provider 支持**：内置 DeepSeek / 自定义预设，选择后自动填充地址与模型，仍可手动覆盖
+  - **FIM 协议**：走标准 `/completions` 端点（prompt+suffix，API 服务器内部处理 FIM token，前端不拼 `<|fim_begin|>` 等 token）
+  - **流式补全**：Rust 层用 reqwest 流式请求 + tokio 读 SSE 逐 chunk 推送前端（复刻 LSP transport 架构），前端 ghost text 随增量实时更新
+  - **防抖与取消**：350ms 防抖（可配置），用户继续输入时自动取消在途请求（reqId 比对 + 事件 unlisten）
+  - **API Key 安全存储**：`~/.mirocode/ai-credentials.json`（0600 权限，复刻 SSH 凭据模式），不进 localStorage / webview
+  - **LSP 补全兼容**：ghost text 与 LSP popup 走不同 UI 通道不冲突；Tab 用 `Prec.highest` 抢占，LSP popup 打开时不拦截
+  - **设置面板**：新增 AI 配置分区（开关 / provider / API Key / 地址 / 模型 / 模式 / 多行策略 / 防抖延迟 / token 预算 / 温度 / 测试连接）
+  - **状态栏指示器**：显示 AI 状态（就绪 / 思考中 / 错误）
+
 ## [0.10.1] - 2026-08-10
 
 ### 修复

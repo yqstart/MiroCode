@@ -117,7 +117,15 @@ function loadSettings(): AppSettings {
           ? theme
           : DEFAULT_SETTINGS.theme,
       locale: parsed.locale ?? DEFAULT_SETTINGS.locale,
-      editor: { ...DEFAULT_SETTINGS.editor, ...parsed.editor },
+      editor: {
+        ...DEFAULT_SETTINGS.editor,
+        ...parsed.editor,
+        // aiCompletion 嵌套对象深合并：旧配置可能只有部分字段
+        aiCompletion: {
+          ...DEFAULT_SETTINGS.editor.aiCompletion,
+          ...(parsed.editor?.aiCompletion ?? {}),
+        },
+      },
       layout,
       autoCheckUpdates:
         parsed.autoCheckUpdates ?? DEFAULT_SETTINGS.autoCheckUpdates,

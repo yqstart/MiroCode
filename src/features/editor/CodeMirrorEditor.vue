@@ -34,6 +34,8 @@ import {
 } from "@codemirror/view";
 import { storeToRefs } from "pinia";
 import { createCompletionExtension } from "@/features/editor/completions";
+import { createAiGhostTextExtension } from "@/features/editor/aiCompletion/ghostTextExtension";
+import { aiManager } from "@/features/ai/manager";
 import { createDiagnosticsExtension } from "@/features/editor/diagnostics";
 import { createEslintScheduler } from "@/features/editor/eslintLinter";
 import { languageExtensionForPath } from "@/features/editor/languages";
@@ -69,6 +71,7 @@ const themeComp = new Compartment();
 const langComp = new Compartment();
 const prefsComp = new Compartment();
 const lspComp = new Compartment();
+const aiComp = new Compartment();
 let applyingExternal = false;
 
 // LSP 诊断合流器（LSP 类型诊断 + ESLint 规则诊断 -> 同一 setDiagnostics）
@@ -274,6 +277,12 @@ function createEditor() {
         // LSP 扩展（hover/签名/语义补全/诊断/引用面板）；LSP 不可用时各扩展内部降级
         lspComp.of(createLspExtension(props.path)),
         createLspReferencesKeymap(props.path, () => workspace.rootPath),
+        // AI 行内智能补全（ghost text）；开关由 aiComp 热更新
+        aiComp.of(
+          editor.value.aiCompletion.enabled
+            ? [createAiGhostTextExtension(props.path)]
+            : [],
+        ),
         themeComp.of(editorThemeExtensions(theme.value)),
         prefsComp.of(buildPrefs()),
         EditorView.updateListener.of((update) => {
@@ -424,6 +433,24 @@ watch(
     void eslint.runNow();
   },
 );
+
+// AI 补全开关热更新（Compartment reconfigure）
+watch(
+  () => editor.value.aiCompletion.enabled,
+  (enabled) => {
+    aiManager.setEnabled(enabled);
+    view?.dispatch({
+      effects: aiComp.reconfigure(
+        enabled ? [createAiGhostTextExtension(props.path)] : [],
+      ),
+    });
+  },
+);
+
+// 组件挂载时同步 AI 开关状态到 manager
+onMounted(() => {
+  aiManager.setEnabled(editor.value.aiCompletion.enabled);
+});
 
 defineExpose({ scrollTo });
 </script>

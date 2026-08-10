@@ -9,8 +9,10 @@ import { formatShortcut } from "@/shared/platform";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
-import type { ThemeId, ThemeMeta } from "@/shared/types";
+import type { ThemeId, ThemeMeta, AiProviderId } from "@/shared/types";
 import { useI18n } from "@/i18n";
+import { PROVIDER_PRESETS, getPreset } from "@/features/ai/providers";
+import { getAiApiKey, setAiApiKey } from "@/shared/aiApi";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -18,7 +20,7 @@ const ui = useUiStore();
 const workspace = useWorkspaceStore();
 const { theme, editor, locale } = storeToRefs(settings);
 
-type NavId = "editor" | "shortcuts" | "system";
+type NavId = "editor" | "ai" | "shortcuts" | "system";
 
 const activeNav = ref<NavId>("editor");
 const appVersion = ref("…");
@@ -76,6 +78,142 @@ async function onCheckUpdate() {
   }
 }
 
+// ==================== AI 行内补全 ====================
+
+const aiPrefs = computed(() => editor.value.aiCompletion);
+const aiKeyInput = ref("");
+const aiKeyLoaded = ref(false);
+const aiKeyMasked = ref("");
+const testingConnection = ref(false);
+
+/** provider 选项 */
+const providerOptions = computed(() =>
+  PROVIDER_PRESETS.map((p) => ({ id: p.id, label: p.label })),
+);
+
+/** 当前 API Key 掩码显示 */
+const aiKeyDisplay = computed(() => aiKeyMasked.value || aiKeyInput.value);
+
+/** 切换 provider 时自动填充 apiBase/model */
+function onProviderChange(providerId: AiProviderId) {
+  const preset = getPreset(providerId);
+  if (preset) {
+    settings.patchEditor({
+      aiCompletion: {
+        ...aiPrefs.value,
+        provider: providerId,
+        apiBase: preset.apiBase || aiPrefs.value.apiBase,
+        model: preset.model || aiPrefs.value.model,
+      },
+    });
+  }
+  // 重新加载对应 provider 的 API Key
+  aiKeyLoaded.value = false;
+  aiKeyMasked.value = "";
+  aiKeyInput.value = "";
+  void loadAiKey();
+}
+
+/** 加载当前 provider 的 API Key */
+async function loadAiKey() {
+  const key = await getAiApiKey(aiPrefs.value.provider);
+  if (key) {
+    aiKeyMasked.value = "••••••••";
+    aiKeyInput.value = "";
+  } else {
+    aiKeyMasked.value = "";
+  }
+  aiKeyLoaded.value = true;
+}
+
+/** 编辑 API Key 输入 */
+function onAiKeyInput(value: string) {
+  aiKeyInput.value = value;
+  aiKeyMasked.value = "";
+}
+
+/** 保存 API Key */
+async function saveAiKey() {
+  const key = aiKeyInput.value.trim();
+  if (!key) return;
+  await setAiApiKey(aiPrefs.value.provider, key);
+  aiKeyMasked.value = "••••••••";
+  aiKeyInput.value = "";
+  workspace.showNotice(t("settings.ai.keySaved"));
+}
+
+/** 更新 AI 配置字段 */
+function patchAi(patch: Partial<typeof aiPrefs.value>) {
+  settings.patchEditor({
+    aiCompletion: { ...aiPrefs.value, ...patch },
+  });
+}
+
+/** 测试连接 */
+async function testConnection() {
+  if (testingConnection.value) return;
+  // 如果有新输入未保存，先保存
+  if (aiKeyInput.value.trim()) {
+    await saveAiKey();
+  }
+  const key = await getAiApiKey(aiPrefs.value.provider);
+  if (!key) {
+    workspace.showNotice(t("settings.ai.keyNotSet"));
+    return;
+  }
+  testingConnection.value = true;
+  try {
+    const { aiCompleteStream } = await import("@/shared/aiApi");
+    const { listen } = await import("@tauri-apps/api/event");
+    const { getCompletionTemplate } = await import("@/features/ai/fimTemplates");
+    const { getPreset } = await import("@/features/ai/providers");
+    const testId = `test-${Date.now()}`;
+    let gotText = false;
+    const unlisten = await listen(`ai://done/${testId}`, () => {
+      gotText = true;
+    });
+    const unlistenErr = await listen<string>(`ai://error/${testId}`, (e) => {
+      workspace.showNotice(t("settings.ai.testFailed") + ": " + e.payload);
+    });
+    // 用当前 provider 的模板构造测试请求
+    const preset = getPreset(aiPrefs.value.provider);
+    const template = getCompletionTemplate(preset?.fimTemplate);
+    const params = template.buildParams(
+      "function hello() {\n  console.log(",
+      ");\n}",
+      32,
+      0,
+    );
+    await aiCompleteStream({
+      reqId: testId,
+      apiBase: aiPrefs.value.apiBase,
+      apiKey: key,
+      model: aiPrefs.value.model,
+      mode: params.mode,
+      prompt: params.prompt ?? "",
+      suffix: params.suffix ?? "",
+      messages: params.messages,
+      maxTokens: 32,
+      temperature: 0,
+      stop: params.stop,
+    });
+    // 等待 5 秒看是否有响应
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    unlisten();
+    unlistenErr();
+    if (gotText) {
+      workspace.showNotice(t("settings.ai.testSuccess"));
+    }
+  } catch (e) {
+    workspace.showNotice(t("settings.ai.testFailed") + ": " + String(e));
+  } finally {
+    testingConnection.value = false;
+  }
+}
+
+// 设置页打开时加载 API Key
+void loadAiKey();
+
 const themes: ThemeMeta[] = [
   { id: "miro-dark", name: t("settings.theme.miroDark"), available: true, preview: "dark" },
   { id: "midnight", name: t("settings.theme.midnight"), available: true, preview: "midnight" },
@@ -85,6 +223,7 @@ const themes: ThemeMeta[] = [
 
 const navItems = computed(() => [
   { id: "editor" as const, label: t("settings.navEditor") },
+  { id: "ai" as const, label: t("settings.navAi") },
   { id: "shortcuts" as const, label: t("settings.navShortcuts") },
   { id: "system" as const, label: t("settings.navAbout") },
 ]);
@@ -367,6 +506,163 @@ function onOverlayClick(event: MouseEvent) {
               <p class="desc">
                 {{ completionHint }}
               </p>
+            </div>
+          </template>
+
+          <template v-else-if="activeNav === 'ai'">
+            <div class="ui-card section">
+              <h3>{{ t("settings.ai.title") }}</h3>
+              <div class="save-row">
+                <div class="save-copy">
+                  <span class="field-label">{{ t("settings.ai.enabled") }}</span>
+                  <p class="desc">{{ t("settings.ai.enabledDesc") }}</p>
+                </div>
+                <button
+                  type="button"
+                  class="ui-toggle"
+                  role="switch"
+                  :aria-checked="aiPrefs.enabled"
+                  :data-on="aiPrefs.enabled"
+                  :title="aiPrefs.enabled ? t('settings.enabled') : t('settings.disabled')"
+                  @click="patchAi({ enabled: !aiPrefs.enabled })"
+                />
+              </div>
+            </div>
+
+            <div class="ui-card section ai-config">
+              <label class="field">
+                <span class="field-label">{{ t("settings.ai.provider") }}</span>
+                <select
+                  class="ui-select"
+                  :value="aiPrefs.provider"
+                  @change="onProviderChange(($event.target as HTMLSelectElement).value as AiProviderId)"
+                >
+                  <option v-for="opt in providerOptions" :key="opt.id" :value="opt.id">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span class="field-label">{{ t("settings.ai.apiKey") }}</span>
+                <div class="ai-key-row">
+                  <input
+                    class="ui-input"
+                    :type="aiKeyDisplay ? 'password' : 'text'"
+                    :placeholder="aiKeyMasked || t('settings.ai.apiKeyPlaceholder')"
+                    :value="aiKeyInput"
+                    v-bind="PLAIN_INPUT_ATTRS"
+                    @input="onAiKeyInput(($event.target as HTMLInputElement).value)"
+                  />
+                  <button
+                    v-if="aiKeyInput"
+                    type="button"
+                    class="check-update-btn"
+                    @click="saveAiKey"
+                  >
+                    {{ t("settings.ai.saveKey") }}
+                  </button>
+                </div>
+              </label>
+
+              <label class="field">
+                <span class="field-label">{{ t("settings.ai.apiBase") }}</span>
+                <input
+                  class="ui-input"
+                  type="text"
+                  :value="aiPrefs.apiBase"
+                  v-bind="PLAIN_INPUT_ATTRS"
+                  @input="patchAi({ apiBase: ($event.target as HTMLInputElement).value })"
+                />
+              </label>
+
+              <label class="field">
+                <span class="field-label">{{ t("settings.ai.model") }}</span>
+                <input
+                  class="ui-input"
+                  type="text"
+                  :value="aiPrefs.model"
+                  v-bind="PLAIN_INPUT_ATTRS"
+                  @input="patchAi({ model: ($event.target as HTMLInputElement).value })"
+                />
+              </label>
+
+              <label class="field">
+                <span class="field-label">{{ t("settings.ai.multiline") }}</span>
+                <select
+                  class="ui-select"
+                  :value="aiPrefs.multiline"
+                  @change="patchAi({ multiline: ($event.target as HTMLSelectElement).value as 'auto' | 'always' | 'never' })"
+                >
+                  <option value="auto">{{ t("settings.ai.multilineAuto") }}</option>
+                  <option value="always">{{ t("settings.ai.multilineAlways") }}</option>
+                  <option value="never">{{ t("settings.ai.multilineNever") }}</option>
+                </select>
+              </label>
+
+              <div class="ai-params-grid">
+                <label class="field">
+                  <span class="field-label">{{ t("settings.ai.debounceMs") }}</span>
+                  <input
+                    class="ui-input"
+                    type="number"
+                    min="100"
+                    max="3000"
+                    step="50"
+                    :value="aiPrefs.debounceMs"
+                    v-bind="PLAIN_INPUT_ATTRS"
+                    @input="patchAi({ debounceMs: Number(($event.target as HTMLInputElement).value) || 350 })"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field-label">{{ t("settings.ai.maxTokens") }}</span>
+                  <input
+                    class="ui-input"
+                    type="number"
+                    min="16"
+                    max="4096"
+                    step="16"
+                    :value="aiPrefs.maxTokens"
+                    v-bind="PLAIN_INPUT_ATTRS"
+                    @input="patchAi({ maxTokens: Number(($event.target as HTMLInputElement).value) || 256 })"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field-label">{{ t("settings.ai.temperature") }}</span>
+                  <input
+                    class="ui-input"
+                    type="number"
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    :value="aiPrefs.temperature"
+                    v-bind="PLAIN_INPUT_ATTRS"
+                    @input="patchAi({ temperature: Number(($event.target as HTMLInputElement).value) || 0.2 })"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field-label">{{ t("settings.ai.maxPromptTokens") }}</span>
+                  <input
+                    class="ui-input"
+                    type="number"
+                    min="256"
+                    max="8192"
+                    step="128"
+                    :value="aiPrefs.maxPromptTokens"
+                    v-bind="PLAIN_INPUT_ATTRS"
+                    @input="patchAi({ maxPromptTokens: Number(($event.target as HTMLInputElement).value) || 1024 })"
+                  />
+                </label>
+              </div>
+
+              <button
+                type="button"
+                class="check-update-btn"
+                :disabled="testingConnection"
+                @click="testConnection"
+              >
+                {{ testingConnection ? t("settings.ai.testing") : t("settings.ai.testConnection") }}
+              </button>
             </div>
           </template>
 
@@ -817,5 +1113,30 @@ function onOverlayClick(event: MouseEvent) {
 .shortcut-list dd {
   margin: 0;
   color: var(--text-secondary);
+}
+
+/* ==================== AI 补全配置面板 ==================== */
+
+/* 字段垂直间距：与 editor 面板 .form-grid 的 gap 节奏一致 */
+.ai-config > .field + .field,
+.ai-config > .field + .ai-params-grid,
+.ai-config > .ai-params-grid + .check-update-btn {
+  margin-top: 16px;
+}
+
+.ai-key-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ai-key-row .ui-input {
+  flex: 1;
+}
+
+.ai-params-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 </style>

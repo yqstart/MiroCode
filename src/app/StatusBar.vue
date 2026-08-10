@@ -77,6 +77,37 @@ const lspStatusClass = computed(() => {
   }
 });
 
+// AI 补全状态指示器
+const aiStatus = ref<string>("disabled");
+
+const aiStatusLabel = computed(() => {
+  if (!editorPrefs.value.aiCompletion.enabled) return "";
+  switch (aiStatus.value) {
+    case "requesting":
+    case "streaming":
+      return t("status.aiThinking");
+    case "error":
+      return t("status.aiError");
+    case "idle":
+      return t("status.aiReady");
+    default:
+      return "";
+  }
+});
+
+const aiStatusClass = computed(() => {
+  switch (aiStatus.value) {
+    case "streaming":
+      return "ai-active";
+    case "error":
+      return "ai-warn";
+    case "idle":
+      return "ai-info";
+    default:
+      return "ai-info";
+  }
+});
+
 const themeOptions = computed(() =>
   THEME_ORDER.map((id) => ({ id, label: THEME_LABELS[id] })),
 );
@@ -111,6 +142,7 @@ function onDocClick() {
 
 // LSP 状态订阅（替代每 2s 轮询）
 let unsubLsp: (() => void) | null = null;
+let unsubAi: (() => void) | null = null;
 
 onMounted(() => {
   window.addEventListener("click", onDocClick);
@@ -119,12 +151,19 @@ onMounted(() => {
       lspStatus.value = status;
     });
   });
+  void import("@/features/ai/manager").then(({ aiManager }) => {
+    unsubAi = aiManager.onStatusChange((status) => {
+      aiStatus.value = status;
+    });
+  });
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("click", onDocClick);
   unsubLsp?.();
   unsubLsp = null;
+  unsubAi?.();
+  unsubAi = null;
 });
 </script>
 
@@ -175,6 +214,12 @@ onBeforeUnmount(() => {
         :class="lspStatusClass"
         :title="lspStatusLabel"
       >{{ lspStatusLabel }}</span>
+      <span
+        v-if="aiStatusLabel"
+        class="ai-status"
+        :class="aiStatusClass"
+        :title="aiStatusLabel"
+      >{{ aiStatusLabel }}</span>
     </div>
     <div class="right">
       <span>Ln {{ cursor.line }}, Col {{ cursor.column }}</span>
@@ -358,6 +403,26 @@ onBeforeUnmount(() => {
 }
 
 .lsp-info {
+  color: var(--text-muted);
+}
+
+/* AI 补全状态指示器 */
+.ai-status {
+  font-size: 11px;
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.ai-active {
+  color: var(--accent, #6366f1);
+}
+
+.ai-warn {
+  color: var(--warning, #f59e0b);
+}
+
+.ai-info {
   color: var(--text-muted);
 }
 

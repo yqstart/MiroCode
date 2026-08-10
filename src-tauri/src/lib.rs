@@ -294,6 +294,11 @@ pub fn run() {
             commands::lsp::lsp_stop,
             commands::lsp::lsp_stop_all,
             commands::lsp::lsp_list_servers,
+            // AI 行内智能补全
+            commands::ai::ai_secret_get,
+            commands::ai::ai_secret_set,
+            commands::ai::ai_secret_remove,
+            commands::ai::ai_complete_stream,
             commands::window_chrome::set_titlebar_background,
             commands::window_chrome::sync_traffic_lights,
             // dev-only：模拟"push 卡住 N ms"，让 __ipcSelfCheck 在真机
