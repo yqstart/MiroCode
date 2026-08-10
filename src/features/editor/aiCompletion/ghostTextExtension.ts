@@ -31,6 +31,7 @@ import {
 import { completionStatus } from "@codemirror/autocomplete";
 
 import { aiManager } from "@/features/ai/manager";
+import { shouldRequestCompletion } from "@/features/ai/contextFilter";
 import { useSettingsStore } from "@/stores/settings";
 import { useEditorStore } from "@/stores/editor";
 import { languageFromPath } from "@/shared/fs";
@@ -199,6 +200,9 @@ function createFetchPlugin(filePath: string): Extension {
       const docSnapshot = state.doc;
       const { prefix, suffix } = buildPrefixSuffix(state);
       const language = languageFromPath(filePath);
+
+      // Contextual filter：语句已闭合 / 纯注释行等场景跳过，避免劣质请求
+      if (!shouldRequestCompletion(prefix)) return;
 
       aiManager.requestCompletion(
         { filePath, prefix, suffix, language },
