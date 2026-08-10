@@ -132,10 +132,12 @@ onMounted(() => {
   padding-top: 12vh;
   background: var(--bg-overlay);
   backdrop-filter: blur(4px);
+  animation: miro-overlay-in var(--transition-normal) var(--ease-out);
 }
 
 .panel {
   width: min(640px, calc(100vw - 32px));
+  animation: miro-dialog-in var(--transition-normal) var(--ease-out);
   max-height: 60vh;
   overflow: auto;
   border-radius: var(--radius-lg);

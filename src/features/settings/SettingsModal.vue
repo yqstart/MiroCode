@@ -447,11 +447,13 @@ function onOverlayClick(event: MouseEvent) {
   place-items: center;
   background: var(--bg-overlay);
   backdrop-filter: blur(6px);
+  animation: miro-overlay-in var(--transition-normal) var(--ease-out);
   padding: 32px;
 }
 
 .modal {
   width: min(920px, 100%);
+  animation: miro-dialog-in var(--transition-normal) var(--ease-out);
   height: min(640px, 100%);
   display: grid;
   grid-template-columns: 220px 1fr;

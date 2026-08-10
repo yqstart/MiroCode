@@ -15,6 +15,7 @@ import ChoiceDialog from "@/shared/ChoiceDialog.vue";
 import GitAuthDialog from "@/shared/GitAuthDialog.vue";
 import PromptDialog from "@/shared/PromptDialog.vue";
 import MoveReferencesDialog from "@/shared/MoveReferencesDialog.vue";
+import ToastHost from "@/shared/ToastHost.vue";
 import UpdateProgressDialog from "@/shared/UpdateProgressDialog.vue";
 import UpdateNotesDialog from "@/shared/UpdateNotesDialog.vue";
 import PushDialog from "@/features/git/PushDialog.vue";
@@ -274,6 +275,7 @@ onUnmounted(() => {
     <UpdateProjectDialog />
     <InteractiveRebaseDialog />
     <SettingsModal v-if="settingsOpen" />
+    <ToastHost />
   </div>
 </template>
 

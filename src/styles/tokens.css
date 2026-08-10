@@ -18,6 +18,8 @@
   --font-ui: ui-sans-serif, system-ui, "PingFang SC", "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --transition-fast: 160ms ease;
+  --transition-normal: 200ms ease;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.28);
   --scrollbar-size: 6px;
   --scrollbar-radius: 999px;

@@ -789,8 +789,11 @@ defineExpose({ locateActiveFile });
           >
             <span class="twist">
               <template v-if="node.isDir">
-                <ChevronDown v-if="node.expanded" :size="14" />
-                <ChevronRight v-else :size="14" />
+                <ChevronRight
+                  :size="14"
+                  class="chev"
+                  :class="{ expanded: node.expanded }"
+                />
               </template>
             </span>
             <FileTypeIcon
@@ -1340,6 +1343,14 @@ defineExpose({ locateActiveFile });
   place-items: center;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.chev {
+  transition: transform var(--transition-fast) var(--ease-out);
+}
+
+.chev.expanded {
+  transform: rotate(90deg);
 }
 
 .label {

@@ -512,7 +512,12 @@ onBeforeUnmount(() =>
 <template>
   <section class="editor-area">
     <div v-if="hasAnyTab" class="tabs">
-      <div class="tabs-scroll" @wheel.prevent="onTabsWheel">
+      <TransitionGroup
+        name="tab"
+        tag="div"
+        class="tabs-scroll"
+        @wheel.prevent="onTabsWheel"
+      >
         <button
           v-for="tab in tabs"
           :key="tab.path"
@@ -541,16 +546,17 @@ onBeforeUnmount(() =>
             </span>
           </span>
         </button>
+      </TransitionGroup>
 
-        <button
-          v-for="tab in compareTabs"
-          :key="tab.id"
-          type="button"
-          class="tab compare-tab"
-          :class="{ active: compareFocused && tab.id === compareActiveId }"
-          @click="activateCompare(tab.id)"
-          @auxclick.middle.prevent="closeCompareTab(tab.id)"
-        >
+      <button
+        v-for="tab in compareTabs"
+        :key="tab.id"
+        type="button"
+        class="tab compare-tab"
+        :class="{ active: compareFocused && tab.id === compareActiveId }"
+        @click="activateCompare(tab.id)"
+        @auxclick.middle.prevent="closeCompareTab(tab.id)"
+      >
           <Columns2 :size="12" class="cmp-icon" />
           <span class="name">{{ tab.title }}</span>
           <span
@@ -621,7 +627,6 @@ onBeforeUnmount(() =>
             <X :size="12" />
           </span>
         </button>
-      </div>
 
       <button
         v-if="canTogglePreview"
@@ -809,6 +814,7 @@ onBeforeUnmount(() =>
 }
 
 .tab {
+  position: relative;
   height: 30px;
   flex-shrink: 0;
   display: inline-flex;
@@ -819,6 +825,23 @@ onBeforeUnmount(() =>
   color: var(--text-muted);
   font-size: 12px;
   max-width: 240px;
+  transition: color var(--transition-fast), background var(--transition-fast);
+  animation: miro-tab-in 160ms var(--ease-out);
+}
+
+/* 底部 active 指示条：以 transition 平滑出现，替代 box-shadow 的瞬间切换 */
+.tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  opacity: 0;
+  transform: scaleX(0.4);
+  transition: opacity var(--transition-fast), transform var(--transition-normal) var(--ease-out);
 }
 
 .tab:has(.name.disambiguated) {
@@ -833,7 +856,31 @@ onBeforeUnmount(() =>
 .tab.active {
   color: var(--text-primary);
   background: var(--bg-app);
-  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.tab.active::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+/* TransitionGroup：标签进出场过渡 */
+.tab-enter-active,
+.tab-leave-active {
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+
+.tab-enter-from,
+.tab-leave-to {
+  opacity: 0;
+  transform: translateY(2px);
+}
+
+.tab-leave-active {
+  position: absolute;
+}
+
+.tab-move {
+  transition: transform 180ms var(--ease-out);
 }
 
 .session-tab .term-icon,

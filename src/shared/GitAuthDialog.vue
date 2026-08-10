@@ -147,11 +147,13 @@ onBeforeUnmount(() => {
   place-items: center;
   background: var(--bg-overlay);
   backdrop-filter: blur(4px);
+  animation: miro-overlay-in var(--transition-normal) var(--ease-out);
   padding: 24px;
 }
 
 .dialog {
   width: min(420px, 100%);
+  animation: miro-dialog-in var(--transition-normal) var(--ease-out);
   padding: 18px 18px 14px;
   border-radius: 12px;
   background: var(--bg-elevated);

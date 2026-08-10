@@ -175,7 +175,6 @@ onBeforeUnmount(() => {
         :class="lspStatusClass"
         :title="lspStatusLabel"
       >{{ lspStatusLabel }}</span>
-      <span v-if="workspace.notice" class="notice">{{ workspace.notice }}</span>
     </div>
     <div class="right">
       <span>Ln {{ cursor.line }}, Col {{ cursor.column }}</span>
@@ -341,15 +340,6 @@ onBeforeUnmount(() => {
 
 .conflict:hover {
   text-decoration: underline;
-}
-
-.notice {
-  color: var(--accent);
-  min-width: 0;
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .lsp-status {

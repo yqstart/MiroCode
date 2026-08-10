@@ -61,7 +61,8 @@ export interface MovePathResult {
 export const useWorkspaceStore = defineStore("workspace", () => {
   const rootPath = ref<string | null>(null);
   const rootName = ref("未打开文件夹");
-  const notice = ref("");
+  /** 通知队列：可同时堆叠多条，由 ToastHost 渲染 */
+  const toasts = ref<{ id: number; message: string }[]>([]);
   const filter = ref("");
   const selectedPath = ref<string | null>(null);
   const childrenMap = ref<Record<string, DirEntryInfo[]>>({});
@@ -78,7 +79,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const refreshing = ref(false);
   const watchActive = ref(false);
 
-  let noticeTimer: number | undefined;
+  let noticeSeq = 0;
+  const noticeTimers = new Map<number, number>();
   let locateTimer: number | undefined;
   let unwatchFn: UnwatchFn | null = null;
   let refreshTimer: number | undefined;
@@ -87,11 +89,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   let pendingWatchPaths = new Set<string>();
 
   function showNotice(message: string, ms = 2400) {
-    notice.value = message;
-    if (noticeTimer != null) window.clearTimeout(noticeTimer);
-    noticeTimer = window.setTimeout(() => {
-      notice.value = "";
+    const id = ++noticeSeq;
+    toasts.value.push({ id, message });
+    const timer = window.setTimeout(() => {
+      toasts.value = toasts.value.filter((x) => x.id !== id);
+      noticeTimers.delete(id);
     }, ms);
+    noticeTimers.set(id, timer);
+  }
+
+  function dismissNotice(id: number) {
+    const timer = noticeTimers.get(id);
+    if (timer != null) window.clearTimeout(timer);
+    noticeTimers.delete(id);
+    toasts.value = toasts.value.filter((x) => x.id !== id);
   }
 
   /** 启动 LSP 语言服务（用户开启且运行时可用时） */
@@ -687,7 +698,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   return {
     rootPath,
     rootName,
-    notice,
+    toasts,
     filter,
     selectedPath,
     childrenMap,
@@ -703,6 +714,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     refreshing,
     watchActive,
     showNotice,
+    dismissNotice,
     openFolder,
     restoreLastFolder,
     toggleExpand,

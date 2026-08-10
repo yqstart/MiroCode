@@ -276,10 +276,12 @@ function onKeydown(event: KeyboardEvent) {
   padding: 32px;
   background: var(--bg-overlay);
   backdrop-filter: blur(6px);
+  animation: miro-overlay-in var(--transition-normal) var(--ease-out);
 }
 
 .dialog {
   width: min(860px, 100%);
+  animation: miro-dialog-in var(--transition-normal) var(--ease-out);
   height: min(640px, 100%);
   display: flex;
   flex-direction: column;
