@@ -94,6 +94,7 @@ export function attachTerminalInputBridge(
     composing: false,
     lastWriteData: "",
     lastWriteAt: 0,
+    lastTabAt: 0,
     /**
      * 删除键处理后置 true：吞掉紧随其后的那一次误插空白。
      * dev 下 keydown 的 preventDefault 通常已拦截，此处为兜底——
@@ -115,6 +116,14 @@ export function attachTerminalInputBridge(
       return;
     }
     const now = performance.now();
+    // 打包环境 WKWebView 下 Tab 会双发：同一次补全被触发两次，
+    // 远程 shell 补全两次导致路径多出斜杠（如 `cd ser` + Tab → `cd services/` 后
+    // 又被补全成 `services//`）。连续 Tab 去重，只放行第一次；
+    // dev 下单发不受影响（手动连按切换补全候选的间隔通常大于该窗口）。
+    if (data === "\t") {
+      if (now - ime.lastTabAt < 120) return;
+      ime.lastTabAt = now;
+    }
     if (
       data.length <= 2 &&
       isWhitespaceOnly(data) &&
@@ -183,7 +192,25 @@ export function attachTerminalInputBridge(
       if (tuiMode) return;
       if (ev.target !== textarea) return;
       const ie = ev as InputEvent;
-      if (ie.inputType !== "insertText" || !ie.data || ie.isComposing) return;
+      if (ie.isComposing) return;
+      const now = performance.now();
+      // 删除键后的误插空白：打包环境 preventDefault 不可靠，浏览器对 textarea 的
+      // input 事件可能绕过 custom key handler 直达此处（onData 收不到、标志无人消费），
+      // 导致「删一个字符出一个空格」。删除时间窗内（或标志残留）的空白/删除类
+      // input 一律拦截并复位标志；真实输入（非空白）正常放行。
+      if (ime.suppressNextWhitespace || now - ime.lastDeleteAt < 140) {
+        ime.suppressNextWhitespace = false;
+        if (
+          !ie.data ||
+          isWhitespaceOnly(ie.data) ||
+          ie.inputType.startsWith("delete")
+        ) {
+          ev.stopPropagation();
+          textarea.value = "";
+          return;
+        }
+      }
+      if (ie.inputType !== "insertText" || !ie.data) return;
       if (isWhitespaceOnly(ie.data) || isImeApostrophe(ie.data)) {
         ev.stopPropagation();
         textarea.value = "";
