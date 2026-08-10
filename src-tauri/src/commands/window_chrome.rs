@@ -2,10 +2,13 @@
 
 use tauri::WebviewWindow;
 
-/// 与前端 `--titlebar-height` 保持一致（逻辑像素）
-pub const TITLEBAR_HEIGHT: f64 = 38.0;
-/// 红绿灯左侧边距（逻辑像素）
-pub const TRAFFIC_LIGHT_X: f64 = 14.0;
+/// CSS 端 `--titlebar-height: 38px`；macOS 上 1 CSS px = 1 逻辑点（pt），
+/// 与 backingScaleFactor 无关（Retina 屏 1pt = 2×2 物理像素，但 NSView 坐标始终用逻辑点）。
+const TITLEBAR_HEIGHT: f64 = 38.0;
+/// 红绿灯左侧边距（逻辑点）
+const TRAFFIC_LIGHT_X: f64 = 14.0;
+const SPACE_BETWEEN: f64 = 20.0;
+const BUTTON_SIZE: f64 = 14.0;
 
 /// 设置 macOS 原生标题栏底色（r/g/b：0–255）。非 macOS 为空操作。
 #[tauri::command]
@@ -97,28 +100,36 @@ pub fn apply_traffic_lights(window: &WebviewWindow) -> Result<(), String> {
         .standardWindowButton(NSWindowButton::ZoomButton)
         .ok_or_else(|| "无缩放按钮".to_string())?;
 
+    // 标题栏容器：把高度对齐前端 --titlebar-height，origin 在 AppKit 中为左下角。
+    // 缺少这一步，AppKit 容器可能保持默认高度，红绿灯无法正确居中。
     let title_bar_container = unsafe {
         close
             .superview()
             .and_then(|v| v.superview())
             .ok_or_else(|| "无标题栏容器".to_string())?
     };
-
-    let close_rect = NSView::frame(&*close);
-    let button_h = close_rect.size.height;
-    if button_h <= 0.0 {
-        // 首帧布局尚未完成，交给延迟补齐
-        return Ok(());
-    }
-
-    // 容器高度对齐前端标题栏；origin 在 AppKit 中为左下角
     let mut title_bar_rect = NSView::frame(&*title_bar_container);
     title_bar_rect.size.height = TITLEBAR_HEIGHT;
     title_bar_rect.origin.y = ns_window.frame().size.height - TITLEBAR_HEIGHT;
     title_bar_container.setFrame(title_bar_rect);
 
+    // 用 setFrameOrigin 摆按钮（不触发容器 layout 反复重排）。
+    // 按钮中心 = origin_y + button_h/2；令其等于 TITLEBAR_HEIGHT/2 居中：
+    // origin_y = (TITLEBAR_HEIGHT - button_h) / 2。
+    let close_rect = NSView::frame(&*close);
+    let button_h = if close_rect.size.height > 0.0 {
+        close_rect.size.height
+    } else {
+        BUTTON_SIZE
+    };
     let origin_y = ((TITLEBAR_HEIGHT - button_h) / 2.0).round().max(0.0);
-    let space_between = NSView::frame(&*miniaturize).origin.x - close_rect.origin.x;
+    // 实测按钮间距，未就绪时用兜底值
+    let live_space_between = NSView::frame(&*miniaturize).origin.x - close_rect.origin.x;
+    let space_between = if live_space_between > 0.0 {
+        live_space_between
+    } else {
+        SPACE_BETWEEN
+    };
     let buttons = [close, miniaturize, zoom];
     for (i, button) in buttons.iter().enumerate() {
         let origin = NSPoint::new(TRAFFIC_LIGHT_X + (i as f64 * space_between), origin_y);
@@ -131,28 +142,14 @@ pub fn apply_traffic_lights(window: &WebviewWindow) -> Result<(), String> {
 /// 在窗口上安装红绿灯同步：启动延迟补齐 + 关键窗口事件重排。
 #[cfg(target_os = "macos")]
 pub fn install_traffic_light_hooks(window: &WebviewWindow) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::Arc;
-    use std::time::Duration;
     use tauri::WindowEvent;
 
+    // 立即调一次：button_h 已兜底 14 逻辑点，setup 阶段能拿到按钮 frame → 摆到正确位置
     let _ = apply_traffic_lights(window);
-
-    // 打包启动时 AppKit / WebView 会在 setup 之后再次重排标题栏；延迟补几次稳住首屏
-    let startup = window.clone();
-    std::thread::spawn(move || {
-        for ms in [80u64, 250, 700, 1600] {
-            std::thread::sleep(Duration::from_millis(ms));
-            let handle = startup.clone();
-            let target = startup.clone();
-            let _ = handle.run_on_main_thread(move || {
-                let _ = apply_traffic_lights(&target);
-            });
-        }
-    });
+    // 后续仅在 Resized/ThemeChanged/ScaleFactorChanged 等真实事件触发时重排
+    // —— 不再用 80/250/700/1600ms 延迟补排，避免与 Wry 持续 inset_traffic_lights 反复 setFrame 导致视觉抖动
 
     let win = window.clone();
-    let ticket = Arc::new(AtomicU64::new(0));
     window.on_window_event(move |event| {
         if !matches!(
             event,
@@ -165,23 +162,5 @@ pub fn install_traffic_light_hooks(window: &WebviewWindow) {
         }
 
         let _ = apply_traffic_lights(&win);
-
-        // 全屏退出 / 主题切换后 AppKit 常异步重置位置；用代数作废旧延迟任务，避免拖拽缩放时线程堆积
-        let gen = ticket.fetch_add(1, Ordering::Relaxed) + 1;
-        let follow = win.clone();
-        let ticket_c = ticket.clone();
-        std::thread::spawn(move || {
-            for ms in [60u64, 280] {
-                std::thread::sleep(Duration::from_millis(ms));
-                if ticket_c.load(Ordering::Relaxed) != gen {
-                    return;
-                }
-                let handle = follow.clone();
-                let target = follow.clone();
-                let _ = handle.run_on_main_thread(move || {
-                    let _ = apply_traffic_lights(&target);
-                });
-            }
-        });
     });
 }

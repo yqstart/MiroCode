@@ -94,6 +94,13 @@ export function attachTerminalInputBridge(
     composing: false,
     lastWriteData: "",
     lastWriteAt: 0,
+    /**
+     * 删除键处理后置 true：吞掉紧随其后的那一次误插空白。
+     * dev 下 keydown 的 preventDefault 通常已拦截，此处为兜底——
+     * 打包环境（自定义协议 WKWebView）preventDefault 未必可靠，
+     * 浏览器仍会把删除键误插成空格，导致「删 N 个字符多出 N 个字符」。
+     */
+    suppressNextWhitespace: false,
   };
 
   function rawWrite(data: string) {
@@ -144,6 +151,11 @@ export function attachTerminalInputBridge(
         now - ime.last229At < 450)
     ) {
       return;
+    }
+    // 删除键后的那次误插空白：无论时间窗如何，只要标志位为真即吞掉
+    if (ime.suppressNextWhitespace) {
+      ime.suppressNextWhitespace = false;
+      if (isWhitespaceOnly(data)) return;
     }
     safeWrite(data);
   });
@@ -273,6 +285,7 @@ export function attachTerminalInputBridge(
     // 避免 WKWebView 把 Backspace 上报为空格等错误输入（「按删除键出空格」根因）。
     // 用 rawWrite 绕过 safeWrite 去重，保证按住删除键可连续删除。
     rawWrite(isBackspace ? "\x7f" : "\x1b[3~");
+    ime.suppressNextWhitespace = true;
     textarea.value = "";
     e.preventDefault();
     return false;

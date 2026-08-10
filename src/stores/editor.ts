@@ -555,7 +555,15 @@ export const useEditorStore = defineStore("editor", () => {
     tabs.value = tabs.value.filter((t) => t.path !== path);
     if (activePath.value === path) {
       const next = tabs.value[idx] || tabs.value[idx - 1] || null;
-      activePath.value = next?.path ?? null;
+      if (next) {
+        activePath.value = next.path;
+      } else {
+        // 已无剩余文件标签：若终端标签已打开则兜底激活，避免「只剩终端却不激活」。
+        // （closeTabsByPaths 批量关闭也会经由本函数，统一覆盖 closeAll/closeOthers 等场景）
+        activePath.value = null;
+        const sessions = useSessionsStore();
+        if (sessions.open) sessions.focusSessions();
+      }
     }
   }
 

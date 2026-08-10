@@ -101,6 +101,9 @@ onUnmounted(() => {
 <style scoped>
 .titlebar {
   height: var(--titlebar-height);
+  /* 杀掉 <header> UA 默认 margin: 1em 0（约 13px），否则会撑高标题栏
+     导致原生红绿灯（垂直中线 19pt）与 .titlebar 内的折叠按钮（被挤到 ~32pt）错位 */
+  margin: 0;
   flex-shrink: 0;
   display: flex;
   align-items: center;

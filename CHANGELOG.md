@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-10
+
+### 修复
+
+- **macOS 红绿灯垂直居中**：修复 Retina 屏上红绿灯明显偏上、未在标题栏垂直中线对齐的问题。根因为 `window_chrome.rs` 误将 CSS px 按 `backingScaleFactor` 缩放（macOS 上 1 CSS px = 1 逻辑点，与 Retina 无关），导致 2x 屏标题栏高度被算成 19pt、红绿灯 origin_y 仅 2.5pt 几乎贴顶；同时恢复了标题栏容器 `setFrame` 高度设置（38pt）。现红绿灯中心稳定落在 38pt 标题栏垂直中线（origin_y=12pt），与前端折叠按钮同排
+- **终端隐藏态启动错误尺寸**：修复本地终端在 `v-show` 隐藏态挂载时以占位/错误尺寸启动 PTY，导致 shell 提示符按错误列宽折行、激活后与旧缓冲叠加表现为「目录出现两遍」。改为宿主真正可见（`clientWidth/Height > 0`）后才 `fit + spawn`，隐藏态挂起、激活时补启动
+- **终端删除键误插空格（打包环境兜底）**：`terminalInputBridge.ts` 新增 `suppressNextWhitespace` 标志，删除键处理后置位，吞掉紧随其后的那次误插空白。dev 下 `preventDefault` 通常已拦截，此处为打包环境（自定义协议 WKWebView）`preventDefault` 不可靠时的兜底，修复「删 N 个字符多出 N 个字符」
+- **关闭最后一个文件标签不激活终端**：`closeTab` 在已无剩余文件标签时兜底激活已打开的终端标签，避免「只剩终端却不激活」（`closeTabsByPaths` 批量关闭 / closeAll / closeOthers 等场景统一覆盖）
+
 ### 新增 / 优化
 
 - **`@/` 路径别名 import 跳转**：对齐 tsconfig `paths: { "@/*": ["src/*"] }`，支持 `@/...` 别名的跨文件 go-to-definition / 下划线提示 / 符号索引 / 引用 / 重命名 / 移动文件时改写。解析层 `shared/fs.ts` 新增 `resolveAliasPath`（默认映射 `<root>/src`，可配置前缀与映射根）；`importReferences.ts` 的 `resolveImportPath` / `resolveImportCandidate` / `scanImportReferences` 放开相对路径限制统一支持别名；`navigation.ts` / `workspaceSymbols.ts` 的 import 链解析同步生效
@@ -11,6 +20,7 @@
   - `search_content` / `search_files` / `replace_in_files` 由同步命令改为 `async` + `spawn_blocking` + 超时（对齐 git 网络命令防阻塞约定），避免大仓库 / 慢磁盘全量遍历阻塞 Tauri IPC worker 线程（此前与 git push 卡死同款根因）
   - 新增工作区文件列表 LRU 缓存（root + 忽略规则为 key，上限 32），避免每次搜索重复全量遍历目录树
   - 前端搜索加请求序号竞态保护：发起新搜索或关闭面板后自动丢弃过期 in-flight 结果
+- **编辑区标签固定区**：终端 / SSH / GitLog / Compare 等非文件标签固定钉在标签栏最右侧，不随文件标签滚动也不被挤压（`margin-left:auto` + `flex-shrink:0`），避免文件标签多时把功能标签挤出可视区
 
 ## [0.10.0] - 2026-08-09
 
@@ -437,7 +447,8 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/yqstart/MiroCode/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/yqstart/MiroCode/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/yqstart/MiroCode/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/yqstart/MiroCode/compare/v0.7.0...v0.8.0

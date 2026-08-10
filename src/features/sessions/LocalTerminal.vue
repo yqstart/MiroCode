@@ -39,31 +39,14 @@ function defaultShell(): string {
   return "/bin/bash";
 }
 
-function fit() {
-  if (!term || !fitAddon || !props.active) return;
-  try {
-    fitAddon.fit();
-    if (pty) {
-      pty.resize(term.cols, term.rows);
-    }
-  } catch {
-    // 尺寸未就绪时忽略
-  }
+/** 宿主是否真正可见（尺寸非 0）：v-show 隐藏（display:none）时不可见 */
+function hostVisible(): boolean {
+  const el = host.value;
+  return Boolean(el && el.clientWidth > 0 && el.clientHeight > 0);
 }
 
-async function boot() {
-  if (!host.value || term) return;
-
-  term = new Terminal({
-    ...terminalBaseOptions(),
-    theme: terminalThemeColors(theme.value),
-  });
-  fitAddon = new FitAddon();
-  term.loadAddon(fitAddon);
-  term.open(host.value);
-  await nextTick();
-  fit();
-
+function spawnPty() {
+  if (!term || disposed) return;
   try {
     pty = spawn(defaultShell(), [], {
       cols: term.cols,
@@ -94,8 +77,42 @@ async function boot() {
     );
     term.writeln("\x1b[90m请确认已通过桌面应用运行（pnpm tauri:dev），而非纯浏览器预览。\x1b[0m");
   }
+}
 
-  resizeObserver = new ResizeObserver(() => fit());
+/**
+ * 在宿主真正可见后再 fit + spawn，避免隐藏态（display:none）下以占位/错误尺寸
+ * 启动 PTY——否则 shell 提示符（含当前目录）会按错误列宽写入并被折行，
+ * 点击激活触发 resize 后与旧缓冲叠加，表现为「目录出现两遍 + 样式错乱」。
+ */
+function tryFitAndSpawn() {
+  if (!term || !fitAddon || disposed) return;
+  if (!hostVisible()) return;
+  try {
+    fitAddon.fit();
+  } catch {
+    // ignore
+  }
+  if (!pty) {
+    spawnPty();
+  } else {
+    pty.resize(term.cols, term.rows);
+  }
+}
+
+async function boot() {
+  if (!host.value || term) return;
+
+  term = new Terminal({
+    ...terminalBaseOptions(),
+    theme: terminalThemeColors(theme.value),
+  });
+  fitAddon = new FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(host.value);
+  await nextTick();
+  tryFitAndSpawn();
+
+  resizeObserver = new ResizeObserver(() => tryFitAndSpawn());
   resizeObserver.observe(host.value);
 }
 
@@ -125,7 +142,9 @@ watch(
   async (active) => {
     if (active) {
       await nextTick();
-      fit();
+      // 终端激活且宿主可见时：若 PTY 尚未启动（曾在隐藏态挂载）则此时补启动，
+      // 已启动则按真实尺寸重新 fit，避免隐藏态错误列宽导致的提示符折行/叠加。
+      tryFitAndSpawn();
       term?.focus();
     }
   },

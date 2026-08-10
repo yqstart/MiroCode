@@ -548,15 +548,18 @@ onBeforeUnmount(() =>
         </button>
       </TransitionGroup>
 
-      <button
-        v-for="tab in compareTabs"
-        :key="tab.id"
-        type="button"
-        class="tab compare-tab"
-        :class="{ active: compareFocused && tab.id === compareActiveId }"
-        @click="activateCompare(tab.id)"
-        @auxclick.middle.prevent="closeCompareTab(tab.id)"
-      >
+      <!-- 固定标签区：终端 / SSH / GitLog / Compare 等非文件标签固定钉在标签栏最右侧，
+           不随文件标签滚动，也不被文件标签挤压（flex-shrink:0） -->
+      <div class="tabs-fixed">
+        <button
+          v-for="tab in compareTabs"
+          :key="tab.id"
+          type="button"
+          class="tab compare-tab"
+          :class="{ active: compareFocused && tab.id === compareActiveId }"
+          @click="activateCompare(tab.id)"
+          @auxclick.middle.prevent="closeCompareTab(tab.id)"
+        >
           <Columns2 :size="12" class="cmp-icon" />
           <span class="name">{{ tab.title }}</span>
           <span
@@ -628,17 +631,18 @@ onBeforeUnmount(() =>
           </span>
         </button>
 
-      <button
-        v-if="canTogglePreview"
-        type="button"
-        class="preview-toggle"
-        :title="previewToggleTitle"
-        @click="togglePreview"
-      >
-        <Eye v-if="!previewShowing" :size="14" />
-        <FileCode v-else :size="14" />
-        {{ previewToggleLabel }}
-      </button>
+        <button
+          v-if="canTogglePreview"
+          type="button"
+          class="preview-toggle"
+          :title="previewToggleTitle"
+          @click="togglePreview"
+        >
+          <Eye v-if="!previewShowing" :size="14" />
+          <FileCode v-else :size="14" />
+          {{ previewToggleLabel }}
+        </button>
+      </div>
     </div>
 
     <div class="canvas">
@@ -811,6 +815,23 @@ onBeforeUnmount(() =>
   display: none; /* Chromium / WebKit */
   width: 0;
   height: 0;
+}
+
+/* 右侧固定标签区：推到最右、不被文件标签挤压 */
+.tabs-fixed {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tabs-fixed .tab,
+.tabs-fixed .preview-toggle {
+  flex-shrink: 0;
 }
 
 .tab {
