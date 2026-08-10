@@ -4,13 +4,26 @@
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-08-10
+
 ### 新增
 
+- **SFTP 上传进度条**：上传文件时显示实时进度条（文件名 + 百分比），多文件逐个上传时跟随当前文件；Rust 端按 64KB 块累计进度、每 150ms 节流推送 `sftp://progress/{id}` 事件，避免大文件高频事件拖垮前端
 - **内置语言服务捆绑包**（设置 → 编辑器 → 语言服务 → 一键安装）：预打包的 Node 运行时 + `typescript-language-server` + `@vue/language-server` 可一键下载安装到应用数据目录，安装包本体保持轻量、LSP 不再依赖宿主 Node
   - **多镜像源与国内兼容**：默认「自动」模式先尝试 GitHub 官方源，失败自动切换 ghfast.top 加速镜像；另提供官方 / 加速 / 自定义镜像手动选择
   - **完整性校验**：下载产物 sha256 校验通过后解压激活，失败自动中止并清理临时文件
   - **版本管理**：显示已安装 / 最新版本，可一键更新 / 卸载；安装后自动重启工作区 LSP 立即生效
   - **启动策略**：优先内置捆绑包，未安装时回退宿主 npx（项目 / 全局 node_modules），行为与旧版一致
+
+### 修复
+
+- **SFTP 删除文件夹时服务崩溃**：递归删除原用 `stat()`（跟随符号链接），目录内符号链接指向祖先路径时形成环、无限递归导致栈溢出崩溃；改为 `lstat` 不跟随链接（链接一律按文件删除）+ 64 层递归深度上限兜底
+- **SSH 输入命令时写入失败 / 断开连接（`transport read`）**：SFTP 操作把共享 Session 切成阻塞模式后释放了锁，shell 读线程在非线程安全的 libssh2 Session 上并发调用破坏状态机，产生「写入失败」与「SSH 通道读取失败：transport read」误判断连；改为 SFTP 操作全程持有 session 锁执行（彻底互斥），并将软错误误判阈值从 60 次（≈1.5s）放宽到 400 次（≈10s，真断连仍由 eof / 硬错误即时触发），`wait_shell_io_ready` 等待超时放宽到 30s（覆盖大文件上传）
+- **SSH Tab 补全后路径多一个 `/`**：打包环境（WKWebView）下 Tab 事件双发，远程补全被触发两次导致 `cd ser` + Tab 后多出斜杠；`safeWrite` 对 `\t` 增加 120ms 去重窗口（dev 单发不受影响，连按切换补全候选仍可用）
+- **SSH 删除键删除后变空格**：打包环境 `preventDefault` 不可靠，浏览器对 textarea 的 input 事件绕过自定义 key handler，删除产生的误插空白无人拦截；`onImeCommitInput` 增加删除时间窗（140ms）+ 残留标志兜底，删除后空白一律拦截复位，真实输入正常放行
+- **Git 更改文件右键菜单切换区域后不消失**：菜单经 Teleport 渲染到 body，原仅面板内 `@click` 可关闭；新增全局 `mousedown` 监听关闭（排除菜单自身节点）
+- **资源管理器右键菜单被遮挡截断**：菜单 z-index 仅 40，被编辑器等高浮层遮挡；高度估算（320px）小于实际渲染高度，底部越界被 `overflow:hidden` 裁掉；改为渲染后按真实尺寸反向回拉校正 + z-index 提升至 90
+- **打包后 `dist` 目录不显示 / 不刷新**：`WATCH_IGNORE_NAMES` 与 Rust `DEFAULT_IGNORES` 均含 `dist`，构建产物目录被文件监听丢弃且资源树过滤；两处 ignore 名单移除 `dist`
 
 ## [0.11.0] - 2026-08-10
 
@@ -484,7 +497,8 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/yqstart/MiroCode/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/yqstart/MiroCode/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/yqstart/MiroCode/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/yqstart/MiroCode/compare/v0.9.0...v0.10.0
