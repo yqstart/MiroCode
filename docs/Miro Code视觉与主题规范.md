@@ -1,7 +1,6 @@
 # Miro Code 视觉与主题规范
 
 > 本文档描述**已定版**的四套主题、语义 token 与视觉规范，色值与 `src/styles/themes.css`、`src/features/editor/theme.ts` 一一对应。
-> 视觉基准图：`docs/theme1.png`（浅色 Dawn）、`docs/theme2.png`（深色 Miro Dark；仅内部设计参考，非对外宣传素材）。
 
 ---
 

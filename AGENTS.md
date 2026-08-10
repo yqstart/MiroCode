@@ -26,8 +26,6 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 | 安全政策 | `SECURITY.md` |
 | 行为准则 | `CODE_OF_CONDUCT.md` |
 | 更新日志 | `CHANGELOG.md` |
-| 深色基准图 | `docs/theme2.png`（Miro Dark；仅内部设计参考，非对外宣传素材） |
-| 浅色基准图 | `docs/theme1.png`（Dawn） |
 
 ## 技术基线（摘要）
 
