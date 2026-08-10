@@ -1071,9 +1071,15 @@ pub fn sftp_rename(
     })
 }
 
-fn sftp_remove_recursive(sftp: &Sftp, path: &Path) -> CmdResult<()> {
+fn sftp_remove_recursive(sftp: &Sftp, path: &Path, depth: u32) -> CmdResult<()> {
+    // 深度上限兜底：防止符号链接环（stat 会跟随链接）导致的无限递归栈溢出崩溃
+    if depth > 64 {
+        return Err("目录层级过深，删除中止（可能包含符号链接环）".into());
+    }
+    // lstat 不跟随符号链接：链接一律按文件 unlink，绝不对链接目标递归，
+    // 避免指向祖先目录的 symlink 环让递归无限深入而崩溃
     let meta = sftp
-        .stat(path)
+        .lstat(path)
         .map_err(|e| format!("读取远程路径失败: {e}"))?;
     if meta.is_dir() {
         let base = path.to_string_lossy().to_string();
@@ -1089,7 +1095,7 @@ fn sftp_remove_recursive(sftp: &Sftp, path: &Path) -> CmdResult<()> {
                 continue;
             }
             let full = PathBuf::from(join_remote(&base, &name));
-            sftp_remove_recursive(sftp, &full)?;
+            sftp_remove_recursive(sftp, &full, depth + 1)?;
         }
         sftp.rmdir(path)
             .map_err(|e| format!("删除目录失败: {e}"))?;
@@ -1107,7 +1113,9 @@ pub fn sftp_remove(state: State<'_, SshState>, id: String, path: String) -> CmdR
     let session = sftps
         .get(&id)
         .ok_or_else(|| "SFTP 会话不存在".to_string())?;
-    with_sftp_io(&session.backend, |sftp| sftp_remove_recursive(sftp, &remote))
+    with_sftp_io(&session.backend, |sftp| {
+        sftp_remove_recursive(sftp, &remote, 0)
+    })
 }
 
 #[tauri::command]
