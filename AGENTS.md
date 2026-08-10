@@ -5,24 +5,21 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 ## 产品阶段与方向
 
 - **定位**：轻量级、快速、顺滑的跨平台桌面代码编辑器
-- **当前阶段**：核心功能集（资源树 / 编辑 / 搜索 / Git / 终端·SSH / 主题 / LSP / AI 行内补全）已收敛，进入**优化迭代期**
+- **当前阶段**：功能**定版**（2026-08-10）——核心功能集（资源树 / 编辑 / 搜索 / Git / 终端·SSH / 主题 / LSP / AI 行内补全）全部收敛，进入**优化迭代期**
 - **后续方向**：围绕性能、流畅度、交互体验持续打磨，不再扩展大功能模块
-- **已落地**：AI 行内智能补全（ghost text 形态，编辑器内补全，非独立面板）
+- **已落地**：AI 行内智能补全（ghost text 形态，编辑器内补全，非独立面板）、LSP 语言服务（TS / Vue）
 - **明确不做**：AI 对话面板、AI Agent、MCP / Skills 生态、插件市场
 
 ## 文档索引
 
 | 文档 | 路径 |
 |---|---|
-| **交接文档（接手入口）** | `docs/交接文档.md` |
-| 官方定名 | `docs/Miro Code（米罗编辑器）官方定名文档.md` |
-| 产品需求 | `docs/Miro Code代码编辑器需求文档.md` |
+| **使用说明（功能与快捷键全览）** | `docs/使用说明.md` |
 | 技术架构 | `docs/Miro Code技术架构文档.md` |
 | 视觉主题 | `docs/Miro Code视觉与主题规范.md` |
-| 功能排期 | `docs/Miro Code功能排期.md` |
-| 使用说明 | `docs/使用说明.md` |
-| 开源准备清单 | `docs/开源准备清单.md` |
+| 官方定名 | `docs/Miro Code（米罗编辑器）官方定名文档.md` |
 | 多平台发布 | `docs/多平台发布.md` |
+| 开源准备清单 | `docs/开源准备清单.md` |
 | 开源许可 | `LICENSE`（MIT） |
 | 第三方声明 | `THIRD-PARTY-NOTICES.md` |
 | 贡献指南 | `CONTRIBUTING.md` |
@@ -37,7 +34,9 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 - 桌面壳：Tauri 2
 - 前端：Vue 3 + TypeScript + Vite + Pinia
 - 编辑器内核：CodeMirror 6（高亮/折叠/诊断/补全/跳转）
-- 搜索：Rust walk + 模糊/内容检索/替换
+- LSP：Rust stdio transport 桥接 `typescript-language-server` + `@vue/language-server`（宿主提供 Node，缺则降级 v1 正则）
+- AI 补全：Rust reqwest 流式 + SSE 推送，ghost text 渲染（DeepSeek / 自定义 provider）
+- 搜索：Rust walk + 模糊/内容检索/替换（async + LRU 缓存）
 - Git：Rust `git2`（日常操作 + 冲突解决）
 - 主题：`miro-dark` / `dawn` / `midnight` / `cyberpunk`
 - 文件图标：Material Icon Theme（资源树 / Commit / 快速打开等）

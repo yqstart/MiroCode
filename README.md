@@ -8,16 +8,21 @@
 
 ## 产品定位
 
-主打**轻量级、快速、顺滑**。核心功能集（资源树 / 编辑 / 搜索 / Git / 终端·SSH / 主题）已收敛，后续迭代围绕性能与体验打磨展开，不再扩展大功能模块。远期可能新增 AI 智能提示 / 行内智能补全（非独立面板），其余 AI 面板、Agent、MCP 等均不做。
+主打**轻量级、快速、顺滑**。核心功能集已**定版**，不再扩展大功能模块；后续迭代围绕性能、流畅度、交互体验持续打磨。
+
+**明确不做**：AI 对话面板、AI Agent、MCP / Skills 生态、插件市场。
 
 ## 功能概览
 
-- 打开项目 / 资源树（**Material Icon Theme** 文件图标）/ CodeMirror 多标签编辑存盘
-- ⌘P 文件查找、⌘⇧F 全局搜索替换
-- Git 对标 WebStorm New UI：左侧 Commit、底栏 Log、Branches、交互 Rebase、冲突分栏、HTTPS 登录
-- 多语法高亮 / 本地补全 / 跳转 / Markdown / 图片预览
-- 本地终端与 SSH（终端 + SFTP）
-- 四套主题：`miro-dark` / `dawn` / `midnight` / `cyberpunk`
+- 工作区资源树（**Material Icon Theme** 文件图标）/ 文件右键操作 / 外部变更监听
+- CodeMirror 6 多标签编辑：高亮 / 折叠 / 查找替换 / 格式化 / 诊断 / 补全 / 跳转
+- **LSP 语言服务**：TS / Vue 的 hover、签名、补全、诊断、跳转、引用、重命名（宿主提供 Node，缺 Node 自动降级）
+- **AI 行内智能补全**（ghost text，类 Copilot）：DeepSeek / 自定义 provider，流式生成，Tab 接受
+- ⌘P 文件查找、⌘⇧F 全局搜索与替换
+- Git 全功能：左侧 Commit、编辑区 Git Log、Branches、交互式 Rebase、冲突分栏解决、HTTPS 登录
+- 本地终端（⌘J）与 SSH 远程（状态栏入口，终端 + SFTP）
+- 四套主题：`miro-dark`（默认）/ `dawn` / `midnight` / `cyberpunk`
+- 中 / 英界面语言切换（无需重启）
 - 应用内检查更新（GitHub Release）
 
 ## 环境要求
@@ -44,6 +49,12 @@ pnpm tauri:dev
 
 ```bash
 pnpm build
+```
+
+仅 Rust 编译检查：
+
+```bash
+cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
 本机发布构建（仅当前系统）：
@@ -78,19 +89,17 @@ Unblock-File -LiteralPath "$env:USERPROFILE\Downloads\Miro Code_*.msi"
 
 | 文档 | 说明 |
 |---|---|
-| [使用说明](docs/使用说明.md) | 快捷键与主路径 |
+| [使用说明](docs/使用说明.md) | 功能与快捷键全览 |
+| [技术架构](docs/Miro%20Code技术架构文档.md) | 选型、分层、模块设计 |
+| [视觉主题](docs/Miro%20Code视觉与主题规范.md) | 四套主题与语义 token |
+| [多平台发布](docs/多平台发布.md) | GitHub Actions 打 macOS / Win / Linux 包 |
+| [开源准备清单](docs/开源准备清单.md) | 公开发布勾选表 |
+| [官方定名](docs/Miro%20Code（米罗编辑器）官方定名文档.md) | 品牌与命名 |
 | [贡献指南](CONTRIBUTING.md) | 开发环境与 PR 约定 |
 | [安全政策](SECURITY.md) | 漏洞报告方式 |
 | [更新日志](CHANGELOG.md) | 版本变更 |
-| [开源准备清单](docs/开源准备清单.md) | 公开发布勾选表 |
-| [多平台发布](docs/多平台发布.md) | GitHub Actions 打 macOS / Win / Linux 包 |
-| [官方定名](docs/Miro%20Code（米罗编辑器）官方定名文档.md) | 品牌与命名 |
-| [产品需求](docs/Miro%20Code代码编辑器需求文档.md) | 功能与非功能需求 |
-| [技术架构](docs/Miro%20Code技术架构文档.md) | 选型、分层、IPC |
-| [视觉主题](docs/Miro%20Code视觉与主题规范.md) | Dawn / Miro Dark 等 |
 | [开源许可](LICENSE) | MIT |
 | [第三方声明](THIRD-PARTY-NOTICES.md) | 依赖许可证聚合 |
-| [功能排期](docs/Miro%20Code功能排期.md) | M0–M6 里程碑 |
 
 ## 参与贡献
 
