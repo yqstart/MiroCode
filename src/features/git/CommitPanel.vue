@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   AlertTriangle,
   Archive,
@@ -60,8 +60,20 @@ const canCommit = computed(
 );
 
 onMounted(() => {
+  document.addEventListener("mousedown", onDocMouseDown);
   if (rootPath.value) void git.refresh();
 });
+
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onDocMouseDown);
+});
+
+/** 点击面板外部任意处关闭右键菜单（菜单本身经 Teleport 到 body，故用全局监听） */
+function onDocMouseDown(event: MouseEvent) {
+  const el = event.target as HTMLElement | null;
+  if (el && el.closest(".ctx")) return;
+  contextMenu.value = null;
+}
 
 function statusLabel(status: string) {
   const map: Record<string, string> = {
