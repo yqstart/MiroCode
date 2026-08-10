@@ -11,6 +11,7 @@
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
+  aiCancel,
   aiCompleteStream,
   getAiApiKey,
   onAiDelta,
@@ -106,6 +107,8 @@ class AiManagerImpl {
   /** 取消在途请求 */
   cancelInFlight(): void {
     if (this.currentReqId) {
+      // 通知 Rust 侧终止流读取循环（请求已发出也能中途取消）
+      void aiCancel(this.currentReqId).catch(() => {});
       // 取消事件监听
       this.unlistenFns.forEach((fn) => fn());
       this.unlistenFns = [];

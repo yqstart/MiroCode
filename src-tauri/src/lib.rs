@@ -299,6 +299,7 @@ pub fn run() {
             commands::ai::ai_secret_set,
             commands::ai::ai_secret_remove,
             commands::ai::ai_complete_stream,
+            commands::ai::ai_cancel,
             commands::window_chrome::set_titlebar_background,
             commands::window_chrome::sync_traffic_lights,
             // dev-only：模拟"push 卡住 N ms"，让 __ipcSelfCheck 在真机

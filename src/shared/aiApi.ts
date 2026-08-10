@@ -75,6 +75,11 @@ export async function aiCompleteStream(req: AiCompleteRequest): Promise<void> {
   });
 }
 
+/** 取消在途流式请求（Rust 侧终止读取循环） */
+export async function aiCancel(reqId: string): Promise<void> {
+  return invoke("ai_cancel", { reqId });
+}
+
 // ==================== 事件 listen ====================
 
 /** 监听增量文本 */

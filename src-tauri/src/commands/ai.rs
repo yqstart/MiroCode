@@ -15,6 +15,34 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
+use tokio::task::AbortHandle;
+
+// ==================== 在途请求取消 ====================
+
+/// 在途流式任务的 req_id -> AbortHandle 映射（ai_cancel 取出并 abort）
+static AI_ABORT_MAP: OnceLock<Mutex<HashMap<String, AbortHandle>>> = OnceLock::new();
+
+fn ai_abort_map() -> &'static Mutex<HashMap<String, AbortHandle>> {
+    AI_ABORT_MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 注册在途任务（返回该任务的 AbortHandle）
+fn register_inflight(req_id: String, handle: AbortHandle) {
+    if let Ok(mut map) = ai_abort_map().lock() {
+        map.insert(req_id, handle);
+    }
+}
+
+/// 取消在途请求（请求已发出后仍可中途终止读取循环）
+#[tauri::command]
+pub fn ai_cancel(req_id: String) -> CmdResult<()> {
+    if let Ok(mut map) = ai_abort_map().lock() {
+        if let Some(handle) = map.remove(&req_id) {
+            handle.abort();
+        }
+    }
+    Ok(())
+}
 
 // ==================== 路径与凭据存储 ====================
 
@@ -278,12 +306,20 @@ pub async fn ai_complete_stream(app: AppHandle, req: AiCompleteRequest) -> CmdRe
     }
 
     // tokio task 读 SSE 流，逐 chunk emit
-    tokio::spawn(async move {
+    // 结束时（正常 / 错误 / abort）从在途映射移除自己
+    let cleanup_id = req_id.clone();
+    let inflight_id = req_id.clone();
+    let task = tokio::spawn(async move {
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
         let delta_evt = delta_event(&req_id);
         let done_evt = done_event(&req_id);
         let error_evt = error_event(&req_id);
+        let cleanup = |req_id: &str| {
+            if let Ok(mut map) = ai_abort_map().lock() {
+                map.remove(req_id);
+            }
+        };
 
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
@@ -304,6 +340,7 @@ pub async fn ai_complete_stream(app: AppHandle, req: AiCompleteRequest) -> CmdRe
                                     // [DONE] 或无可提取文本
                                     if data.trim() == "[DONE]" {
                                         let _ = app.emit(&done_evt, ());
+                                        cleanup(&cleanup_id);
                                         return;
                                     }
                                 }
@@ -313,6 +350,7 @@ pub async fn ai_complete_stream(app: AppHandle, req: AiCompleteRequest) -> CmdRe
                 }
                 Err(e) => {
                     let _ = app.emit(&error_evt, format!("流读取错误: {e}"));
+                    cleanup(&cleanup_id);
                     return;
                 }
             }
@@ -320,7 +358,10 @@ pub async fn ai_complete_stream(app: AppHandle, req: AiCompleteRequest) -> CmdRe
 
         // 流正常结束（未收到 [DONE]）
         let _ = app.emit(&done_evt, ());
+        cleanup(&cleanup_id);
     });
+    // 注册在途任务，供 ai_cancel 取消
+    register_inflight(inflight_id, task.abort_handle());
 
     Ok(())
 }
