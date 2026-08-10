@@ -353,7 +353,9 @@ fn validate_remote_path(path: &str) -> CmdResult<&Path> {
 
 /// SFTP 操作期间等待 pause 解除，避免 Channel 写与 Session 阻塞 I/O 争用
 fn wait_shell_io_ready(pause: &AtomicBool, stop: &AtomicBool) -> CmdResult<()> {
-    for _ in 0..250 {
+    // 大文件上传/递归删除可能超过 2.5s；放宽到 30s 避免误报「会话繁忙」，
+    // 超过仍提示，防止输入请求无限挂起
+    for _ in 0..3000 {
         if stop.load(Ordering::SeqCst) {
             return Err("SSH 会话已关闭".into());
         }
@@ -406,19 +408,20 @@ fn with_sftp_io<R>(backend: &SftpBackend, f: impl FnOnce(&Sftp) -> CmdResult<R>)
             sftp,
         } => {
             pause.store(true, Ordering::SeqCst);
+            // 等读线程至少让出一次；随后整个 SFTP 操作期间持有 session 锁，
+            // 使 shell 读/写线程在 ch.read()/write() 内部（ssh2 会锁 session）被挡在锁外，
+            // 避免读线程在 blocking 模式 session 上并发调用 libssh2 破坏状态机
+            // （此前正是该竞态产生 transport read 误判断连与写入失败）。
             thread::sleep(Duration::from_millis(40));
-            {
+            let result = {
                 let sess = session.lock().map_err(|e| e.to_string())?;
                 sess.set_blocking(true);
                 sess.set_timeout(30_000);
-            }
-            let result = f(sftp);
-            {
-                if let Ok(sess) = session.lock() {
-                    sess.set_timeout(0);
-                    sess.set_blocking(false);
-                }
-            }
+                let r = f(sftp);
+                sess.set_timeout(0);
+                sess.set_blocking(false);
+                r
+            };
             pause.store(false, Ordering::SeqCst);
             result
         }
@@ -646,8 +649,11 @@ pub fn ssh_shell_open(
                         continue;
                     }
                     if is_soft_transport_error(&err) {
+                        // 瞬时 transport read（网络抖动/SFTP 切换等）不应立即判定断连。
+                        // 真断连时 channel 会收到 eof（Read 返回 Ok(0)）或稳定硬错误，
+                        // 软错误计数只作为长期无进展的兜底（400 次 × 25ms ≈ 10s）。
                         soft_err_streak = soft_err_streak.saturating_add(1);
-                        if soft_err_streak <= 60 {
+                        if soft_err_streak <= 400 {
                             thread::sleep(Duration::from_millis(25));
                             continue;
                         }
