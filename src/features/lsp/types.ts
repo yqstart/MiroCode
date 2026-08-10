@@ -46,7 +46,39 @@ export interface RuntimeCheck {
   node: boolean;
   tsLs: boolean;
   volar: boolean;
+  /** 内置语言服务捆绑包版本（非空表示 LSP 由内置 Node + server 驱动，不依赖宿主环境） */
+  bundledVersion?: string | null;
 }
+
+/** 语言服务捆绑包安装状态（与 Rust 侧 LsStatus 对应） */
+export interface LsStatus {
+  /** 当前平台是否有可用产物 */
+  supported: boolean;
+  /** 已安装版本（未安装为 null） */
+  installedVersion: string | null;
+  /** 远端最新版本（清单拉取失败/离线为 null） */
+  latestVersion: string | null;
+  /** 远端清单是否拉取成功 */
+  latestAvailable: boolean;
+  /** 实际命中的镜像源 id */
+  mirrorUsed: string;
+  /** 是否有可用更新 */
+  hasUpdate: boolean;
+}
+
+/** 安装进度事件载荷（Rust emit 的 ls://progress） */
+export interface LsProgressEvent {
+  /** 阶段：manifest / download / verify / extract / done */
+  phase: string;
+  received: number;
+  total: number;
+  /** 0-100 */
+  percent: number;
+  message: string;
+}
+
+/** 语言服务镜像源选项 */
+export type LsMirror = "auto" | "github" | "ghproxy" | "custom";
 
 /** LSP 连接状态 */
 export type LspStatus =

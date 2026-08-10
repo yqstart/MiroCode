@@ -34,6 +34,10 @@ base64 = "0.22"
 tokio = { version = "1", features = ["time", "rt", "rt-multi-thread", "macros", "process", "io-util", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"
+# 语言服务捆绑包：解压 zip（内置 Node + language server）
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# 语言服务捆绑包：下载产物 sha256 完整性校验
+sha2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"

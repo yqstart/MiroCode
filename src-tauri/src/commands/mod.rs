@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod fs;
 pub mod git;
+pub mod language_services;
 pub mod lsp;
 pub mod path_util;
 pub mod search;

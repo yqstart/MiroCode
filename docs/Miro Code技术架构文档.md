@@ -98,7 +98,7 @@
 |---|---|
 | WebView（前端） | UI、编辑器实例、主题、交互状态、AI ghost text 渲染 |
 | Rust 主进程 | 文件访问、Git、目录遍历、搜索、SSH/SFTP、AI 请求、LSP 子进程管理、窗口控制（macOS 红绿灯） |
-| 外部子进程 | `typescript-language-server`、`@vue/language-server`、PTY shell、Prettier / ESLint（npx） |
+| 外部子进程 | 内置捆绑包的 Node + `typescript-language-server` + `@vue/language-server`（设置内一键安装）；回退时用宿主 npx 启动上述 server 与 Prettier / ESLint；PTY shell |
 
 ### 4.2 目录结构（定版）
 
@@ -205,10 +205,12 @@ MiroCode/
 | 项 | 说明 |
 |---|---|
 | 语言服务器 | `typescript-language-server`（ts/tsx/mts/cts）、`@vue/language-server`（Volar，Vue 优先，缺则降级 ts） |
+| 启动策略 | **内置捆绑包优先**（`language_services.rs`：设置内一键安装的 Node + 双 server，路径 `app_data_dir/language-servers/<version>/`）；未安装回退宿主 `npx --no-install`（项目 / 全局 node_modules） |
 | 传输 | Rust stdio JSON-RPC + Content-Length 分帧；`spawn_read_loop` 逐消息事件推送 |
 | 能力 | hover / 签名帮助 / 语义补全 / 类型诊断 / 定义跳转 / 引用查找 / 重命名（WorkspaceEdit 多文件） |
-| 检测降级 | `nodeDetector.ts` 检测 node + npx + 两包是否可装；不可用则状态栏告警，各能力回退 v1 正则 |
-| 设置 | `lspEnabled` 开关 + 运行时状态检测展示；状态栏指示器（就绪 / 启动中 / 不可用） |
+| 检测降级 | `nodeDetector.ts` 检测内置捆绑包 → node + npx + 两包是否可装；不可用则状态栏告警，各能力回退 v1 正则 |
+| 内置捆绑包 | `language_services.rs` 流式下载（多镜像自动降级）→ sha256 校验 → 解压激活；`ls_status` / `ls_install` / `ls_uninstall` 命令 + `ls://progress` 进度事件；产物发布在 GitHub Release 固定 tag `language-servers`（`ls-latest.json` 版本清单，CI workflow `language-servers.yml` 打包 5 平台） |
+| 设置 | `lspEnabled` 开关 + 运行时状态展示；一键安装 / 更新 / 卸载 + 镜像源选择（自动 / 官方 / 加速 / 自定义） |
 
 ### 6.4 AI 行内补全（`features/ai/` + `commands/ai.rs`）
 

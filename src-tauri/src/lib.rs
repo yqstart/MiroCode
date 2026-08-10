@@ -294,6 +294,10 @@ pub fn run() {
             commands::lsp::lsp_stop,
             commands::lsp::lsp_stop_all,
             commands::lsp::lsp_list_servers,
+            // 内置语言服务捆绑包（一键安装 / 卸载 / 状态）
+            commands::language_services::ls_status,
+            commands::language_services::ls_install,
+            commands::language_services::ls_uninstall,
             // AI 行内智能补全
             commands::ai::ai_secret_get,
             commands::ai::ai_secret_set,

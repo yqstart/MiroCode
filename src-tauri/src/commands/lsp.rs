@@ -22,6 +22,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::Mutex;
 
+use super::language_services::bundled_runtime;
+
 // ==================== 常量 ====================
 
 /// LSP 消息推送到前端的事件名
@@ -60,6 +62,8 @@ pub struct RuntimeCheck {
     pub node: bool,
     pub ts_ls: bool,
     pub volar: bool,
+    /// 内置语言服务捆绑包版本（非空表示 LSP 由内置 Node + server 驱动，不再依赖宿主环境）
+    pub bundled_version: Option<String>,
 }
 
 /// 单个 LSP server 的运行态
@@ -107,6 +111,34 @@ fn npx_command() -> std::process::Command {
     }
 }
 
+/// 构造 language server 启动命令
+///
+/// 启动策略（优先级）：
+/// 1. 内置语言服务捆绑包（设置内一键安装）：直接用捆绑的 Node 执行 server 入口，
+///    不依赖宿主 PATH 上的 Node/npx
+/// 2. 回退：宿主 npx --no-install（项目/全局 node_modules）
+fn build_server_command(
+    rt: Option<&crate::commands::language_services::BundledRuntime>,
+    server_type: ServerType,
+    root: &str,
+) -> std::process::Command {
+    let mut cmd = if let Some(rt) = rt {
+        let entry = match server_type {
+            ServerType::Ts => rt.ts_entry.clone(),
+            ServerType::Vue => rt.vue_entry.clone(),
+        };
+        let mut c = std::process::Command::new(&rt.node_path);
+        c.arg(entry);
+        c
+    } else {
+        let mut c = npx_command();
+        c.args(["--no-install", server_type.package_name()]);
+        c
+    };
+    cmd.args(["--stdio"]).current_dir(root);
+    cmd
+}
+
 /// 用 tokio::process::Command 启动 language server 子进程
 ///
 /// 返回 (Child, stdin, stdout)；stderr 读循环在此函数内启动
@@ -115,10 +147,9 @@ async fn spawn_server(
     server_type: ServerType,
     root: String,
 ) -> Result<(Child, ChildStdin, ChildStdout), String> {
-    let mut cmd = npx_command();
-    cmd.args(["--no-install", server_type.package_name(), "--stdio"])
-        .current_dir(&root)
-        .stdin(Stdio::piped())
+    let rt = bundled_runtime(&app);
+    let mut cmd = build_server_command(rt.as_ref(), server_type, &root);
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -310,10 +341,23 @@ fn spawn_read_loop(
 
 // ==================== 命令 ====================
 
-/// 检测宿主运行时：node / typescript-language-server / vue-language-server 是否可用
+/// 检测运行时：node / typescript-language-server / vue-language-server 是否可用
+///
+/// 优先判定内置语言服务捆绑包：已安装则三个能力全部视为可用（由捆绑的 Node + server 驱动），
+/// 否则回退检测宿主 node/npx 与全局/项目包（现有降级路径）。
 #[tauri::command]
-pub async fn lsp_check_runtime() -> Result<RuntimeCheck, String> {
-    // 检测 node + npx
+pub async fn lsp_check_runtime(app: AppHandle) -> Result<RuntimeCheck, String> {
+    // 内置捆绑包优先
+    if let Some(rt) = bundled_runtime(&app) {
+        return Ok(RuntimeCheck {
+            node: true,
+            ts_ls: true,
+            volar: true,
+            bundled_version: Some(rt.version),
+        });
+    }
+
+    // 回退宿主环境检测
     let node = check_command("node --version").await;
     let npx = check_command("npx --version").await;
     let node = node && npx;
@@ -330,7 +374,12 @@ pub async fn lsp_check_runtime() -> Result<RuntimeCheck, String> {
         false
     };
 
-    Ok(RuntimeCheck { node, ts_ls, volar })
+    Ok(RuntimeCheck {
+        node,
+        ts_ls,
+        volar,
+        bundled_version: None,
+    })
 }
 
 /// 检测一个 shell 命令是否可执行（退出码 0 视为可用）
@@ -631,5 +680,103 @@ mod tests {
         let id1 = manager.alloc_id();
         let id2 = manager.alloc_id();
         assert_eq!(id2, id1 + 1);
+    }
+
+    #[test]
+    fn test_build_command_npx_fallback() {
+        // 无内置捆绑包：回退宿主 npx --no-install <包名> --stdio
+        let cmd = build_server_command(None, ServerType::Ts, "/tmp/ws");
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(cmd.get_program(), "npx");
+        }
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(args.contains(&"--no-install".to_string()));
+        assert!(args.contains(&"typescript-language-server".to_string()));
+        assert!(args.contains(&"--stdio".to_string()));
+    }
+
+    #[test]
+    fn test_build_command_uses_bundle() {
+        // 已安装内置捆绑包：直接用捆绑 Node 执行 server 入口
+        let rt = super::super::language_services::BundledRuntime {
+            version: "0.1.0".into(),
+            node_path: "/bundle/node/bin/node".into(),
+            ts_entry: "/bundle/node_modules/typescript-language-server/lib/node.js".into(),
+            vue_entry: "/bundle/node_modules/@vue/language-server/bin/vue-language-server.js"
+                .into(),
+        };
+        let cmd = build_server_command(Some(&rt), ServerType::Vue, "/ws");
+        assert_eq!(cmd.get_program(), "/bundle/node/bin/node");
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "/bundle/node_modules/@vue/language-server/bin/vue-language-server.js".to_string(),
+                "--stdio".to_string(),
+            ]
+        );
+    }
+
+    /// 端到端：用系统真实 node 模拟「捆绑包 node」，走完整启动链路
+    /// （命令构造 -> tokio spawn -> stdio 双向），验证捆绑包产物能真实驱动子进程。
+    /// 系统无 node 时跳过（CI 均自带 node）。
+    #[tokio::test]
+    async fn test_bundle_spawns_node_end_to_end() {
+        use std::path::PathBuf;
+
+        // 探测系统 node 绝对路径（捆绑包内的 node 与其等价）
+        let Ok(probe) = std::process::Command::new("node")
+            .arg("-p")
+            .arg("process.execPath")
+            .output()
+        else {
+            return;
+        };
+        if !probe.status.success() {
+            return;
+        }
+        let node_path = PathBuf::from(String::from_utf8_lossy(&probe.stdout).trim().to_string());
+        if !node_path.exists() {
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let fake_server = dir.path().join("server.js");
+        std::fs::write(&fake_server, "process.stdout.write('BUNDLE-OK\\n');").unwrap();
+
+        let rt = super::super::language_services::BundledRuntime {
+            version: "0.1.0".into(),
+            node_path,
+            ts_entry: fake_server.clone(),
+            vue_entry: fake_server.clone(),
+        };
+
+        let mut cmd = build_server_command(
+            Some(&rt),
+            ServerType::Ts,
+            dir.path().to_str().unwrap(),
+        );
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = tokio::process::Command::from(cmd)
+            .spawn()
+            .expect("捆绑包 node 应能启动子进程");
+        let stdout = child.stdout.take().expect("应能拿到 stdout");
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .await
+            .expect("应能从捆绑包子进程读到输出");
+        assert_eq!(line.trim(), "BUNDLE-OK");
+        let _ = child.kill().await;
     }
 }

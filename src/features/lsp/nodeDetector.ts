@@ -29,7 +29,12 @@ export async function detectRuntime(): Promise<RuntimeCheck> {
     })
     .catch(() => {
       // 检测失败，视为全部不可用
-      cached = { node: false, tsLs: false, volar: false };
+      cached = {
+        node: false,
+        tsLs: false,
+        volar: false,
+        bundledVersion: null,
+      };
       detecting = false;
       return cached;
     });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onScopeDispose, ref } from "vue";
 import { Check, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { THEME_LABELS } from "@/features/editor/theme";
@@ -13,6 +13,8 @@ import type { ThemeId, ThemeMeta, AiProviderId } from "@/shared/types";
 import { useI18n } from "@/i18n";
 import { PROVIDER_PRESETS, getPreset } from "@/features/ai/providers";
 import { getAiApiKey, setAiApiKey } from "@/shared/aiApi";
+import { lsInstaller } from "@/features/lsp/installer";
+import type { LsMirror } from "@/features/lsp/types";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -33,11 +35,39 @@ onMounted(async () => {
 // ==================== LSP 语言服务 ====================
 
 const lspRuntimeStatus = ref("");
+const ls = ref(lsInstaller.getState());
+const lsMirror = ref<LsMirror>("auto");
+const lsCustomBase = ref("");
 
+/** 镜像源选项 */
+const lsMirrorOptions = computed(() => [
+  { id: "auto" as LsMirror, label: t("lsp.mirrorAuto") },
+  { id: "github" as LsMirror, label: t("lsp.mirrorGithub") },
+  { id: "ghproxy" as LsMirror, label: t("lsp.mirrorGhproxy") },
+  { id: "custom" as LsMirror, label: t("lsp.mirrorCustom") },
+]);
+
+/** 安装进度百分比文案（阶段标题） */
+const lsPhaseText = computed(() => {
+  const labels: Record<string, string> = {
+    manifest: t("lsp.phaseManifest"),
+    download: t("lsp.phaseDownload"),
+    verify: t("lsp.phaseVerify"),
+    extract: t("lsp.phaseExtract"),
+    done: t("lsp.phaseDone"),
+  };
+  return labels[ls.value.phase] ?? "";
+});
+
+/** LSP 分区功能可用性：内置捆绑包安装成功，或宿主 Node + server 就绪 */
 async function updateLspStatus() {
   try {
     const { detectRuntime } = await import("@/features/lsp/nodeDetector");
     const r = await detectRuntime();
+    if (r.bundledVersion) {
+      lspRuntimeStatus.value = `${t("lsp.bundleReady")} v${r.bundledVersion}`;
+      return;
+    }
     if (!r.node) {
       lspRuntimeStatus.value = t("lsp.runtimeNoNode");
     } else if (!r.tsLs && !r.volar) {
@@ -62,6 +92,57 @@ async function toggleLsp(enabled: boolean) {
   }
   void updateLspStatus();
 }
+
+/** 刷新语言服务状态（远端清单 + 本地安装版本） */
+async function refreshLsStatus() {
+  await lsInstaller.refresh(lsMirror.value, lsCustomBase.value || null);
+  void updateLspStatus();
+}
+
+/** 一键安装 / 更新 */
+async function installLanguageServices() {
+  const ok = await lsInstaller.install(lsMirror.value, lsCustomBase.value || null);
+  if (!ok) {
+    workspace.showNotice(t("lsp.installFailed", { message: ls.value.error ?? "" }));
+    return;
+  }
+  workspace.showNotice(t("lsp.installed", { version: ls.value.status?.installedVersion ?? "" }));
+  // 安装完成后重启工作区 LSP，立即使用内置环境
+  const { lspManager } = await import("@/features/lsp/manager");
+  if (workspace.rootPath) {
+    await lspManager.stop();
+    await lspManager.start(workspace.rootPath);
+  }
+}
+
+/** 卸载 */
+async function uninstallLanguageServices() {
+  const ok = await lsInstaller.uninstall();
+  if (!ok) {
+    workspace.showNotice(t("lsp.uninstallFailed", { message: ls.value.error ?? "" }));
+    return;
+  }
+  workspace.showNotice(t("lsp.uninstalled"));
+  const { lspManager } = await import("@/features/lsp/manager");
+  if (workspace.rootPath) {
+    await lspManager.stop();
+    await lspManager.start(workspace.rootPath);
+  }
+}
+
+/** 切换镜像源后重新拉取状态 */
+function onMirrorChange() {
+  void refreshLsStatus();
+}
+
+onMounted(async () => {
+  ls.value = lsInstaller.getState();
+  const unsub = lsInstaller.subscribe((state) => {
+    ls.value = state;
+  });
+  onScopeDispose(unsub);
+  await refreshLsStatus();
+});
 
 // 设置页打开时检测运行时
 void updateLspStatus();
@@ -519,6 +600,107 @@ function onOverlayClick(event: MouseEvent) {
                 />
               </div>
               <p class="desc">{{ lspRuntimeStatus }}</p>
+
+              <!-- 内置语言服务捆绑包：一键安装 / 更新 / 卸载 -->
+              <div class="ls-bundle">
+                <p class="desc">
+                  {{ t("lsp.bundleDesc") }}
+                </p>
+
+                <!-- 安装进行中：进度条 -->
+                <div v-if="ls.busy" class="ls-progress">
+                  <div class="ls-progress-bar">
+                    <div class="ls-progress-fill" :style="{ width: `${ls.percent}%` }" />
+                  </div>
+                  <p class="desc">
+                    {{ lsPhaseText }} {{ ls.percent > 0 && ls.phase === 'download' ? ls.percent + '%' : '' }}
+                  </p>
+                </div>
+
+                <template v-else>
+                  <!-- 已安装：版本 + 更新 / 卸载 -->
+                  <div v-if="ls.status?.installedVersion" class="save-row">
+                    <div class="save-copy">
+                      <span class="field-label">
+                        {{ t("lsp.installedVersion", { version: ls.status.installedVersion }) }}
+                      </span>
+                      <p class="desc">
+                        <template v-if="ls.status.hasUpdate">
+                          {{ t("lsp.updateAvailable", { version: ls.status.latestVersion ?? "" }) }}
+                        </template>
+                        <template v-else>{{ t("lsp.latestVersion") }}</template>
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      class="ui-btn ghost"
+                      :disabled="!ls.status.hasUpdate"
+                      @click="installLanguageServices"
+                    >
+                      {{ ls.status.hasUpdate ? t("lsp.update") : t("lsp.installedTag") }}
+                    </button>
+                    <button
+                      type="button"
+                      class="ui-btn ghost danger"
+                      @click="uninstallLanguageServices"
+                    >
+                      {{ t("lsp.uninstall") }}
+                    </button>
+                  </div>
+
+                  <!-- 未安装：一键安装 -->
+                  <div v-else class="save-row">
+                    <div class="save-copy">
+                      <span class="field-label">{{ t("lsp.notInstalled") }}</span>
+                      <p class="desc">
+                        {{
+                          ls.status?.latestAvailable
+                            ? t("lsp.installHint", { version: ls.status.latestVersion ?? "" })
+                            : t("lsp.offlineHint")
+                        }}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      class="ui-btn primary"
+                      :disabled="!ls.status?.supported"
+                      @click="installLanguageServices"
+                    >
+                      {{ t("lsp.install") }}
+                    </button>
+                  </div>
+                </template>
+
+                <!-- 镜像源选择 -->
+                <label class="field delay-field">
+                  <span class="field-label">{{ t("lsp.mirror") }}</span>
+                  <p class="desc">{{ t("lsp.mirrorDesc") }}</p>
+                  <select class="ui-select" :value="lsMirror" @change="onMirrorChange">
+                    <option
+                      v-for="opt in lsMirrorOptions"
+                      :key="opt.id"
+                      :value="opt.id"
+                    >
+                      {{ opt.label }}
+                    </option>
+                  </select>
+                </label>
+
+                <!-- 自定义镜像地址 -->
+                <label v-if="lsMirror === 'custom'" class="field delay-field">
+                  <span class="field-label">{{ t("lsp.customBase") }}</span>
+                  <input
+                    v-model="lsCustomBase"
+                    type="text"
+                    class="ui-input"
+                    :placeholder="t('lsp.customBasePlaceholder')"
+                    @change="onMirrorChange"
+                  />
+                </label>
+
+                <!-- 安装错误提示 -->
+                <p v-if="ls.error" class="desc error-text">{{ ls.error }}</p>
+              </div>
             </div>
 
             <div class="ui-card section">
@@ -1176,5 +1358,75 @@ function onOverlayClick(event: MouseEvent) {
 /* 奇数个字段时（当前 5 个），最后一个跨全宽避免孤立 */
 .ai-params-grid > .field:last-child:nth-child(odd) {
   grid-column: 1 / -1;
+}
+
+/* ==================== 语言服务捆绑包 ==================== */
+
+.ls-bundle {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.ls-progress {
+  margin-top: 12px;
+}
+
+.ls-progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.ls-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+.error-text {
+  color: var(--danger, #e5534b);
+}
+
+.ui-btn {
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.ui-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ui-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ui-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-app);
+}
+
+.ui-btn.primary:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--bg-app);
+  opacity: 0.9;
+}
+
+.ui-btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger, #e5534b) 12%, transparent);
+  border-color: var(--danger, #e5534b);
+  color: var(--danger, #e5534b);
 }
 </style>

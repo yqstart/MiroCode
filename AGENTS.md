@@ -32,7 +32,7 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 - 桌面壳：Tauri 2
 - 前端：Vue 3 + TypeScript + Vite + Pinia
 - 编辑器内核：CodeMirror 6（高亮/折叠/诊断/补全/跳转）
-- LSP：Rust stdio transport 桥接 `typescript-language-server` + `@vue/language-server`（宿主提供 Node，缺则降级 v1 正则）
+- LSP：Rust stdio transport 桥接 `typescript-language-server` + `@vue/language-server`；启动优先**内置捆绑包**（设置内一键安装的 Node + 双 server，`app_data_dir/language-servers/`），未安装回退宿主 npx（缺则降级 v1 正则）
 - AI 补全：Rust reqwest 流式 + SSE 推送，ghost text 渲染（DeepSeek / 自定义 provider）
 - 搜索：Rust walk + 模糊/内容检索/替换（async + LRU 缓存）
 - Git：Rust `git2`（日常操作 + 冲突解决）
@@ -54,7 +54,7 @@ src-tauri/             # Tauri 后端、Git/搜索命令、PTY 插件、LSP tran
 
 Git（`features/git`）对标 **VS Code Source Control + Git Graph**：左侧 Commit（暂存的更改 / 更改分组 + 行内暂存·回滚 + 点选打开编辑区 Diff + Rebase Continue/Abort）；编辑区标签 **Git Log**（过滤 / 详情侧栏 / Revert / Cherry-pick / Checkout / New Branch / Diff / Interactive Rebase）；Branches 弹层（Compare/Upstream/删远程）；冲突分栏（Base/导航）；⌘K 打开 Commit；活动栏 Project / Commit / History。
 
-LSP（`features/lsp`）二期已接入：Rust transport 层（`src-tauri/src/commands/lsp.rs`）管理 `typescript-language-server` + `@vue/language-server` 子进程，stdio JSON-RPC + Content-Length 分帧；前端 `lsp/` 模块封装 LanguageClient 生命周期 + 文档同步 + 多 server 路由；`lspExtension.ts` 桥接 CodeMirror 6 的 7 项能力（hover/签名/补全/诊断/跳转/引用/重命名）。宿主提供 Node + 检测降级回 v1 正则方案。
+LSP（`features/lsp`）二期已接入：Rust transport 层（`src-tauri/src/commands/lsp.rs`）管理 `typescript-language-server` + `@vue/language-server` 子进程，stdio JSON-RPC + Content-Length 分帧；前端 `lsp/` 模块封装 LanguageClient 生命周期 + 文档同步 + 多 server 路由；`lspExtension.ts` 桥接 CodeMirror 6 的 7 项能力（hover/签名/补全/诊断/跳转/引用/重命名）。**启动策略**：优先内置捆绑包（`commands/language_services.rs`：设置内一键安装的 Node + 双 server，存 `app_data_dir/language-servers/`，多镜像下载 + sha256 校验 + 解压激活），未安装回退宿主 npx；产物由 `.github/workflows/language-servers.yml` 独立发布到 GitHub Release 固定 tag `language-servers`（`ls-latest.json` 版本清单，5 平台）。
 
 AI 行内补全（`features/ai` + `features/editor/aiCompletion`）：ghost text 形态，类似 GitHub Copilot。Rust 层（`src-tauri/src/commands/ai.rs`）用 reqwest 流式请求 AI 服务，tokio 读 SSE 逐 chunk `app.emit("ai://delta/{req_id}")`（复刻 LSP `spawn_read_loop`）；前端 `ai/manager.ts` 单例照搬 LspManager 状态机 + 防抖取消；`aiCompletion/ghostTextExtension.ts` 用 CodeMirror 6 `Decoration.widget` + `WidgetType` 渲染 ghost text（CM6 无原生 inline API）+ Tab 接受 / Esc 取消 keymap（`Prec.highest` 抢占，LSP popup 打开时不拦截）；多 provider 预设（DeepSeek `deepseek-v4-pro` / 自定义），FIM 模式走标准 `/completions` 端点（prompt+suffix，API 服务器内部处理 FIM token，前端不拼 `<|fim_begin|>` 等 token）；API Key 存 `~/.mirocode/ai-credentials.json`（0600，复刻 SSH 凭据模式），不进 localStorage；设置面板 AI 配置分区 + 状态栏 AI 指示器。
 

@@ -1,0 +1,154 @@
+# 语言服务捆绑包：打包 5 平台产物并发布到 GitHub Release
+# 触发：Actions 页手动 Run workflow（填版本号），或推送 language-servers-* 标签
+# 说明：产物（内含便携 Node + TS/Vue language server）由应用内「设置 → 语言服务 → 一键安装」拉取；
+#       安装包本体保持轻量，不捆绑任何语言服务。
+# 国内访问：应用端默认「自动」模式先走 GitHub 官方，失败自动切换 ghfast.top 加速镜像。
+
+name: Language Services
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "捆绑包版本（如 0.1.0；更新语言服务时递增）"
+        required: true
+        default: "0.1.0"
+  push:
+    tags:
+      - "language-servers-*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: language-servers
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Bundle (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            platform: macos-latest
+            ls_platform: darwin-arm64
+          - name: macOS Intel
+            platform: macos-15-intel
+            ls_platform: darwin-x64
+          - name: Linux x64
+            platform: ubuntu-22.04
+            ls_platform: linux-x64
+          - name: Windows x64
+            platform: windows-latest
+            ls_platform: win32-x64
+          # Linux ARM64 产物（ARM 服务器 / 部分 Chromebook）
+          - name: Linux ARM64
+            platform: ubuntu-22.04-arm
+            ls_platform: linux-arm64
+
+    runs-on: ${{ matrix.platform }}
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve bundle version
+        id: version
+        shell: bash
+        run: |
+          VERSION="${{ inputs.version }}"
+          # 标签触发时（language-servers-0.2.0）从标签取版本
+          if [ -z "$VERSION" ]; then
+            VERSION="${GITHUB_REF_NAME#language-servers-}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install zip (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Build bundle
+        shell: bash
+        run: |
+          mkdir -p dist/ls
+          node scripts/language-servers/build.mjs \
+            --platform ${{ matrix.ls_platform }} \
+            --version ${{ steps.version.outputs.version }} \
+            --out dist/ls
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ls-${{ matrix.ls_platform }}
+          path: |
+            dist/ls/language-servers-${{ steps.version.outputs.version }}-${{ matrix.ls_platform }}.zip
+            dist/ls/language-servers-${{ steps.version.outputs.version }}-${{ matrix.ls_platform }}.zip.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/ls
+          merge-multiple: true
+
+      - name: Generate ls-latest.json
+        run: node scripts/language-servers/merge.mjs --version ${{ needs.build.outputs.version }} --dir dist/ls
+
+      # 固定 tag「language-servers」：每次发布覆盖更新该 Release，
+      # 应用端通过 latest/download/language-servers/ls-latest.json 直接拉最新。
+      - name: Create / update Release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="language-servers"
+          VERSION="${{ needs.build.outputs.version }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "已存在 Release $TAG，删除旧产物后重新上传"
+            gh release delete "$TAG" --yes --cleanup-tag
+          fi
+          gh release create "$TAG" \
+            --title "Language Servers $VERSION" \
+            --notes "内置语言服务捆绑包 v$VERSION（Node + typescript-language-server + @vue/language-server）。由 Miro Code 设置内「一键安装」拉取。" \
+            dist/ls/language-servers-$VERSION-*.zip \
+            dist/ls/ls-latest.json
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "已发布语言服务捆绑包 v${{ needs.build.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- ls-latest.json：https://github.com/${{ github.repository }}/releases/latest/download/language-servers/ls-latest.json" >> "$GITHUB_STEP_SUMMARY"

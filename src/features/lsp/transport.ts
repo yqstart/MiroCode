@@ -8,7 +8,46 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { RuntimeCheck, ServerType } from "./types";
+import type {
+  LsMirror,
+  LsProgressEvent,
+  LsStatus,
+  RuntimeCheck,
+  ServerType,
+} from "./types";
+
+// ==================== 语言服务捆绑包 ====================
+
+/**
+ * 查询语言服务捆绑包状态（本地安装版本 + 远端最新版本）。
+ * 参数 camelCase 会自动映射到 Rust 侧 snake_case 同名参数。
+ */
+export async function getLsStatus(
+  mirror: LsMirror,
+  customBase?: string | null,
+): Promise<LsStatus> {
+  return invoke<LsStatus>("ls_status", { mirror, customBase: customBase ?? null });
+}
+
+/** 一键安装 / 更新语言服务捆绑包，返回激活版本 */
+export async function installLs(
+  mirror: LsMirror,
+  customBase?: string | null,
+): Promise<string> {
+  return invoke<string>("ls_install", { mirror, customBase: customBase ?? null });
+}
+
+/** 卸载语言服务捆绑包 */
+export async function uninstallLs(): Promise<void> {
+  return invoke("ls_uninstall");
+}
+
+/** 监听语言服务安装进度 */
+export async function onLsProgress(
+  handler: (event: LsProgressEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<LsProgressEvent>("ls://progress", (e) => handler(e.payload));
+}
 
 // ==================== invoke 封装 ====================
 
