@@ -15,6 +15,15 @@
   - **LSP 补全兼容**：ghost text 与 LSP popup 走不同 UI 通道不冲突；Tab 用 `Prec.highest` 抢占，LSP popup 打开时不拦截
   - **设置面板**：新增 AI 配置分区（开关 / provider / API Key / 地址 / 模型 / 模式 / 多行策略 / 防抖延迟 / token 预算 / 温度 / 测试连接）
   - **状态栏指示器**：显示 AI 状态（就绪 / 思考中 / 错误）
+  - **补全增强（二期）**：
+    - 多行策略生效：never 单行 / auto 启发式（注释、已闭合语句走单行，未闭合括号、函数签名走多行）/ always 多行，经 `stop` token 控制
+    - Prompt Token 预算裁剪：超预算时 prefix 保底部、suffix 保顶部（贴近光标最重要）
+    - Contextual Filter 触发前过滤：语句已闭合 / 纯注释行跳过请求，避免劣质补全
+    - 后处理：剥代码块围栏（```）、多余闭合括号截断、重复片段去重
+    - Rust 侧取消在途请求（`ai_cancel`）：前端继续输入时终止流读取循环
+    - 流式过滤管道：行级稳定更新（完整行才重绘 ghost text）+ 300ms 首字提示（`showWhateverMs`）
+    - 跨文件 snippet 上下文：从已打开的同语言文件按行重叠率抽取相似片段拼入 prompt
+    - 测试连接优化：首个 delta 到达即判成功（10 秒超时兜底）
 
 ## [0.10.1] - 2026-08-10
 
