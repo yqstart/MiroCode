@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   ArrowUp,
   Download,
@@ -20,6 +21,7 @@ import {
   sftpRename,
   sftpUpload,
   type SftpEntry,
+  type SftpUploadProgress,
   type SshConnectConfig,
 } from "@/shared/sshApi";
 import FileTypeIcon from "@/shared/FileTypeIcon.vue";
@@ -48,6 +50,9 @@ const downloading = ref(false);
 const notice = ref("");
 const error = ref("");
 const selectedPath = ref<string | null>(null);
+/** 当前上传文件进度（多文件逐个上传，显示进行中的那个） */
+const uploadProgress = ref<{ name: string; written: number; total: number } | null>(null);
+let unlistenUpload: UnlistenFn | null = null;
 
 type MenuState = {
   x: number;
@@ -319,6 +324,7 @@ async function onUpload() {
   if (!selected) return;
   const files = Array.isArray(selected) ? selected : [selected];
   uploading.value = true;
+  uploadProgress.value = null;
   error.value = "";
   let ok = 0;
   try {
@@ -326,6 +332,7 @@ async function onUpload() {
       const name = basename(local);
       const remote =
         cwd.value === "/" ? `/${name}` : `${cwd.value.replace(/\/+$/, "")}/${name}`;
+      uploadProgress.value = { name, written: 0, total: 0 };
       await sftpUpload(props.sessionId, local, remote);
       ok += 1;
     }
@@ -335,8 +342,16 @@ async function onUpload() {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     uploading.value = false;
+    uploadProgress.value = null;
   }
 }
+
+/** 已上传百分比（total 未知时返回 null，进度条走不确定态） */
+const uploadPercent = computed(() => {
+  const p = uploadProgress.value;
+  if (!p || p.total <= 0) return null;
+  return Math.min(100, Math.round((p.written / p.total) * 100));
+});
 
 async function onDisconnect() {
   await sftpClose(props.sessionId);
@@ -349,6 +364,18 @@ function onDocClick() {
 
 onMounted(async () => {
   document.addEventListener("click", onDocClick);
+  unlistenUpload = await listen<SftpUploadProgress>(
+    `sftp://progress/${props.sessionId}`,
+    (event) => {
+      const p = event.payload;
+      if (!p || typeof p.written !== "number") return;
+      if (!uploadProgress.value || uploadProgress.value.name !== basename(p.localPath)) {
+        uploadProgress.value = { name: basename(p.localPath), written: p.written, total: p.total };
+      } else {
+        uploadProgress.value = { ...uploadProgress.value, written: p.written, total: p.total };
+      }
+    },
+  ).catch(() => null);
   try {
     const pwd = await sftpPwd(props.sessionId);
     await loadDir(pwd || "/");
@@ -360,6 +387,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   document.removeEventListener("click", onDocClick);
+  unlistenUpload?.();
+  unlistenUpload = null;
   void sftpClose(props.sessionId);
 });
 </script>
@@ -412,6 +441,22 @@ onBeforeUnmount(() => {
 
     <p v-if="notice" class="notice">{{ notice }}</p>
     <p v-if="error" class="error">{{ error }}</p>
+
+    <div v-if="uploadProgress" class="upload-progress">
+      <span class="upload-name" :title="uploadProgress.name">
+        {{ t("sftp.uploading") }} {{ uploadProgress.name }}
+      </span>
+      <div class="progress-track">
+        <div
+          class="progress-fill"
+          :class="{ indeterminate: uploadPercent === null }"
+          :style="uploadPercent !== null ? { width: `${uploadPercent}%` } : undefined"
+        />
+      </div>
+      <span v-if="uploadPercent !== null" class="upload-pct">
+        {{ uploadPercent }}%
+      </span>
+    </div>
 
     <div class="list">
       <button
@@ -604,6 +649,62 @@ onBeforeUnmount(() => {
   padding: 6px 12px;
   font-size: 12px;
   color: var(--danger);
+}
+
+.upload-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+
+.upload-name {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.progress-track {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.15s ease;
+}
+
+.progress-fill.indeterminate {
+  width: 30%;
+  animation: upload-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes upload-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
+.upload-pct {
+  flex-shrink: 0;
+  min-width: 38px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .list {

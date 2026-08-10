@@ -877,6 +877,7 @@ pub fn sftp_pwd(state: State<'_, SshState>, id: String) -> CmdResult<String> {
 
 #[tauri::command]
 pub fn sftp_upload(
+    app: AppHandle,
     state: State<'_, SshState>,
     id: String,
     local_path: String,
@@ -888,7 +889,13 @@ pub fn sftp_upload(
         .get(&id)
         .ok_or_else(|| "SFTP 会话不存在".to_string())?;
 
-    with_sftp_io(&session.backend, |sftp| {
+    let total = std::fs::metadata(&local_path)
+        .map_err(|e| format!("读取本地文件失败: {e}"))?
+        .len();
+    let event = format!("sftp://progress/{id}");
+    let mut last_emit = std::time::Instant::now() - Duration::from_millis(500);
+
+    with_sftp_io(&session.backend, move |sftp| {
         let mut local =
             std::fs::File::open(&local_path).map_err(|e| format!("打开本地文件失败: {e}"))?;
         let mut remote = sftp
@@ -896,6 +903,7 @@ pub fn sftp_upload(
             .map_err(|e| format!("创建远程文件失败: {e}"))?;
 
         let mut buf = [0u8; 64 * 1024];
+        let mut written: u64 = 0;
         loop {
             let n = local
                 .read(&mut buf)
@@ -906,7 +914,30 @@ pub fn sftp_upload(
             remote
                 .write_all(&buf[..n])
                 .map_err(|e| format!("写入远程文件失败: {e}"))?;
+            written += n as u64;
+            // 节流：每 150ms 推一次进度，避免大文件高频事件拖垮前端
+            if last_emit.elapsed() >= Duration::from_millis(150) {
+                last_emit = std::time::Instant::now();
+                let _ = app.emit(
+                    &event,
+                    serde_json::json!({
+                        "localPath": local_path,
+                        "remotePath": remote_path,
+                        "written": written,
+                        "total": total,
+                    }),
+                );
+            }
         }
+        let _ = app.emit(
+            &event,
+            serde_json::json!({
+                "localPath": local_path,
+                "remotePath": remote_path,
+                "written": written,
+                "total": total,
+            }),
+        );
         Ok(())
     })
 }

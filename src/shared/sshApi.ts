@@ -38,6 +38,14 @@ export interface SftpEntry {
   size: number;
 }
 
+/** SFTP 上传进度事件负载（事件名 `sftp://progress/{sessionId}`） */
+export interface SftpUploadProgress {
+  localPath: string;
+  remotePath: string;
+  written: number;
+  total: number;
+}
+
 export async function sshShellOpen(
   id: string,
   config: SshConnectConfig,
