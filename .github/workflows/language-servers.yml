@@ -29,25 +29,21 @@ jobs:
     name: ${{ matrix.language }} (${{ matrix.name }})
     strategy:
       fail-fast: false
+      # 显式列出全部 5 平台 × N 语言组合（GitHub Actions 的 include 不与数组做笛卡尔积，
+      # 必须每个组合都显式声明 language / platform / ls_platform）
       matrix:
-        language: [ts, vue]
         include:
-          - name: macOS Apple Silicon
-            platform: macos-latest
-            ls_platform: darwin-arm64
-          - name: macOS Intel
-            platform: macos-15-intel
-            ls_platform: darwin-x64
-          - name: Linux x64
-            platform: ubuntu-22.04
-            ls_platform: linux-x64
-          - name: Windows x64
-            platform: windows-latest
-            ls_platform: win32-x64
+          - { language: ts, name: macOS Apple Silicon, platform: macos-latest, ls_platform: darwin-arm64 }
+          - { language: vue, name: macOS Apple Silicon, platform: macos-latest, ls_platform: darwin-arm64 }
+          - { language: ts, name: macOS Intel, platform: macos-15-intel, ls_platform: darwin-x64 }
+          - { language: vue, name: macOS Intel, platform: macos-15-intel, ls_platform: darwin-x64 }
+          - { language: ts, name: Linux x64, platform: ubuntu-22.04, ls_platform: linux-x64 }
+          - { language: vue, name: Linux x64, platform: ubuntu-22.04, ls_platform: linux-x64 }
+          - { language: ts, name: Windows x64, platform: windows-latest, ls_platform: win32-x64 }
+          - { language: vue, name: Windows x64, platform: windows-latest, ls_platform: win32-x64 }
           # Linux ARM64 产物（ARM 服务器 / 部分 Chromebook）
-          - name: Linux ARM64
-            platform: ubuntu-22.04-arm
-            ls_platform: linux-arm64
+          - { language: ts, name: Linux ARM64, platform: ubuntu-22.04-arm, ls_platform: linux-arm64 }
+          - { language: vue, name: Linux ARM64, platform: ubuntu-22.04-arm, ls_platform: linux-arm64 }
 
     runs-on: ${{ matrix.platform }}
 
