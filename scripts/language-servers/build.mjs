@@ -160,8 +160,14 @@ async function main() {
   if (pkg.archive === "tar") {
     run("tar", ["-xzf", nodeArchive, "--strip-components=1", "-C", nodeDir]);
   } else {
-    // Windows：bsdtar 支持 zip
-    run("tar", ["-xf", nodeArchive, "--strip-components=1", "-C", nodeDir]);
+    // Windows：bsdtar/GNU tar 都支持 zip；--force-local 防止 Git Bash 的 GNU tar
+    // 把盘符路径（D:\...）误当作远程主机（"Cannot connect to D: resolve failed"）
+    run("tar", [
+      "-xf", nodeArchive,
+      "--force-local",
+      "--strip-components=1",
+      "-C", nodeDir,
+    ]);
   }
 
   // 3. 安装该语言的 language server 包到 staging/node_modules
