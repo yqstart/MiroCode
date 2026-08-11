@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
-use super::path_util::{ensure_inside_workspace, is_ignored_name, normalize};
+use super::path_util::{ensure_inside_workspace, is_tree_ignored, normalize};
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -34,7 +34,7 @@ pub fn list_dir(
     for item in rd {
         let item = item.map_err(|e| e.to_string())?;
         let name = item.file_name().to_string_lossy().to_string();
-        if is_ignored_name(&name, &extra) {
+        if is_tree_ignored(&name, &extra) {
             continue;
         }
         let file_type = item.file_type().map_err(|e| e.to_string())?;

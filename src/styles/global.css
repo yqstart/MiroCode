@@ -14,14 +14,18 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
+  /* 强制让 <html>/<body>/#app 跟随主题背景；避免主题切换时背景色滞后 */
+  background: var(--bg-app);
 }
 
 body {
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
   color: var(--text-primary);
   background: var(--bg-app);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   user-select: none;
 }
 
@@ -60,15 +64,22 @@ button {
   padding: 0;
 }
 
+/* ==================== 统一选区色（避免散落设置） ==================== */
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--text-primary);
+}
+
 :focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
-/* ==================== 全局细滚动条 ==================== */
+/* ==================== 全局细滚动条（macOS overlay 风格） ====================
+   非滚动态不显；hover 时显隐。Firefox 用 scrollbar-color。 */
 * {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--text-muted) 55%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 45%, transparent) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -81,14 +92,22 @@ button {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  background: transparent;
   border-radius: var(--scrollbar-radius);
   border: 1px solid transparent;
+  background-clip: content-box;
+  transition: background var(--transition-fast);
+}
+
+/* 滚动时显隐：hover 容器 / 主动滚动 / focus 容器 时显示 */
+*:hover::-webkit-scrollbar-thumb,
+*:focus-within::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 40%, transparent);
   background-clip: content-box;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--text-secondary) 70%, transparent);
+  background: color-mix(in srgb, var(--text-secondary) 65%, transparent);
   background-clip: content-box;
 }
 
@@ -96,39 +115,55 @@ button {
   background: transparent;
 }
 
-/* ==================== 通用控件 ==================== */
+/* ==================== 通用卡片 ==================== */
 .ui-card {
   background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
 }
 
+/* ==================== 通用输入 / 下拉 ==================== */
 .ui-input,
 .ui-select {
-  height: 34px;
-  padding: 0 12px;
+  height: 36px;
+  padding: 0 14px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-app);
+  border: 1px solid transparent;     /* 占位边框，避免 focus 时跳动 */
+  background: var(--bg-elevated);
   color: var(--text-primary);
+  box-shadow: 0 0 0 0.5px var(--border-subtle);  /* 用 0.5px 阴影表达边线（聚焦时不会跳） */
+  transition: box-shadow var(--transition-fast);
+}
+
+.ui-input:hover,
+.ui-select:hover {
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--text-muted) 50%, var(--border-subtle));
+}
+
+.ui-input:focus,
+.ui-select:focus {
+  outline: none;
+  box-shadow: 0 0 0 0.5px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .ui-select {
   appearance: none;
   padding-right: 28px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238e8e93' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 8px center;
 }
 
+/* ==================== 通用开关 ==================== */
 .ui-toggle {
   position: relative;
-  width: 40px;
-  height: 22px;
+  width: 42px;
+  height: 24px;
   border-radius: 999px;
-  background: var(--border-subtle);
+  background: color-mix(in srgb, var(--text-muted) 30%, transparent);
   transition: background var(--transition-fast);
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .ui-toggle[data-on="true"] {
@@ -140,19 +175,77 @@ button {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  background: #fff;
-  transition: transform var(--transition-fast);
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  transition: transform var(--transition-fast) var(--ease-out);
 }
 
 .ui-toggle[data-on="true"]::after {
   transform: translateX(18px);
 }
 
+/* ==================== 通用按钮（新增；本次不替换组件内部） ====================
+   提供 .ui-btn / .ui-btn-primary / .ui-btn-ghost / .ui-btn-danger 四态，
+   未来组件可逐步替换内联 .btn 定义。 */
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+  white-space: nowrap;
+}
+
+.ui-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ui-btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: 1px solid transparent;
+}
+
+.ui-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.ui-btn-ghost {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.ui-btn-ghost:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.ui-btn-danger {
+  background: var(--danger);
+  color: #ffffff;
+  border: 1px solid transparent;
+}
+
+.ui-btn-danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
 /* ==================== 通用动效关键帧 ====================
-   供各组件 scoped 样式引用（scoped 可引用全局 @keyframes） */
+   缓动由调用方的 animation 简写控制（这里用 --ease-out）。
+   4 个关键帧供各组件 scoped 样式引用。 */
 @keyframes miro-overlay-in {
   from {
     opacity: 0;

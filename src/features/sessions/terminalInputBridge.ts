@@ -96,12 +96,11 @@ export function attachTerminalInputBridge(
     lastWriteAt: 0,
     lastTabAt: 0,
     /**
-     * 删除键处理后置 true：吞掉紧随其后的那一次误插空白。
-     * dev 下 keydown 的 preventDefault 通常已拦截，此处为兜底——
-     * 打包环境（自定义协议 WKWebView）preventDefault 未必可靠，
-     * 浏览器仍会把删除键误插成空格，导致「删 N 个字符多出 N 个字符」。
+     * 删除/Tab 键 keydown 后置 true：在 beforeinput 源头吞掉浏览器对 textarea
+     * 的误插（WKWebView 下 keydown 的 preventDefault 不可靠）。
+     * keydown 与 beforeinput 严格 1:1 配对，单次标志安全可靠。
      */
-    suppressNextWhitespace: false,
+    suppressNextInsert: false,
   };
 
   function rawWrite(data: string) {
@@ -145,11 +144,17 @@ export function attachTerminalInputBridge(
       rawWrite(data);
       return;
     }
+    // 删除控制字符：xterm custom handler 返回 true 后经 onData 派发，
+    // 用 rawWrite 绕过 safeWrite 去重，保证按住删除键可连续删除。
+    if (data === "\x7f" || data === "\x1b[3~") {
+      rawWrite(data);
+      return;
+    }
     const now = performance.now();
+    // 删除/Tab 后的误插空白兜底（主防线在 beforeinput，此处为副防线）
     if (
       isWhitespaceOnly(data) &&
-      (now - ime.lastCompositionEndAt < 220 ||
-        now - ime.lastDeleteAt < 140)
+      (now - ime.lastCompositionEndAt < 300 || now - ime.lastDeleteAt < 300)
     ) {
       return;
     }
@@ -160,11 +165,6 @@ export function attachTerminalInputBridge(
         now - ime.last229At < 450)
     ) {
       return;
-    }
-    // 删除键后的那次误插空白：无论时间窗如何，只要标志位为真即吞掉
-    if (ime.suppressNextWhitespace) {
-      ime.suppressNextWhitespace = false;
-      if (isWhitespaceOnly(data)) return;
     }
     safeWrite(data);
   });
@@ -182,7 +182,11 @@ export function attachTerminalInputBridge(
   textarea.addEventListener("compositionstart", markCompositionStart, true);
   textarea.addEventListener("compositionend", markCompositionEnd, true);
   cleanups.push(() => {
-    textarea.removeEventListener("compositionstart", markCompositionStart, true);
+    textarea.removeEventListener(
+      "compositionstart",
+      markCompositionStart,
+      true,
+    );
     textarea.removeEventListener("compositionend", markCompositionEnd, true);
   });
 
@@ -194,12 +198,11 @@ export function attachTerminalInputBridge(
       const ie = ev as InputEvent;
       if (ie.isComposing) return;
       const now = performance.now();
-      // 删除键后的误插空白：打包环境 preventDefault 不可靠，浏览器对 textarea 的
-      // input 事件可能绕过 custom key handler 直达此处（onData 收不到、标志无人消费），
-      // 导致「删一个字符出一个空格」。删除时间窗内（或标志残留）的空白/删除类
-      // input 一律拦截并复位标志；真实输入（非空白）正常放行。
-      if (ime.suppressNextWhitespace || now - ime.lastDeleteAt < 140) {
-        ime.suppressNextWhitespace = false;
+      // 删除/Tab 后的误插空白兜底（主防线在 beforeinput，此处为副防线）：
+      // 打包环境 preventDefault 不可靠时，浏览器对 textarea 的 input 事件
+      // 可能绕过 beforeinput 直达此处。删除时间窗内的空白/删除类 input 一律拦截。
+      if (ime.suppressNextInsert || now - ime.lastDeleteAt < 300) {
+        ime.suppressNextInsert = false;
         if (
           !ie.data ||
           isWhitespaceOnly(ie.data) ||
@@ -235,8 +238,19 @@ export function attachTerminalInputBridge(
   const onBeforeInput = (ev: InputEvent) => {
     if (tuiMode) return;
     if (ev.isComposing || ime.composing) return;
+    // 主防线：删除/Tab 键 keydown 后，浏览器试图往 textarea 插入内容时
+    // 在源头拦截。beforeinput 先于 input 触发，preventDefault 可阻止
+    // textarea 插入 -> 断绝 xterm _inputEvent 二次派发空白的路径。
+    // keydown 与 beforeinput 严格 1:1 配对，单次标志安全可靠。
+    if (ime.suppressNextInsert) {
+      ime.suppressNextInsert = false;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      textarea.value = "";
+      return;
+    }
     if (ev.inputType !== "insertText" || !ev.data) return;
-    const afterDelete = performance.now() - ime.lastDeleteAt < 140;
+    const afterDelete = performance.now() - ime.lastDeleteAt < 300;
     const afterComposition = performance.now() - ime.lastCompositionEndAt < 450;
     const after229 = performance.now() - ime.last229At < 450;
     if (isImeApostrophe(ev.data) && (afterComposition || after229)) {
@@ -295,9 +309,23 @@ export function attachTerminalInputBridge(
 
     const isBackspace = e.code === "Backspace" || e.key === "Backspace";
     const isDelete = e.code === "Delete" || e.key === "Delete";
-    if (!isBackspace && !isDelete) return true;
+    const isTab = e.code === "Tab" || e.key === "Tab";
+
+    // 其他普通按键 keydown：清除误插拦截标志（仅删除/Tab 才需要拦截）
+    if (!isBackspace && !isDelete && !isTab) {
+      ime.suppressNextInsert = false;
+    }
+
+    if (!isBackspace && !isDelete) {
+      // Tab 键：设标志让 beforeinput 吞掉浏览器对 textarea 的误插
+      if (isTab) ime.suppressNextInsert = true;
+      return true;
+    }
 
     ime.lastDeleteAt = performance.now();
+    // 设标志：beforeinput 源头拦截浏览器对 textarea 的误插（WKWebView 下
+    // keydown 的 preventDefault 不可靠，beforeinput.preventDefault 更可靠）。
+    ime.suppressNextInsert = true;
 
     if (e.isComposing || ime.composing) {
       return false;
@@ -308,14 +336,13 @@ export function attachTerminalInputBridge(
       return true;
     }
 
-    // 统一由本桥接处理纯删除键：直接写控制字符并阻止浏览器默认，
-    // 避免 WKWebView 把 Backspace 上报为空格等错误输入（「按删除键出空格」根因）。
-    // 用 rawWrite 绕过 safeWrite 去重，保证按住删除键可连续删除。
-    rawWrite(isBackspace ? "\x7f" : "\x1b[3~");
-    ime.suppressNextWhitespace = true;
-    textarea.value = "";
-    e.preventDefault();
-    return false;
+    // 返回 true 让 xterm 走完整 _keyDown 流程：
+    // 1. xterm 自己 triggerDataEvent('\x7f') 经 onData 派发正确控制字符
+    // 2. xterm 自己 cancel(event, true) 调 preventDefault（比 JS 手动调更可靠）
+    // 之前的方案返回 false + 手动 rawWrite + 手动 preventDefault，
+    // 导致 xterm 不调自身 preventDefault，WKWebView 下 textarea 被插入空格，
+    // 经 xterm _inputEvent 二次派发泄漏到 SSH（「删除变空格」根因）。
+    return true;
   });
 
   cleanups.push(() => syncTuiChrome(term, false));

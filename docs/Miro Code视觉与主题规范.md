@@ -1,6 +1,13 @@
 # Miro Code 视觉与主题规范
 
 > 本文档描述**已定版**的四套主题、语义 token 与视觉规范，色值与 `src/styles/themes.css`、`src/features/editor/theme.ts` 一一对应。
+>
+> 2026-08-11 重做：设计语言基线改为 **Mac 原生风**（Arc / Linear / macOS Sonoma+ Big Sur 后 modernUI 路线）：
+> - 圆角上调：8/10/12/16 → **10/12/14/18**
+> - 背景层级明度差拉到 +12/+13 阶
+> - 边线改极淡半透明（深色 5% / 浅色 8%）+ 0.5px ring 表达
+> - 阴影 3 级 + ring，柔和浮起
+> - 输入/开关控件用 box-shadow ring 表达边线（聚焦不跳）
 
 ---
 
@@ -37,41 +44,43 @@
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--bg-app` | `#0f0f12` | 应用底 |
-| `--bg-header` | `#1a1a20` | macOS Overlay 标题栏底色 |
-| `--bg-panel` | `#16161a` | 侧栏 / 面板 |
-| `--bg-elevated` | `#1c1c22` | 卡片 / 输入底 |
-| `--bg-editor` | `#0f0f12` | 编辑区 |
-| `--bg-terminal` | `#0c0c10` | 终端底 |
-| `--bg-overlay` | `rgba(0,0,0,.45)` | 弹层遮罩 |
-| `--border-subtle` | `#2a2a32` | 分割线、卡片边 |
-| `--text-primary` | `#fafafa` | 标题、主文案 |
-| `--text-secondary` | `#d4d4d8` | 说明、次级信息 |
-| `--text-muted` | `#a1a1aa` | 占位、未激活 |
+| `--bg-app` | `#0d0d10` | 应用底（最深） |
+| `--bg-header` | `#16161a` | 标题栏底 |
+| `--bg-panel` | `#1a1a1f` | 侧栏 / 面板 |
+| `--bg-elevated` | `#22222a` | 卡片 / 浮起容器 |
+| `--bg-editor` | `#0d0d10` | CodeMirror 区 |
+| `--bg-terminal` | `#0a0a0d` | xterm 区 |
+| `--bg-overlay` | `rgba(0,0,0,.55)` | 弹层遮罩 |
+| `--border-subtle` | `color-mix(in srgb, #ffffff 8%, transparent)` | 极细半透明白边 |
+| `--text-primary` | `#f5f5f7` | macOS label |
+| `--text-secondary` | `#c7c7cc` | macOS secondary label |
+| `--text-muted` | `#8e8e93` | macOS tertiary label |
 | `--accent` | `#8b5cf6` | 主强调（紫） |
-| `--accent-soft` | `rgba(139,92,246,.16)` | 选中行 / 侧栏激活底 |
+| `--accent-soft` | `rgba(139,92,246,.14)` | 选中行 / 侧栏激活底 |
 | `--accent-fg` | `#ffffff` | 强调色上的字 |
 | `--success` | `#34d399` | 成功 / Git 已暂存 |
 | `--warning` | `#fbbf24` | 警告 |
 | `--danger` | `#f87171` | 错误 / 删除 |
 | `--focus-ring` | `rgba(139,92,246,.45)` | 焦点 |
-| `--shadow-card` | `none` | 深色不依赖投影 |
+| `--shadow-card` | `0 1px 2px rgba(0,0,0,.2)` | 极轻浮起 |
+| `--shadow-popover` | `0 8px 24px rgba(0,0,0,.32), 0 1px 2px rgba(0,0,0,.12)` | 弹层 / 右键菜单 |
+| `--shadow-modal` | `0 24px 64px rgba(0,0,0,.5), 0 4px 12px rgba(0,0,0,.2)` | 弹层更强 |
 
-### 3.2 Miro Dawn（`dawn`，浅色）
+### 3.2 Miro Dawn（`dawn`，浅色 / 雾白）
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--bg-app` | `#f7f8fa` | 应用底（干净雾白） |
-| `--bg-header` | `#e8eaef` | 标题栏底色（仅最顶系统栏） |
+| `--bg-app` | `#f5f5f7` | 应用底（macOS 标准雾白） |
+| `--bg-header` | `#ebebed` | 标题栏底 |
 | `--bg-panel` | `#ffffff` | 侧栏 / 面板 |
 | `--bg-elevated` | `#ffffff` | 卡片 |
-| `--bg-editor` | `#ffffff` | 编辑区纯白 |
-| `--bg-terminal` | `#e8ecf1` | 终端底（略深，提升输出对比） |
-| `--bg-overlay` | `rgba(15,23,42,.32)` | 遮罩 |
-| `--border-subtle` | `#e6e8ec` | 边框 |
-| `--text-primary` | `#111114` | 主文案 |
-| `--text-secondary` | `#3f3f46` | 次文案 |
-| `--text-muted` | `#71717a` | 占位 |
+| `--bg-editor` | `#ffffff` | 编辑区 |
+| `--bg-terminal` | `#ececef` | 终端底 |
+| `--bg-overlay` | `rgba(15,23,42,.4)` | 遮罩 |
+| `--border-subtle` | `color-mix(in srgb, #000000 10%, transparent)` | 极细半透明黑边 |
+| `--text-primary` | `#1c1c1e` | macOS label |
+| `--text-secondary` | `#3a3a3c` | macOS secondary label |
+| `--text-muted` | `#8e8e93` | macOS tertiary label |
 | `--accent` | `#2563eb` | 主强调（蓝） |
 | `--accent-soft` | `rgba(37,99,235,.10)` | 选中底 |
 | `--accent-fg` | `#ffffff` | 强调色上的字 |
@@ -79,50 +88,57 @@
 | `--warning` | `#d97706` | 警告 |
 | `--danger` | `#dc2626` | 错误 |
 | `--focus-ring` | `rgba(37,99,235,.35)` | 焦点 |
-| `--shadow-card` | `0 1px 3px rgba(28,28,33,.05)` | 浅色卡片浮起 |
-| `--shadow-modal` | `0 16px 48px rgba(28,28,33,.14)` | 弹层 |
+| `--shadow-card` | `0 1px 2px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.06)` | 浅色卡片浮起 |
+| `--shadow-popover` | `0 4px 16px rgba(0,0,0,.1), 0 1px 2px rgba(0,0,0,.04)` | 弹层 |
+| `--shadow-modal` | `0 16px 48px rgba(0,0,0,.18), 0 4px 12px rgba(0,0,0,.06)` | 弹层更强 |
 
 ### 3.3 Miro Midnight（`midnight`，深蓝深色）
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--bg-app` | `#0b1220` | 应用底 |
-| `--bg-header` | `#111827` | 标题栏 |
-| `--bg-panel` | `#0f172a` | 侧栏 / 面板 |
-| `--bg-elevated` | `#111827` | 卡片 |
-| `--bg-editor` | `#0b1220` | 编辑区 |
-| `--bg-terminal` | `#080e1a` | 终端底 |
-| `--bg-overlay` | `rgba(2,6,23,.55)` | 遮罩 |
-| `--border-subtle` | `#1e293b` | 边框 |
-| `--text-primary` | `#f1f5f9` | 主文案 |
-| `--text-secondary` | `#cbd5e1` | 次文案 |
-| `--text-muted` | `#94a3b8` | 占位 |
+| `--bg-app` | `#0a0f1c` | 应用底 |
+| `--bg-header` | `#0f1623` | 标题栏 |
+| `--bg-panel` | `#121a2b` | 侧栏 / 面板 |
+| `--bg-elevated` | `#1a2335` | 卡片（明度差 +8） |
+| `--bg-editor` | `#0a0f1c` | 编辑区 |
+| `--bg-terminal` | `#070c17` | 终端底 |
+| `--bg-overlay` | `rgba(2,6,23,.6)` | 遮罩 |
+| `--border-subtle` | `color-mix(in srgb, #ffffff 7%, transparent)` | 半透明白边 |
+| `--text-primary` | `#f5f5f7` | 主文案 |
+| `--text-secondary` | `#c7c7cc` | 次文案（macOS 灰） |
+| `--text-muted` | `#8e8e93` | 占位（macOS 灰） |
 | `--accent` | `#38bdf8` | 主强调（青蓝） |
-| `--accent-soft` | `rgba(56,189,248,.14)` | 选中底 |
+| `--accent-soft` | `rgba(56,189,248,.16)` | 选中底 |
 | `--accent-fg` | `#0f172a` | 强调色上的字 |
 | `--success` / `--warning` / `--danger` | `#34d399` / `#fbbf24` / `#f87171` | 状态色 |
 | `--focus-ring` | `rgba(56,189,248,.4)` | 焦点 |
+| `--shadow-card` | `0 1px 2px rgba(0,0,0,.25)` | 极轻浮起 |
+| `--shadow-popover` | `0 8px 24px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.15)` | 弹层 |
+| `--shadow-modal` | `0 24px 64px rgba(0,0,0,.55), 0 4px 12px rgba(0,0,0,.25)` | 弹层更强 |
 
 ### 3.4 Miro Cyberpunk（`cyberpunk`，高对比霓虹）
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--bg-app` | `#120a16` | 应用底 |
-| `--bg-header` | `#1f1328` | 标题栏 |
-| `--bg-panel` | `#1a1020` | 侧栏 / 面板 |
-| `--bg-elevated` | `#221428` | 卡片 |
-| `--bg-editor` | `#120a16` | 编辑区 |
-| `--bg-terminal` | `#0a0610` | 终端底 |
-| `--bg-overlay` | `rgba(18,10,22,.62)` | 遮罩 |
-| `--border-subtle` | `#3b1f45` | 边框 |
-| `--text-primary` | `#faf5ff` | 主文案 |
-| `--text-secondary` | `#e9d5ff` | 次文案 |
-| `--text-muted` | `#c4b5fd` | 占位 |
+| `--bg-app` | `#0f0812` | 应用底 |
+| `--bg-header` | `#1b0f24` | 标题栏 |
+| `--bg-panel` | `#1c1124` | 侧栏 / 面板 |
+| `--bg-elevated` | `#251630` | 卡片（明度差 +8） |
+| `--bg-editor` | `#0f0812` | 编辑区 |
+| `--bg-terminal` | `#08040d` | 终端底 |
+| `--bg-overlay` | `rgba(18,10,22,.7)` | 遮罩 |
+| `--border-subtle` | `color-mix(in srgb, #ffffff 7%, transparent)` | 半透明白边 |
+| `--text-primary` | `#f5f5f7` | 主文案 |
+| `--text-secondary` | `#c7c7cc` | 次文案（macOS 灰） |
+| `--text-muted` | `#8e8e93` | 占位（macOS 灰） |
 | `--accent` | `#22d3ee` | 主强调（青） |
-| `--accent-soft` | `rgba(34,211,238,.14)` | 选中底 |
+| `--accent-soft` | `rgba(34,211,238,.16)` | 选中底 |
 | `--accent-fg` | `#0f172a` | 强调色上的字 |
 | `--success` / `--warning` / `--danger` | `#34d399` / `#fbbf24` / `#fb7185` | 状态色 |
-| `--focus-ring` | `rgba(244,114,182,.45)` | 焦点 |
+| `--focus-ring` | `rgba(34,211,238,.45)` | 焦点（已统一为青色系） |
+| `--shadow-card` | `0 1px 2px rgba(0,0,0,.3)` | 极轻浮起 |
+| `--shadow-popover` | `0 8px 24px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.2)` | 弹层 |
+| `--shadow-modal` | `0 24px 64px rgba(0,0,0,.6), 0 4px 12px rgba(0,0,0,.3)` | 弹层更强 |
 
 > 色值如有微调，需同步更新 `themes.css` 与本文档。
 
@@ -163,30 +179,73 @@ Midnight / Cyberpunk 各自维护完整 `HighlightStyle`（青蓝 / 霓虹粉青
 
 ## 5. 字体与字号
 
+字体栈（`tokens.css` `--font-ui / --font-mono`）：
+
 | 用途 | 建议 |
 |---|---|
-| UI 字体 | 系统优先：`ui-sans-serif, system-ui, "PingFang SC", "Segoe UI", sans-serif` |
-| 代码字体 | `ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace` |
-| 设置页标题 | 20–22 / Semibold |
-| 分区标题 | 14–15 / Medium |
-| 正文 / 控件 | 13 |
-| 辅助说明 | 12 / secondary |
-| 编辑器默认字号 | 13（可配置，`fontSize`） |
+| UI 字体 | `ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Segoe UI", sans-serif` |
+| 代码字体 | `ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "PingFang SC", monospace` |
+
+字号 / 行高 token（`tokens.css`）—— 替代散落硬编码，组件内可逐步替换：
+
+| Token | 值 | 用途 |
+|---|---|---|
+| `--font-size-xs` | `11px` | 状态栏 / 极次要 |
+| `--font-size-sm` | `12px` | 辅助说明 / tab / statusBar |
+| `--font-size-md` | `13px` | body / 控件正文（默认） |
+| `--font-size-lg` | `15px` | 分区标题 / dialog 副标题 |
+| `--font-size-xl` | `20px` | 设置页 h1 / 大型 dialog 标题 |
+| `--line-height-tight` | `1.4` | 紧凑：按钮 / tab |
+| `--line-height-normal` | `1.55` | UI 正文（默认） |
+| `--line-height-relaxed` | `1.7` | 段落 / Markdown 预览 |
+
+| 场景 | 推荐字号 | 来源 |
+|---|---|---|
+| 设置页标题 | 20–22 / Semibold | `--font-size-xl` |
+| 分区标题 | 14–15 / Medium | `--font-size-lg` |
+| 正文 / 控件 | 13 | `--font-size-md` |
+| 辅助说明 | 12 / secondary | `--font-size-sm` |
+| 编辑器默认字号 | 13（可配置，`fontSize`） | 由用户设置 |
 
 ---
 
 ## 6. 圆角、间距、阴影
 
+### 6.1 圆角 token（`tokens.css`，跨主题不变）
+
+| Token | 值 | 用途 |
+|---|---|---|
+| `--radius-sm` | `8px` | 控件 / 小按钮 / 输入框 |
+| `--radius-md` | `10px` | 行内标签 / 小卡片 |
+| `--radius-lg` | `12px` | 卡片 / 弹层 |
+| `--radius-xl` | `16px` | 设置弹层 / 大型 dialog |
+
+### 6.2 阴影 token（4 级 + 主题覆盖）
+
+| Token | 默认值 | 用途 |
+|---|---|---|
+| `--shadow-card` | `0 1px 2px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.06)` | 卡片浮起（浅色默认） |
+| `--shadow-popover` | `0 4px 16px rgba(0,0,0,.12), 0 1px 2px rgba(0,0,0,.04)` | 弹层 / 右键菜单 |
+| `--shadow-modal` | `0 24px 64px rgba(0,0,0,.32), 0 4px 12px rgba(0,0,0,.12)` | 弹层更强 |
+
+> 深色 3 套主题（`miro-dark / midnight / cyberpunk`）的对应阴影值在 `themes.css` 内**单独覆盖**为更深 / 更不透明度更高的版本；浅色 `dawn` 用 tokens.css 默认值。
+
+### 6.3 元素规范
+
 | 元素 | 规范 |
 |---|---|
-| 设置弹层 | radius 16px；柔和阴影，避免多层堆叠 |
-| 内容卡片 | radius 12px；1px `--border-subtle` |
-| 输入 / 下拉 | radius 8–10px；高度约 32–36px |
-| 侧栏菜单项 | radius 8px；激活用 `--accent-soft` |
-| 主题缩略图 | radius 10px；选中 2px `--accent` 描边 + 角标勾选 |
-| 间距节奏 | 8 / 12 / 16 / 24；卡片内边距 16–20 |
+| 设置弹层 | radius `16px` (`--radius-xl`)；`--shadow-modal` |
+| 内容卡片 | radius `12px` (`--radius-lg`)；1px `--border-subtle`（半透明）；`--shadow-card` |
+| 输入 / 下拉 | radius `8px` (`--radius-sm`)；高度约 32–36px |
+| 侧栏菜单项 | radius `8px` (`--radius-sm`)；激活用 `--accent-soft` |
+| 主题缩略图 | radius `10px` (`--radius-md`)；选中 2px `--accent` 描边 + 角标勾选 |
+| 间距节奏 | 4 / 8 / 12 / 16 / 20 / 24（`--space-1..6`）；卡片内边距 16–20 |
+| 边线 | 1px `var(--border-subtle)`（半透明，深色 8% 白 / 浅色 10% 黑） |
 
-阴影原则：深色主题几乎只靠边框与明度分层；浅色（dawn）可用极轻阴影（`--shadow-card`）提升卡片浮起感。
+**设计原则**（2026-08-11 重制）：
+- 深色主题通过「拉开层级明度差 + 半透明边色」表达分区，几乎不依赖投影
+- 浅色主题（dawn）靠柔和阴影 + 半透明黑边共同表达浮起
+- 强调色（accent）只用于选中与主操作，避免与状态色 / 焦点环竞争视觉
 
 ---
 

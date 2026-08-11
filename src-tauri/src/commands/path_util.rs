@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+/// 搜索/QuickOpen 的忽略名单（影响 walk_files，不影响文件树）
 pub const DEFAULT_IGNORES: &[&str] = &[
     "node_modules",
     ".git",
@@ -12,6 +13,10 @@ pub const DEFAULT_IGNORES: &[&str] = &[
     ".turbo",
     "out",
 ];
+
+/// 文件树忽略名单：只隐藏版本控制元数据和系统垃圾文件，
+/// node_modules / target / dist / out 等均可见（懒加载，不会一开始就卡）
+pub const TREE_IGNORES: &[&str] = &[".git", ".DS_Store"];
 
 pub fn normalize(path: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(path);
@@ -55,6 +60,17 @@ pub fn is_ignored_name(name: &str, extra: &[String]) -> bool {
         return true;
     }
     if DEFAULT_IGNORES.iter().any(|x| *x == name) {
+        return true;
+    }
+    extra.iter().any(|x| x == name)
+}
+
+/// 文件树专用过滤：只跳过 TREE_IGNORES + extra，不做 .gitignore 解析
+pub fn is_tree_ignored(name: &str, extra: &[String]) -> bool {
+    if name == "." || name == ".." {
+        return true;
+    }
+    if TREE_IGNORES.iter().any(|x| *x == name) {
         return true;
     }
     extra.iter().any(|x| x == name)

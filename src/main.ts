@@ -3,6 +3,13 @@ import App from "./App.vue";
 import { pinia } from "@/stores/pinia";
 import "./styles/global.css";
 
+// ==================== 首屏防闪白 ====================
+// CSS 加载与 pinia 启动之间存在窗口期（data-theme 尚未挂上）；
+// 在 #app 落地前先用默认深色背景兜底，避免一帧白屏。
+// 真正的 data-theme 由 settings store 启动后注入。
+document.documentElement.style.background = "#0d0d10";
+document.documentElement.style.colorScheme = "dark";
+
 // 禁用 WebView 原生右键菜单；各处自定义菜单自行 preventDefault 后展示
 document.addEventListener(
   "contextmenu",

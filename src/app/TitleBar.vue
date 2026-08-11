@@ -49,11 +49,10 @@ onMounted(() => {
   if (!visible) return;
 
   void refreshFullscreen();
+  // 启动瞬间调一次即可；后续由 Rust 端 install_traffic_light_hooks
+  // 监听 Resized/ThemeChanged/ScaleFactorChanged/Focused 事件统一重排。
+  // 不在前端做 80/300/900ms 延迟补排，避免与 hook 事件 setFrame 抢位置造成抖动。
   void syncTrafficLights();
-  // 首屏主题 / WebView 布局会重置原生按钮，分几次补齐
-  for (const ms of [80, 300, 900]) {
-    timers.push(window.setTimeout(() => void syncTrafficLights(), ms));
-  }
 
   void (async () => {
     try {

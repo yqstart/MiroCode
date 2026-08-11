@@ -67,8 +67,12 @@ pub fn apply_titlebar_background(
 
 /// 按 TITLEBAR_HEIGHT 重排红绿灯，使其与前端 TitleBar 折叠按钮垂直对齐。
 ///
-/// 说明：仅改 `trafficLightPosition.y` / 只拉高容器不够——AppKit 常把按钮贴在
-/// 容器顶部，必须显式设 origin.y 才能与 CSS `align-items: center` 的折叠按钮同排。
+/// 关键：title_bar_container 必须同时设置 size.height 和 origin.y——
+/// - size.height: 拉高容器到 38pt（默认可能是 28pt，AppKit standard 标题栏高度）
+/// - origin.y: 把容器底边对齐窗口顶（容器底 y = window.height，容器顶 y = window.height - 38）
+/// 之后再用 setFrameOrigin 摆按钮，按钮 origin_y 用**相对容器底**算：
+/// `origin_y = (TITLEBAR_HEIGHT - button_h) / 2`。
+///
 /// 全屏时跳过，避免与系统全屏过渡动画抢布局。
 #[cfg(target_os = "macos")]
 pub fn apply_traffic_lights(window: &WebviewWindow) -> Result<(), String> {
@@ -100,8 +104,10 @@ pub fn apply_traffic_lights(window: &WebviewWindow) -> Result<(), String> {
         .standardWindowButton(NSWindowButton::ZoomButton)
         .ok_or_else(|| "无缩放按钮".to_string())?;
 
-    // 标题栏容器：把高度对齐前端 --titlebar-height，origin 在 AppKit 中为左下角。
-    // 缺少这一步，AppKit 容器可能保持默认高度，红绿灯无法正确居中。
+    // 标题栏容器：用 setFrame 同时设 size.height + origin.y。
+    // 容器底 = 窗口顶（y = window.frame.height），容器顶 = window.height - 38。
+    // 这一步必须做——少 setFrame 只 setFrameSize 的话，origin.y 没对齐，
+    // 后面按钮 origin_y 相对容器底算出来的位置是错的（按钮会消失或偏到窗口外）。
     let title_bar_container = unsafe {
         close
             .superview()
@@ -113,8 +119,8 @@ pub fn apply_traffic_lights(window: &WebviewWindow) -> Result<(), String> {
     title_bar_rect.origin.y = ns_window.frame().size.height - TITLEBAR_HEIGHT;
     title_bar_container.setFrame(title_bar_rect);
 
-    // 用 setFrameOrigin 摆按钮（不触发容器 layout 反复重排）。
-    // 按钮中心 = origin_y + button_h/2；令其等于 TITLEBAR_HEIGHT/2 居中：
+    // 按钮居中：origin_y 相对 title_bar_container 底部（y=window.height）算。
+    // 按钮中心 = (TITLEBAR_HEIGHT/2) above container.bottom；
     // origin_y = (TITLEBAR_HEIGHT - button_h) / 2。
     let close_rect = NSView::frame(&*close);
     let button_h = if close_rect.size.height > 0.0 {
@@ -123,6 +129,7 @@ pub fn apply_traffic_lights(window: &WebviewWindow) -> Result<(), String> {
         BUTTON_SIZE
     };
     let origin_y = ((TITLEBAR_HEIGHT - button_h) / 2.0).round().max(0.0);
+
     // 实测按钮间距，未就绪时用兜底值
     let live_space_between = NSView::frame(&*miniaturize).origin.x - close_rect.origin.x;
     let space_between = if live_space_between > 0.0 {

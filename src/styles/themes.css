@@ -1,93 +1,130 @@
-/* ==================== Miro Dark（默认深色） ==================== */
+/* ==================== Miro Dark（默认深色） ====================
+   层级明度：app < header < panel < elevated < elevated+；每层 +12 个 8-bit 阶。
+   边线统一改 color-mix 半透明白，5% 极淡，避免深色下硬线。 */
 :root,
 [data-theme="miro-dark"] {
-  --bg-app: #0f0f12;
-  --bg-header: #1a1a20;
-  --bg-panel: #16161a;
-  --bg-elevated: #1c1c22;
-  --bg-editor: #0f0f12;
-  --bg-terminal: #0c0c10;
-  --bg-overlay: rgba(0, 0, 0, 0.45);
-  --border-subtle: #2a2a32;
-  --text-primary: #fafafa;
-  --text-secondary: #d4d4d8;
-  --text-muted: #a1a1aa;
+  --bg-app: #0a0a0d;          /* 应用底（最深） */
+  --bg-header: #141418;       /* 标题栏 */
+  --bg-panel: #1c1c22;        /* 侧栏 / 面板 */
+  --bg-elevated: #28282f;     /* 卡片（明度差 +12） */
+  --bg-editor: #0a0a0d;       /* 编辑区，与 app 同色 */
+  --bg-terminal: #06060a;     /* 终端（最深一档） */
+  --bg-overlay: rgba(0, 0, 0, 0.62);
+
+  /* 极淡半透明白边，深色背景下若隐若现（macOS modernUI 风） */
+  --border-subtle: color-mix(in srgb, #ffffff 5%, transparent);
+
+  --text-primary: #f5f5f7;    /* macOS label */
+  --text-secondary: #c7c7cc; /* macOS secondary label */
+  --text-muted: #8e8e93;      /* macOS tertiary label */
+
   --accent: #8b5cf6;
   --accent-soft: rgba(139, 92, 246, 0.16);
   --accent-fg: #ffffff;
+
   --success: #34d399;
   --warning: #fbbf24;
   --danger: #f87171;
-  --focus-ring: rgba(139, 92, 246, 0.45);
-  --shadow-card: none;
+
+  --focus-ring: rgba(139, 92, 246, 0.5);
+
+  /* 深色下柔和浮起（同时给 0.5px ring 增加层次） */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(255, 255, 255, 0.04);
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.25), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  --shadow-modal: 0 32px 80px rgba(0, 0, 0, 0.6), 0 8px 24px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
 }
 
-/* ==================== Miro Dawn（浅色） ==================== */
+/* ==================== Miro Dawn（浅色 / 雾白） ====================
+   背景采用 macOS 标准雾白 #f5f5f7；边线改极淡半透明黑 8%。 */
 [data-theme="dawn"] {
-  --bg-app: #f7f8fa;
-  --bg-header: #e8eaef;
+  --bg-app: #f5f5f7;
+  --bg-header: #ebebed;
   --bg-panel: #ffffff;
   --bg-elevated: #ffffff;
   --bg-editor: #ffffff;
-  --bg-terminal: #e8ecf1;
-  --bg-overlay: rgba(15, 23, 42, 0.32);
-  --border-subtle: #e6e8ec;
-  --text-primary: #111114;
-  --text-secondary: #3f3f46;
-  --text-muted: #71717a;
+  --bg-terminal: #ececef;
+  --bg-overlay: rgba(15, 23, 42, 0.45);
+
+  --border-subtle: color-mix(in srgb, #000000 8%, transparent);
+
+  --text-primary: #1c1c1e;
+  --text-secondary: #3a3a3c;
+  --text-muted: #8e8e93;
+
   --accent: #2563eb;
   --accent-soft: rgba(37, 99, 235, 0.1);
   --accent-fg: #ffffff;
+
   --success: #059669;
   --warning: #d97706;
   --danger: #dc2626;
-  --focus-ring: rgba(37, 99, 235, 0.35);
-  --shadow-card: 0 1px 3px rgba(28, 28, 33, 0.05);
-  --shadow-modal: 0 16px 48px rgba(28, 28, 33, 0.14);
+
+  --focus-ring: rgba(37, 99, 235, 0.4);
+
+  /* 浅色靠柔和阴影 + 0.5px ring 表达浮起 */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.05), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  --shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.18), 0 8px 16px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
 }
 
 /* ==================== Miro Midnight（深蓝深色） ==================== */
 [data-theme="midnight"] {
-  --bg-app: #0b1220;
-  --bg-header: #111827;
-  --bg-panel: #0f172a;
-  --bg-elevated: #111827;
-  --bg-editor: #0b1220;
-  --bg-terminal: #080e1a;
-  --bg-overlay: rgba(2, 6, 23, 0.55);
-  --border-subtle: #1e293b;
-  --text-primary: #f1f5f9;
-  --text-secondary: #cbd5e1;
-  --text-muted: #94a3b8;
+  --bg-app: #070b16;
+  --bg-header: #0d1422;
+  --bg-panel: #131c30;
+  --bg-elevated: #1f2c44;     /* 明度差 +12 */
+  --bg-editor: #070b16;
+  --bg-terminal: #040810;
+  --bg-overlay: rgba(2, 6, 23, 0.7);
+
+  --border-subtle: color-mix(in srgb, #ffffff 5%, transparent);
+
+  --text-primary: #f5f5f7;
+  --text-secondary: #c7c7cc;
+  --text-muted: #8e8e93;
+
   --accent: #38bdf8;
-  --accent-soft: rgba(56, 189, 248, 0.14);
+  --accent-soft: rgba(56, 189, 248, 0.18);
   --accent-fg: #0f172a;
+
   --success: #34d399;
   --warning: #fbbf24;
   --danger: #f87171;
-  --focus-ring: rgba(56, 189, 248, 0.4);
-  --shadow-card: none;
+
+  --focus-ring: rgba(56, 189, 248, 0.45);
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(255, 255, 255, 0.04);
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  --shadow-modal: 0 32px 80px rgba(0, 0, 0, 0.65), 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
 }
 
 /* ==================== Miro Cyberpunk（高对比霓虹） ==================== */
 [data-theme="cyberpunk"] {
-  --bg-app: #120a16;
-  --bg-header: #1f1328;
-  --bg-panel: #1a1020;
-  --bg-elevated: #221428;
-  --bg-editor: #120a16;
-  --bg-terminal: #0a0610;
-  --bg-overlay: rgba(18, 10, 22, 0.62);
-  --border-subtle: #3b1f45;
-  --text-primary: #faf5ff;
-  --text-secondary: #e9d5ff;
-  --text-muted: #c4b5fd;
+  --bg-app: #0b050f;
+  --bg-header: #160c1d;
+  --bg-panel: #1f1228;
+  --bg-elevated: #2c1a38;     /* 明度差 +13 */
+  --bg-editor: #0b050f;
+  --bg-terminal: #050308;
+  --bg-overlay: rgba(18, 10, 22, 0.75);
+
+  --border-subtle: color-mix(in srgb, #ffffff 5%, transparent);
+
+  --text-primary: #f5f5f7;
+  --text-secondary: #c7c7cc;
+  --text-muted: #8e8e93;
+
   --accent: #22d3ee;
-  --accent-soft: rgba(34, 211, 238, 0.14);
+  --accent-soft: rgba(34, 211, 238, 0.18);
   --accent-fg: #0f172a;
+
   --success: #34d399;
   --warning: #fbbf24;
   --danger: #fb7185;
-  --focus-ring: rgba(244, 114, 182, 0.45);
-  --shadow-card: none;
+
+  --focus-ring: rgba(34, 211, 238, 0.5);
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.05);
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(255, 255, 255, 0.07);
+  --shadow-modal: 0 32px 80px rgba(0, 0, 0, 0.7), 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 0 0.5px rgba(255, 255, 255, 0.07);
 }

@@ -65,7 +65,7 @@ async function onInstall() {
 .notes-btn {
   height: 24px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 11.5px;
   font-weight: 500;
   color: var(--text-secondary);
@@ -91,7 +91,7 @@ async function onInstall() {
   flex-shrink: 0;
   height: 24px;
   padding: 0 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 600;
   color: var(--accent-fg);
