@@ -168,6 +168,13 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
+  /** 保存后通知 LSP server（didSave），触发 server 侧保存后诊断/编译刷新 */
+  function notifyLspDidSave(path: string, text: string): void {
+    void import("@/features/lsp/manager").then(({ lspManager }) => {
+      void lspManager.didSave(path, text);
+    });
+  }
+
   /** 同会话内 Vue 文件提示只弹一次（避免重复打扰） */
   let vueLsHintShown = false;
 
@@ -535,6 +542,9 @@ export const useEditorStore = defineStore("editor", () => {
         workspace.showNotice(`已保存 ${tab.name}`);
       }
       void git.refresh();
+      // LSP 文档同步：通知 server 文件已保存（didSave 定义后此前从未被调用，
+      // 导致 server 依赖保存通知的诊断/编译刷新不触发）
+      void notifyLspDidSave(tab.path, content);
     } catch (error) {
       if (!options?.quiet) {
         workspace.showNotice(
@@ -564,6 +574,7 @@ export const useEditorStore = defineStore("editor", () => {
         workspace.markSelfWrite(tab.path);
         await writeTextFile(workspace.rootPath, tab.path, tab.content);
         tab.original = tab.content;
+        void notifyLspDidSave(tab.path, tab.content);
         saved += 1;
       }
       if (!options?.quiet && saved > 0) {

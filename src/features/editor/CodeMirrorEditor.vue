@@ -396,6 +396,11 @@ watch(
       selection: { anchor: targetAnchor, head: targetHead },
       scrollIntoView: false,
     });
+
+    // 外部修改（Prettier 格式化 / syncFromDisk / renameSymbol 等）已落地到文档：
+    // 该 dispatch 经 applyingExternal 标记，updateListener 中「用户输入」分支不会触发
+    // LSP didChange，此处补发，避免 server 内存文本停留在格式化前、诊断/补全位置错位。
+    scheduleLspChange(props.path);
   },
 );
 
