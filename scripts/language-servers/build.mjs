@@ -242,11 +242,17 @@ async function main() {
   const zipPath = join(outDir, zipName);
   rmSync(zipPath, { force: true });
   if (process.platform === "win32") {
-    run("powershell", [
-      "-NoProfile",
-      "-Command",
-      `Compress-Archive -Path '${staging}/*' -DestinationPath '${zipPath}' -Force`,
-    ]);
+    // Windows：npm install 后 node.exe 句柄可能未及时释放，Compress-Archive 读文件
+    // 偶发 PermissionDenied；带重试 + 等待，最多试 5 次
+    const psScript =
+      `$dest = '${zipPath}'\n` +
+      `$src = '${join(staging, "*")}'\n` +
+      `for ($i = 0; $i -lt 5; $i++) {\n` +
+      `  try { Compress-Archive -Path $src -DestinationPath $dest -Force; break }\n` +
+      `  catch { Start-Sleep -Seconds 2 }\n` +
+      `}\n` +
+      `if (-not (Test-Path $dest)) { throw '打 zip 失败：node 进程文件占用未释放' }\n`;
+    run("powershell", ["-NoProfile", "-Command", psScript]);
   } else {
     run("zip", ["-qr", zipPath, "."], { cwd: staging });
   }
