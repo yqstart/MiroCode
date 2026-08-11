@@ -95,6 +95,11 @@ const NODE_MIRRORS = [
 
 function run(cmd, args, opts = {}) {
   console.log(`[build] 执行: ${cmd} ${args.join(" ")}`);
+  if (process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd)) {
+    // Windows 上 Node 的 execFileSync 不能直接执行 .cmd/.bat 批处理（EINVAL），
+    // 需经 cmd /c 包装后由 cmd.exe 解析执行（npm.cmd 等）
+    return execFileSync("cmd", ["/C", cmd, ...args], { stdio: "inherit", ...opts });
+  }
   return execFileSync(cmd, args, { stdio: "inherit", ...opts });
 }
 
