@@ -46,11 +46,19 @@ pub enum ServerType {
 }
 
 impl ServerType {
-    /// npx 包名
+    /// npx 包名（回退宿主环境时用）
     fn package_name(&self) -> &'static str {
         match self {
             ServerType::Ts => "typescript-language-server",
             ServerType::Vue => "vue-language-server",
+        }
+    }
+
+    /// 语言标识（与 language_services.rs 的 language 参数、打包脚本 --language 对齐）
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ServerType::Ts => "ts",
+            ServerType::Vue => "vue",
         }
     }
 }
@@ -114,7 +122,7 @@ fn npx_command() -> std::process::Command {
 /// 构造 language server 启动命令
 ///
 /// 启动策略（优先级）：
-/// 1. 内置语言服务捆绑包（设置内一键安装）：直接用捆绑的 Node 执行 server 入口，
+/// 1. 已安装的语言服务捆绑包（设置内按语言安装）：直接用捆绑的 Node 执行 server 入口，
 ///    不依赖宿主 PATH 上的 Node/npx
 /// 2. 回退：宿主 npx --no-install（项目/全局 node_modules）
 fn build_server_command(
@@ -123,14 +131,12 @@ fn build_server_command(
     root: &str,
 ) -> std::process::Command {
     let mut cmd = if let Some(rt) = rt {
-        let entry = match server_type {
-            ServerType::Ts => rt.ts_entry.clone(),
-            ServerType::Vue => rt.vue_entry.clone(),
-        };
+        // 路径 1：已安装 bundle -- 用捆绑的 node 直接执行 server 入口 JS
         let mut c = std::process::Command::new(&rt.node_path);
-        c.arg(entry);
+        c.arg(&rt.entry);
         c
     } else {
+        // 路径 2：回退宿主 npx --no-install <包名>
         let mut c = npx_command();
         c.args(["--no-install", server_type.package_name()]);
         c
@@ -147,7 +153,7 @@ async fn spawn_server(
     server_type: ServerType,
     root: String,
 ) -> Result<(Child, ChildStdin, ChildStdout), String> {
-    let rt = bundled_runtime(&app);
+    let rt = bundled_runtime(&app, server_type.as_str());
     let mut cmd = build_server_command(rt.as_ref(), server_type, &root);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -343,42 +349,61 @@ fn spawn_read_loop(
 
 /// 检测运行时：node / typescript-language-server / vue-language-server 是否可用
 ///
-/// 优先判定内置语言服务捆绑包：已安装则三个能力全部视为可用（由捆绑的 Node + server 驱动），
-/// 否则回退检测宿主 node/npx 与全局/项目包（现有降级路径）。
+/// 按语言独立判定：每种语言优先检查对应捆绑包是否已安装，
+/// 未安装则回退检测宿主 node/npx 与全局/项目包（现有降级路径）。
 #[tauri::command]
 pub async fn lsp_check_runtime(app: AppHandle) -> Result<RuntimeCheck, String> {
-    // 内置捆绑包优先
-    if let Some(rt) = bundled_runtime(&app) {
+    // 按语言独立检测已安装的捆绑包
+    let ts_rt = bundled_runtime(&app, "ts");
+    let vue_rt = bundled_runtime(&app, "vue");
+
+    // 如果两种语言 bundle 都已安装，直接返回（node 全部由 bundle 提供）
+    if ts_rt.is_some() && vue_rt.is_some() {
         return Ok(RuntimeCheck {
             node: true,
             ts_ls: true,
             volar: true,
-            bundled_version: Some(rt.version),
+            bundled_version: Some(format!(
+                "ts={} vue={}",
+                ts_rt.as_ref().unwrap().version,
+                vue_rt.as_ref().unwrap().version
+            )),
         });
     }
 
     // 回退宿主环境检测
-    let node = check_command("node --version").await;
-    let npx = check_command("npx --version").await;
-    let node = node && npx;
+    let node = check_command("node --version").await && check_command("npx --version").await;
 
-    // 检测 language server 包
-    let ts_ls = if node {
+    // TS：bundle 已装则 true，否则检测宿主
+    let ts_ls = if ts_rt.is_some() {
+        true
+    } else if node {
         check_npx_package("typescript-language-server --version").await
     } else {
         false
     };
-    let volar = if node {
+    // Vue：bundle 已装则 true，否则检测宿主
+    let volar = if vue_rt.is_some() {
+        true
+    } else if node {
         check_npx_package("vue-language-server --version").await
     } else {
         false
+    };
+
+    // bundled_version：任一 bundle 已装就展示版本摘要
+    let bundled_version = match (&ts_rt, &vue_rt) {
+        (Some(ts), Some(vue)) => Some(format!("ts={} vue={}", ts.version, vue.version)),
+        (Some(ts), None) => Some(format!("ts={}", ts.version)),
+        (None, Some(vue)) => Some(format!("vue={}", vue.version)),
+        (None, None) => None,
     };
 
     Ok(RuntimeCheck {
         node,
         ts_ls,
         volar,
-        bundled_version: None,
+        bundled_version,
     })
 }
 
@@ -701,12 +726,11 @@ mod tests {
 
     #[test]
     fn test_build_command_uses_bundle() {
-        // 已安装内置捆绑包：直接用捆绑 Node 执行 server 入口
+        // 已安装捆绑包：直接用捆绑 Node 执行 server 入口
         let rt = super::super::language_services::BundledRuntime {
             version: "0.1.0".into(),
             node_path: "/bundle/node/bin/node".into(),
-            ts_entry: "/bundle/node_modules/typescript-language-server/lib/node.js".into(),
-            vue_entry: "/bundle/node_modules/@vue/language-server/bin/vue-language-server.js"
+            entry: "/bundle/node_modules/@vue/language-server/bin/vue-language-server.js"
                 .into(),
         };
         let cmd = build_server_command(Some(&rt), ServerType::Vue, "/ws");
@@ -754,8 +778,7 @@ mod tests {
         let rt = super::super::language_services::BundledRuntime {
             version: "0.1.0".into(),
             node_path,
-            ts_entry: fake_server.clone(),
-            vue_entry: fake_server.clone(),
+            entry: fake_server.clone(),
         };
 
         let mut cmd = build_server_command(

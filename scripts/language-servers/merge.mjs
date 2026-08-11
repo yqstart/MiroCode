@@ -1,15 +1,24 @@
 #!/usr/bin/env node
 /**
- * 汇总各平台语言服务捆绑包的 sha256，生成 ls-latest.json
+ * 汇总各平台 × 各语言的 sha256，生成双层 ls-latest.json
  *
  * 由 .github/workflows/language-servers.yml 的汇总 job 调用。
  * 输出结构与应用端 Rust fetch_manifest 解析格式一一对应：
  * ```json
  * {
- *   "version": "0.1.0",
- *   "platforms": {
- *     "darwin-arm64": { "url": "language-servers-0.1.0-darwin-arm64.zip", "sha256": "..." },
- *     ...
+ *   "version": "0.2.0",
+ *   "languages": {
+ *     "ts": {
+ *       "version": "0.2.0",
+ *       "platforms": {
+ *         "darwin-arm64": { "url": "ls-ts-0.2.0-darwin-arm64.zip", "sha256": "..." },
+ *         ...
+ *       }
+ *     },
+ *     "vue": {
+ *       "version": "0.2.0",
+ *       "platforms": { ... }
+ *     }
  *   }
  * }
  * ```
@@ -23,6 +32,7 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../..");
 
 const PLATFORMS = ["darwin-arm64", "darwin-x64", "win32-x64", "linux-x64", "linux-arm64"];
+const LANGUAGES = ["ts", "vue"];
 
 function parseArgs(argv) {
   const args = {};
@@ -46,24 +56,25 @@ if (!version) {
   process.exit(1);
 }
 
-const platforms = {};
-for (const platform of PLATFORMS) {
-  const shaFile = join(dir, `language-servers-${version}-${platform}.zip.sha256`);
-  const zipFile = join(dir, `language-servers-${version}-${platform}.zip`);
-  if (!readdirSync(dir).includes(`language-servers-${version}-${platform}.zip`)) {
-    console.error(`缺少 ${platform} 产物，中止`);
-    process.exit(1);
+const languages = {};
+for (const language of LANGUAGES) {
+  const platforms = {};
+  for (const platform of PLATFORMS) {
+    const zipName = `ls-${language}-${version}-${platform}.zip`;
+    const shaFile = join(dir, `${zipName}.sha256`);
+    const zipFile = join(dir, zipName);
+    if (!readdirSync(dir).includes(zipName)) {
+      console.error(`缺少 ${language} ${platform} 产物（${zipName}），中止`);
+      process.exit(1);
+    }
+    const sha256 = readFileSync(shaFile, "utf8").trim();
+    const sizeMb = (readFileSync(zipFile).length / 1024 / 1024).toFixed(1);
+    platforms[platform] = { url: zipName, sha256, sizeMb: Number(sizeMb) };
   }
-  const sha256 = readFileSync(shaFile, "utf8").trim();
-  const sizeMb = (readFileSync(zipFile).length / 1024 / 1024).toFixed(1);
-  platforms[platform] = {
-    url: `language-servers-${version}-${platform}.zip`,
-    sha256,
-    sizeMb: Number(sizeMb),
-  };
+  languages[language] = { version, platforms };
 }
 
-const manifest = { version, platforms };
+const manifest = { version, languages };
 const out = join(dir, "ls-latest.json");
 writeFileSync(out, JSON.stringify(manifest, null, 2));
 console.log(`[merge] 已生成 ${out}`);

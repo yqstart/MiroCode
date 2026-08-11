@@ -41,18 +41,21 @@ export type { DiagnosticSeverity };
 /** language server 类型（与 Rust 侧 ServerType 对应） */
 export type ServerType = "ts" | "vue";
 
+/** 语言服务标识（与 ServerType 同集合，用于安装/卸载/状态查询） */
+export type LanguageId = ServerType;
+
 /** 运行时检测结果（与 Rust 侧 RuntimeCheck 对应） */
 export interface RuntimeCheck {
   node: boolean;
   tsLs: boolean;
   volar: boolean;
-  /** 内置语言服务捆绑包版本（非空表示 LSP 由内置 Node + server 驱动，不依赖宿主环境） */
+  /** 已安装的语言服务版本摘要（如 "ts=0.2.0 vue=0.2.0"），无则为 null */
   bundledVersion?: string | null;
 }
 
-/** 语言服务捆绑包安装状态（与 Rust 侧 LsStatus 对应） */
+/** 单语言服务安装状态（与 Rust 侧 LsStatus 对应） */
 export interface LsStatus {
-  /** 当前平台是否有可用产物 */
+  /** 当前平台是否有可用产物（决定「安装」按钮是否可用） */
   supported: boolean;
   /** 已安装版本（未安装为 null） */
   installedVersion: string | null;
@@ -62,7 +65,7 @@ export interface LsStatus {
   latestAvailable: boolean;
   /** 实际命中的镜像源 id */
   mirrorUsed: string;
-  /** 是否有可用更新 */
+  /** 是否有可用更新（已安装 && 远端更新） */
   hasUpdate: boolean;
 }
 

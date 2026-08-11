@@ -9,6 +9,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  LanguageId,
   LsMirror,
   LsProgressEvent,
   LsStatus,
@@ -19,27 +20,29 @@ import type {
 // ==================== 语言服务捆绑包 ====================
 
 /**
- * 查询语言服务捆绑包状态（本地安装版本 + 远端最新版本）。
+ * 查询指定语言的服务状态（本地安装版本 + 远端最新版本）。
  * 参数 camelCase 会自动映射到 Rust 侧 snake_case 同名参数。
  */
 export async function getLsStatus(
+  language: LanguageId,
   mirror: LsMirror,
   customBase?: string | null,
 ): Promise<LsStatus> {
-  return invoke<LsStatus>("ls_status", { mirror, customBase: customBase ?? null });
+  return invoke<LsStatus>("ls_status", { language, mirror, customBase: customBase ?? null });
 }
 
-/** 一键安装 / 更新语言服务捆绑包，返回激活版本 */
+/** 安装 / 更新指定语言的语言服务捆绑包，返回激活版本 */
 export async function installLs(
+  language: LanguageId,
   mirror: LsMirror,
   customBase?: string | null,
 ): Promise<string> {
-  return invoke<string>("ls_install", { mirror, customBase: customBase ?? null });
+  return invoke<string>("ls_install", { language, mirror, customBase: customBase ?? null });
 }
 
-/** 卸载语言服务捆绑包 */
-export async function uninstallLs(): Promise<void> {
-  return invoke("ls_uninstall");
+/** 卸载指定语言的语言服务捆绑包 */
+export async function uninstallLs(language: LanguageId): Promise<void> {
+  return invoke("ls_uninstall", { language });
 }
 
 /** 监听语言服务安装进度 */

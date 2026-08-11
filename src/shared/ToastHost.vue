@@ -7,6 +7,15 @@ import { useI18n } from "@/i18n";
 const { t } = useI18n();
 const workspace = useWorkspaceStore();
 const { toasts } = storeToRefs(workspace);
+
+/** 点击 toast 操作按钮：执行回调后关闭该 toast */
+function onAction(toast: { id: number; action?: { label: string; onClick: () => void } }) {
+  try {
+    toast.action?.onClick();
+  } finally {
+    workspace.dismissNotice(toast.id);
+  }
+}
 </script>
 
 <template>
@@ -23,6 +32,14 @@ const { toasts } = storeToRefs(workspace);
       role="status"
     >
       <span class="toast-msg">{{ toast.message }}</span>
+      <button
+        v-if="toast.action"
+        type="button"
+        class="toast-action"
+        @click="onAction(toast)"
+      >
+        {{ toast.action.label }}
+      </button>
       <button
         type="button"
         class="toast-close"
@@ -69,6 +86,22 @@ const { toasts } = storeToRefs(workspace);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.toast-action {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--bg-elevated);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  transition: opacity var(--transition-fast);
+}
+
+.toast-action:hover {
+  opacity: 0.85;
 }
 
 .toast-close {

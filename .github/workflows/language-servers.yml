@@ -1,6 +1,6 @@
-# 语言服务捆绑包：打包 5 平台产物并发布到 GitHub Release
+# 语言服务捆绑包：按语言独立打包 5 平台产物并发布到 GitHub Release
 # 触发：Actions 页手动 Run workflow（填版本号），或推送 language-servers-* 标签
-# 说明：产物（内含便携 Node + TS/Vue language server）由应用内「设置 → 语言服务 → 一键安装」拉取；
+# 说明：每语言一个 zip（含便携 Node + 对应 language server），由应用内「设置 -> 语言服务」按语言拉取；
 #       安装包本体保持轻量，不捆绑任何语言服务。
 # 国内访问：应用端默认「自动」模式先走 GitHub 官方，失败自动切换 ghfast.top 加速镜像。
 
@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "捆绑包版本（如 0.1.0；更新语言服务时递增）"
+        description: "捆绑包版本（如 0.2.0；更新语言服务时递增）"
         required: true
-        default: "0.1.0"
+        default: "0.2.0"
   push:
     tags:
       - "language-servers-*"
@@ -26,10 +26,11 @@ concurrency:
 
 jobs:
   build:
-    name: Bundle (${{ matrix.name }})
+    name: ${{ matrix.language }} (${{ matrix.name }})
     strategy:
       fail-fast: false
       matrix:
+        language: [ts, vue]
         include:
           - name: macOS Apple Silicon
             platform: macos-latest
@@ -83,11 +84,12 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zip
 
-      - name: Build bundle
+      - name: Build ${{ matrix.language }} bundle
         shell: bash
         run: |
           mkdir -p dist/ls
           node scripts/language-servers/build.mjs \
+            --language ${{ matrix.language }} \
             --platform ${{ matrix.ls_platform }} \
             --version ${{ steps.version.outputs.version }} \
             --out dist/ls
@@ -95,10 +97,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ls-${{ matrix.ls_platform }}
+          name: ls-${{ matrix.language }}-${{ matrix.ls_platform }}
           path: |
-            dist/ls/language-servers-${{ steps.version.outputs.version }}-${{ matrix.ls_platform }}.zip
-            dist/ls/language-servers-${{ steps.version.outputs.version }}-${{ matrix.ls_platform }}.zip.sha256
+            dist/ls/ls-${{ matrix.language }}-${{ steps.version.outputs.version }}-${{ matrix.ls_platform }}.zip
+            dist/ls/ls-${{ matrix.language }}-${{ steps.version.outputs.version }}-${{ matrix.ls_platform }}.zip.sha256
           if-no-files-found: error
 
   publish:
@@ -143,8 +145,8 @@ jobs:
           fi
           gh release create "$TAG" \
             --title "Language Servers $VERSION" \
-            --notes "内置语言服务捆绑包 v$VERSION（Node + typescript-language-server + @vue/language-server）。由 Miro Code 设置内「一键安装」拉取。" \
-            dist/ls/language-servers-$VERSION-*.zip \
+            --notes "语言服务捆绑包 v$VERSION（TS / Vue 各语言独立 zip，含便携 Node）。由 Miro Code 设置内按语言安装。" \
+            dist/ls/ls-*.zip \
             dist/ls/ls-latest.json
 
       - name: Summary

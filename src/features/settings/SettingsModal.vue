@@ -24,7 +24,7 @@ const { theme, editor, locale } = storeToRefs(settings);
 
 type NavId = "editor" | "ai" | "shortcuts" | "system";
 
-const activeNav = ref<NavId>("editor");
+const activeNav = ref<NavId>(ui.settingsNav);
 const appVersion = ref("…");
 const checkingUpdate = ref(false);
 
@@ -34,8 +34,14 @@ onMounted(async () => {
 
 // ==================== LSP 语言服务 ====================
 
+import type { LanguageId } from "@/features/lsp/types";
+
 const lspRuntimeStatus = ref("");
-const ls = ref(lsInstaller.getState());
+/** 各语言的安装器状态（按语言独立） */
+const lsStates = ref<Record<string, import("@/features/lsp/installer").InstallerState>>({
+  ts: lsInstaller.getState("ts"),
+  vue: lsInstaller.getState("vue"),
+});
 const lsMirror = ref<LsMirror>("auto");
 const lsCustomBase = ref("");
 
@@ -47,8 +53,42 @@ const lsMirrorOptions = computed(() => [
   { id: "custom" as LsMirror, label: t("lsp.mirrorCustom") },
 ]);
 
-/** 安装进度百分比文案（阶段标题） */
-const lsPhaseText = computed(() => {
+/** 语言服务列表条目（每语言独立状态） */
+const lsItems = computed(() => {
+  const defs = [
+    { key: "ts" as LanguageId, name: t("lsp.lsTypeScript"), desc: t("lsp.lsTypeScriptDesc") },
+    { key: "vue" as LanguageId, name: t("lsp.lsVue"), desc: t("lsp.lsVueDesc") },
+  ];
+  return defs.map((it) => {
+    const st = lsStates.value[it.key];
+    const installed = st?.status?.installedVersion ?? null;
+    const hasUpdate = st?.status?.hasUpdate ?? false;
+    const latest = st?.status?.latestVersion ?? null;
+    const busy = st?.busy ?? false;
+    const phase = st?.phase ?? "idle";
+    const percent = st?.percent ?? 0;
+    const badge = installed ? (hasUpdate ? "update" : "installed") : "not-installed";
+    return { ...it, installed, hasUpdate, latest, badge, busy, phase, percent };
+  });
+});
+
+/** 镜像连通状态文案与颜色类（从 TS 语言的状态读取，镜像连通性所有语言共享） */
+const lsMirrorStatus = computed<{ text: string; cls: string }>(() => {
+  const st = lsStates.value.ts?.status;
+  if (!st) return { text: t("lsp.mirrorChecking"), cls: "ms-checking" };
+  if (st.latestAvailable) {
+    const map: Record<string, string> = {
+      github: t("lsp.mirrorOkGithub"),
+      ghproxy: t("lsp.mirrorOkGhproxy"),
+      custom: t("lsp.mirrorOkCustom"),
+    };
+    return { text: map[st.mirrorUsed] ?? t("lsp.mirrorOkGithub"), cls: "ms-ok" };
+  }
+  return { text: t("lsp.mirrorFail"), cls: "ms-fail" };
+});
+
+/** 安装进度阶段文案 */
+function lsPhaseTextFor(language: LanguageId): string {
   const labels: Record<string, string> = {
     manifest: t("lsp.phaseManifest"),
     download: t("lsp.phaseDownload"),
@@ -56,16 +96,17 @@ const lsPhaseText = computed(() => {
     extract: t("lsp.phaseExtract"),
     done: t("lsp.phaseDone"),
   };
-  return labels[ls.value.phase] ?? "";
-});
+  const phase = lsStates.value[language]?.phase ?? "idle";
+  return labels[phase] ?? "";
+}
 
-/** LSP 分区功能可用性：内置捆绑包安装成功，或宿主 Node + server 就绪 */
+/** LSP 分区功能可用性：语言服务已安装，或宿主 Node + server 就绪 */
 async function updateLspStatus() {
   try {
     const { detectRuntime } = await import("@/features/lsp/nodeDetector");
     const r = await detectRuntime();
     if (r.bundledVersion) {
-      lspRuntimeStatus.value = `${t("lsp.bundleReady")} v${r.bundledVersion}`;
+      lspRuntimeStatus.value = `${t("lsp.bundleReady")} ${r.bundledVersion}`;
       return;
     }
     if (!r.node) {
@@ -93,21 +134,26 @@ async function toggleLsp(enabled: boolean) {
   void updateLspStatus();
 }
 
-/** 刷新语言服务状态（远端清单 + 本地安装版本） */
+/** 刷新所有语言服务状态（远端清单 + 本地安装版本） */
 async function refreshLsStatus() {
-  await lsInstaller.refresh(lsMirror.value, lsCustomBase.value || null);
+  await Promise.all([
+    lsInstaller.refresh("ts", lsMirror.value, lsCustomBase.value || null),
+    lsInstaller.refresh("vue", lsMirror.value, lsCustomBase.value || null),
+  ]);
   void updateLspStatus();
 }
 
-/** 一键安装 / 更新 */
-async function installLanguageServices() {
-  const ok = await lsInstaller.install(lsMirror.value, lsCustomBase.value || null);
+/** 安装 / 更新指定语言 */
+async function installLanguageService(language: LanguageId) {
+  const ok = await lsInstaller.install(language, lsMirror.value, lsCustomBase.value || null);
   if (!ok) {
-    workspace.showNotice(t("lsp.installFailed", { message: ls.value.error ?? "" }));
+    const err = lsInstaller.getState(language).error ?? "";
+    workspace.showNotice(t("lsp.installFailed", { message: err }));
     return;
   }
-  workspace.showNotice(t("lsp.installed", { version: ls.value.status?.installedVersion ?? "" }));
-  // 安装完成后重启工作区 LSP，立即使用内置环境
+  const ver = lsInstaller.getState(language).status?.installedVersion ?? "";
+  workspace.showNotice(t("lsp.installed", { version: ver }));
+  // 安装完成后重启工作区 LSP，立即使用新安装的语言服务
   const { lspManager } = await import("@/features/lsp/manager");
   if (workspace.rootPath) {
     await lspManager.stop();
@@ -115,11 +161,12 @@ async function installLanguageServices() {
   }
 }
 
-/** 卸载 */
-async function uninstallLanguageServices() {
-  const ok = await lsInstaller.uninstall();
+/** 卸载指定语言 */
+async function uninstallLanguageService(language: LanguageId) {
+  const ok = await lsInstaller.uninstall(language);
   if (!ok) {
-    workspace.showNotice(t("lsp.uninstallFailed", { message: ls.value.error ?? "" }));
+    const err = lsInstaller.getState(language).error ?? "";
+    workspace.showNotice(t("lsp.uninstallFailed", { message: err }));
     return;
   }
   workspace.showNotice(t("lsp.uninstalled"));
@@ -136,9 +183,12 @@ function onMirrorChange() {
 }
 
 onMounted(async () => {
-  ls.value = lsInstaller.getState();
-  const unsub = lsInstaller.subscribe((state) => {
-    ls.value = state;
+  lsStates.value = {
+    ts: lsInstaller.getState("ts"),
+    vue: lsInstaller.getState("vue"),
+  };
+  const unsub = lsInstaller.subscribe((language, state) => {
+    lsStates.value = { ...lsStates.value, [language]: state };
   });
   onScopeDispose(unsub);
   await refreshLsStatus();
@@ -601,89 +651,100 @@ function onOverlayClick(event: MouseEvent) {
               </div>
               <p class="desc">{{ lspRuntimeStatus }}</p>
 
-              <!-- 内置语言服务捆绑包：一键安装 / 更新 / 卸载 -->
+              <!-- 语言服务列表：按语言独立安装 / 更新 / 卸载 -->
               <div class="ls-bundle">
                 <p class="desc">
                   {{ t("lsp.bundleDesc") }}
                 </p>
 
-                <!-- 安装进行中：进度条 -->
-                <div v-if="ls.busy" class="ls-progress">
-                  <div class="ls-progress-bar">
-                    <div class="ls-progress-fill" :style="{ width: `${ls.percent}%` }" />
+                <!-- 语言服务列表 -->
+                <div class="ls-list">
+                  <div
+                    v-for="item in lsItems"
+                    :key="item.key"
+                    class="ls-item"
+                  >
+                    <div class="ls-item-icon">{{ item.key === "ts" ? "TS" : "Vue" }}</div>
+                    <div class="ls-item-body">
+                      <div class="ls-item-head">
+                        <span class="ls-item-name">{{ item.name }}</span>
+                        <span
+                          class="ls-badge"
+                          :class="`badge-${item.badge}`"
+                        >
+                          <template v-if="item.badge === 'installed'">
+                            {{ t("lsp.lsBadgeInstalled") }} v{{ item.installed }}
+                          </template>
+                          <template v-else-if="item.badge === 'update'">
+                            {{ t("lsp.lsBadgeUpdate") }} v{{ item.latest }}
+                          </template>
+                          <template v-else>{{ t("lsp.lsBadgeNotInstalled") }}</template>
+                        </span>
+                      </div>
+                      <p class="desc">{{ item.desc }}</p>
+
+                      <!-- 该语言安装进行中：进度条 -->
+                      <div v-if="item.busy" class="ls-progress">
+                        <div class="ls-progress-bar">
+                          <div class="ls-progress-fill" :style="{ width: `${item.percent}%` }" />
+                        </div>
+                        <p class="desc">
+                          {{ lsPhaseTextFor(item.key) }} {{ item.percent > 0 && item.phase === 'download' ? item.percent + '%' : '' }}
+                        </p>
+                      </div>
+                    </div>
+
+                    <!-- 操作按钮（安装中不显示） -->
+                    <template v-if="!item.busy">
+                      <button
+                        v-if="item.badge === 'not-installed'"
+                        type="button"
+                        class="ui-btn primary"
+                        :disabled="!lsStates[item.key]?.status?.supported || !lsStates[item.key]?.status?.latestAvailable"
+                        @click="installLanguageService(item.key)"
+                      >
+                        {{ t("lsp.install") }}
+                      </button>
+                      <button
+                        v-else-if="item.badge === 'update'"
+                        type="button"
+                        class="ui-btn ghost"
+                        @click="installLanguageService(item.key)"
+                      >
+                        {{ t("lsp.update") }}
+                      </button>
+                      <template v-else>
+                        <button
+                          type="button"
+                          class="ui-btn ghost danger"
+                          @click="uninstallLanguageService(item.key)"
+                        >
+                          {{ t("lsp.uninstall") }}
+                        </button>
+                      </template>
+                    </template>
                   </div>
-                  <p class="desc">
-                    {{ lsPhaseText }} {{ ls.percent > 0 && ls.phase === 'download' ? ls.percent + '%' : '' }}
-                  </p>
                 </div>
 
-                <template v-else>
-                  <!-- 已安装：版本 + 更新 / 卸载 -->
-                  <div v-if="ls.status?.installedVersion" class="save-row">
-                    <div class="save-copy">
-                      <span class="field-label">
-                        {{ t("lsp.installedVersion", { version: ls.status.installedVersion }) }}
-                      </span>
-                      <p class="desc">
-                        <template v-if="ls.status.hasUpdate">
-                          {{ t("lsp.updateAvailable", { version: ls.status.latestVersion ?? "" }) }}
-                        </template>
-                        <template v-else>{{ t("lsp.latestVersion") }}</template>
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      class="ui-btn ghost"
-                      :disabled="!ls.status.hasUpdate"
-                      @click="installLanguageServices"
-                    >
-                      {{ ls.status.hasUpdate ? t("lsp.update") : t("lsp.installedTag") }}
-                    </button>
-                    <button
-                      type="button"
-                      class="ui-btn ghost danger"
-                      @click="uninstallLanguageServices"
-                    >
-                      {{ t("lsp.uninstall") }}
-                    </button>
-                  </div>
-
-                  <!-- 未安装：一键安装 -->
-                  <div v-else class="save-row">
-                    <div class="save-copy">
-                      <span class="field-label">{{ t("lsp.notInstalled") }}</span>
-                      <p class="desc">
-                        {{
-                          ls.status?.latestAvailable
-                            ? t("lsp.installHint", { version: ls.status.latestVersion ?? "" })
-                            : t("lsp.offlineHint")
-                        }}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      class="ui-btn primary"
-                      :disabled="!ls.status?.supported"
-                      @click="installLanguageServices"
-                    >
-                      {{ t("lsp.install") }}
-                    </button>
-                  </div>
-                </template>
-
-                <!-- 镜像源选择 -->
+                <!-- 镜像源选择 + 连通状态 -->
                 <label class="field delay-field">
                   <span class="field-label">{{ t("lsp.mirror") }}</span>
                   <p class="desc">{{ t("lsp.mirrorDesc") }}</p>
-                  <select class="ui-select" :value="lsMirror" @change="onMirrorChange">
-                    <option
-                      v-for="opt in lsMirrorOptions"
-                      :key="opt.id"
-                      :value="opt.id"
-                    >
-                      {{ opt.label }}
-                    </option>
-                  </select>
+                  <div class="ls-mirror-row">
+                    <select class="ui-select" v-model="lsMirror" @change="onMirrorChange">
+                      <option
+                        v-for="opt in lsMirrorOptions"
+                        :key="opt.id"
+                        :value="opt.id"
+                      >
+                        {{ opt.label }}
+                      </option>
+                    </select>
+                    <span class="ls-mirror-status" :class="lsMirrorStatus.cls">
+                      <span class="ms-dot" />
+                      {{ lsMirrorStatus.text }}
+                    </span>
+                  </div>
                 </label>
 
                 <!-- 自定义镜像地址 -->
@@ -698,8 +759,9 @@ function onOverlayClick(event: MouseEvent) {
                   />
                 </label>
 
-                <!-- 安装错误提示 -->
-                <p v-if="ls.error" class="desc error-text">{{ ls.error }}</p>
+                <!-- 安装错误提示（显示首个有错误的语言） -->
+                <p v-if="lsStates.ts?.error" class="desc error-text">{{ lsStates.ts.error }}</p>
+                <p v-else-if="lsStates.vue?.error" class="desc error-text">{{ lsStates.vue.error }}</p>
               </div>
             </div>
 
@@ -1385,6 +1447,148 @@ function onOverlayClick(event: MouseEvent) {
   background: var(--accent);
   border-radius: 3px;
   transition: width 0.2s ease;
+}
+
+/* ==================== 语言服务列表 ==================== */
+
+.ls-list {
+  margin-top: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.ls-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ls-item:last-child {
+  border-bottom: none;
+}
+
+.ls-item-icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  letter-spacing: 0.5px;
+}
+
+.ls-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ls-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.ls-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ls-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.badge-installed {
+  background: var(--success-soft, rgba(34, 197, 94, 0.12));
+  color: var(--success, #22c55e);
+}
+
+.badge-not-installed {
+  background: var(--bg-app);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+}
+
+.badge-update {
+  background: var(--warning-soft, rgba(245, 158, 11, 0.12));
+  color: var(--warning, #f59e0b);
+}
+
+.ls-uninstall-row {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ==================== 镜像连通状态 ==================== */
+
+.ls-mirror-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ls-mirror-row .ui-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.ls-mirror-status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.ms-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ms-ok .ms-dot {
+  background: var(--success, #22c55e);
+}
+
+.ms-fail .ms-dot {
+  background: var(--warning, #f59e0b);
+}
+
+.ms-checking .ms-dot {
+  background: var(--text-muted);
+  animation: ms-pulse 1s ease-in-out infinite;
+}
+
+.ms-ok {
+  color: var(--success, #22c55e);
+}
+
+.ms-fail {
+  color: var(--warning, #f59e0b);
+}
+
+.ms-checking {
+  color: var(--text-muted);
+}
+
+@keyframes ms-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 
 .error-text {

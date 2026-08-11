@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-11
+
+### 新增
+
+- **语言服务多语言独立安装**：重构语言服务为按语言独立打包、独立安装、独立管理，架构可扩展未来新增语言（Python / Go 等）
+  - **列表形态**：设置 -> 编辑器 -> 语言服务以列表展示每种语言服务（TypeScript / Vue），各带图标、名称、能力描述、状态徽标（已安装 / 未安装 / 有更新）与独立操作按钮
+  - **按语言独立**：每种语言一个 zip（含便携 Node + 对应 language server），独立安装目录 `language-servers/<language>/`、独立安装记录、独立卸载，互不依赖
+  - **双层版本清单**：`ls-latest.json` 改为 `languages.<lang>.platforms.<platform>` 双层结构，一次拉取含全部语言
+  - **镜像连通状态指示**：镜像下拉框旁新增连通状态圆点（绿=连通、黄=不可达、灰=检测中），解决镜像不可达时用户无感知的问题
+  - **状态栏 LSP 指示器可点击**：`<span>` 改为 `<button>`，点击打开设置面板语言服务分区；降级状态黄色脉冲高亮引导
+  - **打开 Vue 文件自动提示安装**：检测到 `.vue` 文件且语言服务未就绪时弹 Toast（带「安装」按钮可跳转设置），同会话只弹一次
+  - **Toast 通知支持操作按钮**：`showNotice` 扩展可选 action 参数，带 action 的 toast 不自动消失
+  - **设置面板分区定位**：`openSettings(nav)` 支持打开时定位到指定分区
+
+### 修复
+
+- **镜像下拉框切换被切回**：`<select>` 用 `:value` 单向绑定 + `@change` 未回写 `lsMirror`，re-render 拉回初始值；改为 `v-model` 双向绑定
+- **一键安装报「无法获取语言服务版本清单」**：镜像不可达时用户无感知，新增镜像连通状态指示器引导切换源
+
+### 变更
+
+- **语言服务打包重构**：`build.mjs` 加 `--language` 参数，按语言独立 npm install + 单 entry manifest；`merge.mjs` 生成双层 `ls-latest.json`；CI 工作流矩阵改为 5 平台 × 2 语言
+- **后端重构**：`language_services.rs` 全量重写（`RemoteManifest` 双层、`BundledRuntime` 单 entry、路径按语言、`ls_install/uninstall/status` 加 language 参数）；`lsp.rs` 的 `ServerType::as_str()`、`build_server_command` 用 `rt.entry`、`lsp_check_runtime` 按语言独立检测
+- **文案调整**：去掉「内置」「一键」措辞，改为「按语言独立安装」
+
 ## [0.11.1] - 2026-08-10
 
 ### 新增
@@ -497,7 +522,8 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/yqstart/MiroCode/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/yqstart/MiroCode/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/yqstart/MiroCode/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/yqstart/MiroCode/compare/v0.10.0...v0.10.1

@@ -25,6 +25,8 @@ import { useGitStore } from "@/stores/git";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n";
 
 export interface EditorTab {
   id: string;
@@ -166,6 +168,40 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
+  /** 同会话内 Vue 文件提示只弹一次（避免重复打扰） */
+  let vueLsHintShown = false;
+
+  /**
+   * 打开 Vue 文件且语言服务未就绪时，提示用户一键安装。
+   * 条件：当前 tab 是 Vue && LSP 已启用 && Vue 语言服务未安装 && 宿主无 volar。
+   * 同会话只提示一次。
+   */
+  async function maybeHintVueLanguageService() {
+    if (vueLsHintShown) return;
+    const tab = activeTab.value;
+    if (!tab || tab.language !== "Vue") return;
+    const settings = useSettingsStore();
+    if (!settings.editor.lspEnabled) return;
+    try {
+      const { lsInstaller } = await import("@/features/lsp/installer");
+      // Vue 语言服务已安装则无需提示
+      if (lsInstaller.getState("vue").status?.installedVersion) return;
+      const { detectRuntime } = await import("@/features/lsp/nodeDetector");
+      const rt = await detectRuntime();
+      // 宿主已装 volar 也无需提示
+      if (rt.volar) return;
+      vueLsHintShown = true;
+      const ui = useUiStore();
+      const workspace = useWorkspaceStore();
+      workspace.showNotice(t("lsp.vueFileHint"), 0, {
+        label: t("lsp.install"),
+        onClick: () => ui.openSettings("editor"),
+      });
+    } catch {
+      // 检测失败静默忽略（非 Tauri 环境等）
+    }
+  }
+
   async function openFile(path: string) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
@@ -183,6 +219,7 @@ export const useEditorStore = defineStore("editor", () => {
       markExternalUpdate(path);
       workspace.selectPath(path);
       workspace.revealPath(path);
+      maybeHintVueLanguageService();
       return;
     }
 
@@ -205,6 +242,7 @@ export const useEditorStore = defineStore("editor", () => {
       activePath.value = path;
       workspace.selectPath(path);
       workspace.revealPath(path);
+      maybeHintVueLanguageService();
     } catch (error) {
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),

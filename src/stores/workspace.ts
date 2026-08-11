@@ -57,11 +57,25 @@ export interface MovePathResult {
   isDir: boolean;
 }
 
+/** Toast 操作按钮 */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
+/** Toast 通知条目 */
+export interface ToastItem {
+  id: number;
+  message: string;
+  /** 可选操作按钮（如「安装」）；带 action 的 toast 不自动消失 */
+  action?: ToastAction;
+}
+
 export const useWorkspaceStore = defineStore("workspace", () => {
   const rootPath = ref<string | null>(null);
   const rootName = ref("未打开文件夹");
   /** 通知队列：可同时堆叠多条，由 ToastHost 渲染 */
-  const toasts = ref<{ id: number; message: string }[]>([]);
+  const toasts = ref<ToastItem[]>([]);
   const filter = ref("");
   const selectedPath = ref<string | null>(null);
   const childrenMap = ref<Record<string, DirEntryInfo[]>>({});
@@ -87,14 +101,17 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const selfWriteUntil = new Map<string, number>();
   let pendingWatchPaths = new Set<string>();
 
-  function showNotice(message: string, ms = 2400) {
+  function showNotice(message: string, ms = 2400, action?: ToastAction) {
     const id = ++noticeSeq;
-    toasts.value.push({ id, message });
-    const timer = window.setTimeout(() => {
-      toasts.value = toasts.value.filter((x) => x.id !== id);
-      noticeTimers.delete(id);
-    }, ms);
-    noticeTimers.set(id, timer);
+    toasts.value.push({ id, message, action });
+    // 带 action 的 toast 默认不自动消失（ms=0），等用户点击操作或手动关闭
+    if (ms > 0) {
+      const timer = window.setTimeout(() => {
+        toasts.value = toasts.value.filter((x) => x.id !== id);
+        noticeTimers.delete(id);
+      }, ms);
+      noticeTimers.set(id, timer);
+    }
   }
 
   function dismissNotice(id: number) {

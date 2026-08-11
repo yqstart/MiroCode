@@ -1,20 +1,31 @@
-//! 语言服务捆绑包（内置 Node + typescript-language-server + @vue/language-server）
+//! 语言服务捆绑包（按语言独立打包：便携 Node + 单个 language server）
 //!
 //! 职责：
-//! 1. 从远端下载预打包的「语言服务捆绑包」zip（内含便携 Node 与两个 language server），
-//!    sha256 校验后解压到应用数据目录（app_data_dir/language-servers/），供 LSP 子进程直接使用。
+//! 1. 从远端下载预打包的「语言服务捆绑包」zip（每语言一个 zip，内含便携 Node 与该语言的 server），
+//!    sha256 校验后解压到应用数据目录（app_data_dir/language-servers/<language>/），供 LSP 子进程直接使用。
 //! 2. 提供多镜像源（GitHub Release / 加速镜像 / 自定义）与自动降级，兼容国内网络。
 //!
 //! 安装位置刻意不使用「安装目录」：macOS 上写入 App bundle 会破坏代码签名，
 //! 且 Tauri updater 整体替换 bundle 会清掉安装产物；应用数据目录与既有
 //! ~/.mirocode 凭据体系同域，安全且持久。
 //!
-//! 产物结构（由 scripts/language-servers 打包生成）：
+//! 产物结构（由 scripts/language-servers/build.mjs 按语言打包生成）：
 //! ```text
 //! zip/
-//!   manifest.json            # { version, nodeVersion, platform, entries: {ts, vue} }
+//!   manifest.json            # { language, version, nodeVersion, platform, entry }
 //!   node/                    # 便携 Node 运行时（node / node.exe）
-//!   node_modules/            # typescript-language-server / typescript / @vue/language-server
+//!   node_modules/            # 该语言对应的 language server 包
+//! ```
+//!
+//! 安装目录（按语言独立）：
+//! ```text
+//! app_data_dir/language-servers/
+//!   ts/
+//!     <version>/             # 解压后的 bundle 目录
+//!     installed.json         # { version, installedAt }
+//!   vue/
+//!     <version>/
+//!     installed.json
 //! ```
 
 use std::collections::HashMap;
@@ -33,13 +44,13 @@ use tokio::sync::Mutex;
 /// 安装进度事件名
 const LS_EVENT_PROGRESS: &str = "ls://progress";
 
-/// 语言服务目录名（位于 app_data_dir 下）
+/// 语言服务根目录名（位于 app_data_dir 下）
 const LS_DIR_NAME: &str = "language-servers";
 
 /// 远端版本清单文件名（发布在镜像源根目录）
 const LS_MANIFEST_NAME: &str = "ls-latest.json";
 
-/// 本地安装记录文件名（记录当前激活版本）
+/// 本地安装记录文件名（每语言目录下一份）
 const LS_INSTALLED_NAME: &str = "installed.json";
 
 /// 官方源：GitHub Release 固定 tag `language-servers`（每次发布覆盖更新该 Release）
@@ -50,7 +61,7 @@ const GITHUB_BASE: &str =
 const GHPROXY_BASE: &str =
     "https://ghfast.top/https://github.com/yqstart/MiroCode/releases/download/language-servers";
 
-/// 安装/卸载互斥锁（避免并发安装造成目录竞争；tokio Mutex 保证 async 内 Send）
+/// 安装/卸载互斥锁（按语言粒度，避免并发安装造成目录竞争；tokio Mutex 保证 async 内 Send）
 static LS_OPS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn ls_ops_lock() -> &'static Mutex<()> {
@@ -59,28 +70,41 @@ fn ls_ops_lock() -> &'static Mutex<()> {
 
 // ==================== 类型 ====================
 
-/// 远端版本清单（ls-latest.json）
+/// 远端版本清单（ls-latest.json）--双层结构：顶层 languages map
 #[derive(Debug, Clone, Deserialize)]
-struct RemoteManifest {
-    /// 捆绑包版本（如 "0.1.0"）
-    version: String,
+pub struct RemoteManifest {
+    /// 清单版本（展示用）
+    #[allow(dead_code)]
+    pub version: String,
+    /// 语言 -> 该语言的版本清单
+    pub languages: HashMap<String, LanguageManifest>,
+}
+
+/// 单语言的远端版本清单
+#[derive(Debug, Clone, Deserialize)]
+pub struct LanguageManifest {
+    /// 该语言捆绑包版本
+    pub version: String,
     /// 平台标识 -> 产物信息
-    platforms: HashMap<String, PlatformAsset>,
+    pub platforms: HashMap<String, PlatformAsset>,
 }
 
 /// 单个平台的产物信息
 #[derive(Debug, Clone, Deserialize)]
-struct PlatformAsset {
+pub struct PlatformAsset {
     /// 相对文件名（应用端拼镜像源 base）
-    url: String,
+    pub url: String,
     /// sha256 十六进制
-    sha256: String,
+    pub sha256: String,
 }
 
-/// 捆绑包内部 manifest.json（打包时生成）
+/// 捆绑包内部 manifest.json（打包时生成，单语言单入口）
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BundleManifest {
+    /// 语言标识（"ts" / "vue" / ...）
+    #[allow(dead_code)]
+    language: String,
     version: String,
     /// Node 运行时版本（展示用，当前未读）
     #[allow(dead_code)]
@@ -88,11 +112,11 @@ struct BundleManifest {
     /// 打包平台标识（展示/排查用，当前未读）
     #[allow(dead_code)]
     platform: String,
-    /// server 类型 -> node_modules 内相对入口
-    entries: HashMap<String, String>,
+    /// server 在 node_modules 内的相对入口 JS 路径
+    entry: String,
 }
 
-/// 本地安装记录
+/// 本地安装记录（每语言独立一份）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct InstalledRecord {
     version: String,
@@ -103,7 +127,7 @@ struct InstalledRecord {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LsStatus {
-    /// 当前平台是否有可用产物（决定「一键安装」按钮是否可用）
+    /// 当前平台是否有可用产物（决定「安装」按钮是否可用）
     pub supported: bool,
     /// 已安装版本（未安装为 null）
     pub installed_version: Option<String>,
@@ -143,14 +167,19 @@ fn ls_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// 本地安装记录路径
-fn installed_path(root: &Path) -> PathBuf {
-    root.join(LS_INSTALLED_NAME)
+/// 单语言根目录：<root>/<language>
+fn ls_lang_root(root: &Path, language: &str) -> PathBuf {
+    root.join(language)
 }
 
-/// 版本目录路径：<root>/<version>
-fn version_dir(root: &Path, version: &str) -> PathBuf {
-    root.join(version)
+/// 本地安装记录路径：<lang_root>/installed.json
+fn installed_path(lang_root: &Path) -> PathBuf {
+    lang_root.join(LS_INSTALLED_NAME)
+}
+
+/// 版本目录路径：<lang_root>/<version>
+fn version_dir(lang_root: &Path, version: &str) -> PathBuf {
+    lang_root.join(version)
 }
 
 // ==================== 镜像解析 ====================
@@ -205,53 +234,57 @@ fn platform_key() -> Result<&'static str, String> {
         all(target_os = "linux", target_arch = "aarch64")
     )))]
     {
-        Err("当前平台暂不支持内置语言服务".into())
+        Err("当前平台暂不支持语言服务".into())
     }
 }
 
 // ==================== 本地状态读写 ====================
 
-fn read_installed(root: &Path) -> Option<InstalledRecord> {
-    let raw = std::fs::read_to_string(installed_path(root)).ok()?;
+/// 读取指定语言的安装记录
+fn read_installed(lang_root: &Path) -> Option<InstalledRecord> {
+    let raw = std::fs::read_to_string(installed_path(lang_root)).ok()?;
     serde_json::from_str(&raw).ok()
 }
 
-fn write_installed(root: &Path, record: &InstalledRecord) -> Result<(), String> {
+/// 写入指定语言的安装记录
+fn write_installed(lang_root: &Path, record: &InstalledRecord) -> Result<(), String> {
     let raw = serde_json::to_string_pretty(record).map_err(|e| e.to_string())?;
-    let path = installed_path(root);
+    let path = installed_path(lang_root);
+    std::fs::create_dir_all(lang_root).map_err(|e| format!("创建语言目录失败: {e}"))?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, raw).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("写入安装记录失败: {e}"))
 }
 
-/// 读取当前激活 bundle 的运行时信息（供 lsp.rs 启动子进程）
+/// 读取指定语言激活 bundle 的运行时信息（供 lsp.rs 启动子进程）
 ///
-/// 返回 node 可执行文件绝对路径与两个 server 的入口绝对路径。
+/// 返回 node 可执行文件绝对路径与 server 入口绝对路径。
 /// 未安装 / 记录损坏 / 目录缺失时返回 None（调用方回退 npx 流程）。
 pub struct BundledRuntime {
     pub version: String,
     pub node_path: PathBuf,
-    pub ts_entry: PathBuf,
-    pub vue_entry: PathBuf,
+    /// server 入口 JS 绝对路径（单语言单入口）
+    pub entry: PathBuf,
 }
 
-/// 解析当前激活的捆绑包运行时；失败返回 None（不阻塞 LSP 回退）
-pub fn bundled_runtime(app: &AppHandle) -> Option<BundledRuntime> {
+/// 解析指定语言的激活捆绑包运行时；失败返回 None（不阻塞 LSP 回退）
+pub fn bundled_runtime(app: &AppHandle, language: &str) -> Option<BundledRuntime> {
     let root = ls_root(app).ok()?;
-    let record = read_installed(&root)?;
-    let dir = version_dir(&root, &record.version);
+    let lang_root = ls_lang_root(&root, language);
+    let record = read_installed(&lang_root)?;
+    let dir = version_dir(&lang_root, &record.version);
     if !dir.is_dir() {
         return None;
     }
     resolve_bundle_dir(&dir)
 }
 
-/// 解析捆绑包目录，返回运行时信息（node 路径 + 两个 server 入口）
+/// 解析捆绑包目录，返回运行时信息（node 路径 + server 入口）
 ///
 /// 纯路径解析（不依赖 AppHandle），便于单元测试：
 /// - 目录存在 manifest.json（BundleManifest）
 /// - node 可执行文件：Windows 为 node/node.exe，Unix 为 node/bin/node
-/// - entries 指向的 JS 入口存在
+/// - entry 指向的 JS 入口存在
 fn resolve_bundle_dir(dir: &Path) -> Option<BundledRuntime> {
     let raw = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
     let bundle: BundleManifest = serde_json::from_str(&raw).ok()?;
@@ -267,17 +300,15 @@ fn resolve_bundle_dir(dir: &Path) -> Option<BundledRuntime> {
         .map(|p| dir.join(p))
         .find(|p| p.exists())?;
 
-    let ts_entry = dir.join(bundle.entries.get("ts")?);
-    let vue_entry = dir.join(bundle.entries.get("vue")?);
-    if !ts_entry.exists() || !vue_entry.exists() {
+    let entry = dir.join(&bundle.entry);
+    if !entry.exists() {
         return None;
     }
 
     Some(BundledRuntime {
         version: bundle.version,
         node_path,
-        ts_entry,
-        vue_entry,
+        entry,
     })
 }
 
@@ -426,12 +457,12 @@ fn remove_dir_if_exists(path: &Path) {
 }
 
 /// 清理旧版本：保留指定版本，其余版本目录全部删除
-fn prune_old_versions(root: &Path, keep_version: &str) {
-    if let Ok(entries) = std::fs::read_dir(root) {
+fn prune_old_versions(lang_root: &Path, keep_version: &str) {
+    if let Ok(entries) = std::fs::read_dir(lang_root) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
-                continue; // .tmp / 隐藏目录
+            if name.starts_with('.') || name == LS_INSTALLED_NAME {
+                continue; // .tmp / 隐藏目录 / installed.json
             }
             if name != keep_version && entry.path().is_dir() {
                 remove_dir_if_exists(&entry.path());
@@ -442,22 +473,24 @@ fn prune_old_versions(root: &Path, keep_version: &str) {
 
 // ==================== 命令 ====================
 
-/// 查询语言服务状态：本地安装版本 + 远端最新版本（顺带做镜像连通性探测）
+/// 查询指定语言的服务状态：本地安装版本 + 远端最新版本（顺带做镜像连通性探测）
 #[tauri::command]
 pub async fn ls_status(
     app: AppHandle,
+    language: String,
     mirror: String,
     custom_base: Option<String>,
 ) -> Result<LsStatus, String> {
     let root = ls_root(&app)?;
+    let lang_root = ls_lang_root(&root, &language);
     let supported = platform_key().is_ok();
 
     // 本地安装版本
-    let installed_version = read_installed(&root).map(|r| r.version);
+    let installed_version = read_installed(&lang_root).map(|r| r.version);
     if let Some(v) = &installed_version {
         // 记录存在但目录缺失时视为未安装
-        if !version_dir(&root, v).is_dir() {
-            let _ = std::fs::remove_file(installed_path(&root));
+        if !version_dir(&lang_root, v).is_dir() {
+            let _ = std::fs::remove_file(installed_path(&lang_root));
             return Ok(LsStatus {
                 supported,
                 installed_version: None,
@@ -473,9 +506,16 @@ pub async fn ls_status(
     match fetch_manifest(&mirror, custom_base).await {
         Ok((manifest, mirror_used)) => {
             let latest_version = manifest
-                .platforms
-                .get(platform_key().unwrap_or_default())
-                .map(|_| manifest.version.clone());
+                .languages
+                .get(&language)
+                .and_then(|lm| lm.platforms.get(platform_key().unwrap_or_default()))
+                .map(|_| {
+                    manifest
+                        .languages
+                        .get(&language)
+                        .map(|lm| lm.version.clone())
+                        .unwrap_or_default()
+                });
             let has_update = matches!(
                 (&installed_version, &latest_version),
                 (Some(cur), Some(latest)) if cur != latest
@@ -500,19 +540,22 @@ pub async fn ls_status(
     }
 }
 
-/// 一键安装 / 更新语言服务捆绑包
+/// 安装 / 更新指定语言的语言服务捆绑包
 ///
-/// 流程：拉版本清单 → 流式下载 zip（进度事件）→ sha256 校验 → 解压 → 激活新版本 → 清理旧版本。
+/// 流程：拉版本清单 -> 流式下载 zip（进度事件）-> sha256 校验 -> 解压 -> 激活新版本 -> 清理旧版本。
 /// 已安装同版本时幂等直接返回。
 #[tauri::command]
 pub async fn ls_install(
     app: AppHandle,
+    language: String,
     mirror: String,
     custom_base: Option<String>,
 ) -> Result<String, String> {
     let _guard = ls_ops_lock().lock().await;
 
     let root = ls_root(&app)?;
+    let lang_root = ls_lang_root(&root, &language);
+    std::fs::create_dir_all(&lang_root).map_err(|e| format!("创建语言目录失败: {e}"))?;
     let platform = platform_key()?;
 
     let emit = |phase: &str, received: u64, total: u64, percent: f64, message: &str| {
@@ -532,16 +575,21 @@ pub async fn ls_install(
     emit("manifest", 0, 0, 0.0, "");
     let (manifest, mirror_used) = fetch_manifest(&mirror, custom_base.clone()).await?;
 
-    let asset = manifest
+    let lang_manifest = manifest.languages.get(&language).ok_or_else(|| {
+        format!("远端清单不含语言「{language}」的产物")
+    })?;
+    let asset = lang_manifest
         .platforms
         .get(platform)
         .cloned()
-        .ok_or_else(|| format!("当前平台 {platform} 暂未发布语言服务捆绑包"))?;
+        .ok_or_else(|| format!("当前平台 {platform} 暂未发布 {language} 语言服务捆绑包"))?;
 
     // 幂等：已安装同版本直接返回
-    if let Some(cur) = read_installed(&root) {
-        if cur.version == manifest.version && version_dir(&root, &manifest.version).is_dir() {
-            return Ok(manifest.version);
+    if let Some(cur) = read_installed(&lang_root) {
+        if cur.version == lang_manifest.version
+            && version_dir(&lang_root, &lang_manifest.version).is_dir()
+        {
+            return Ok(lang_manifest.version.clone());
         }
     }
 
@@ -551,13 +599,13 @@ pub async fn ls_install(
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
 
-    let tmp_dir = root.join(".tmp");
+    let tmp_dir = lang_root.join(".tmp");
     remove_dir_if_exists(&tmp_dir);
     std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("创建临时目录失败: {e}"))?;
 
     let zip_path = tmp_dir.join(format!(
-        "language-servers-{}-{}.zip",
-        manifest.version, platform
+        "ls-{language}-{}-{platform}.zip",
+        lang_manifest.version
     ));
 
     // 依次尝试镜像源下载（下载失败自动切下一个源）
@@ -600,7 +648,7 @@ pub async fn ls_install(
 
     // 4. 解压到临时目录，成功后原子改名激活
     emit("extract", 0, 0, 0.0, "");
-    let unpack_dir = tmp_dir.join(&manifest.version);
+    let unpack_dir = tmp_dir.join(&lang_manifest.version);
     std::fs::create_dir_all(&unpack_dir).map_err(|e| e.to_string())?;
 
     let zip_clone = zip_path.clone();
@@ -614,15 +662,15 @@ pub async fn ls_install(
         .map_err(|_| "捆绑包缺少 manifest.json，已中止安装".to_string())?;
     let bundle: BundleManifest =
         serde_json::from_str(&bundle_raw).map_err(|e| format!("捆绑包 manifest 解析失败: {e}"))?;
-    if bundle.version != manifest.version {
+    if bundle.version != lang_manifest.version {
         remove_dir_if_exists(&tmp_dir);
         return Err(format!(
             "捆绑包版本不匹配（期望 {}，实际 {}）",
-            manifest.version, bundle.version
+            lang_manifest.version, bundle.version
         ));
     }
 
-    let final_dir = version_dir(&root, &manifest.version);
+    let final_dir = version_dir(&lang_root, &lang_manifest.version);
     if final_dir.exists() {
         remove_dir_if_exists(&final_dir);
     }
@@ -630,29 +678,30 @@ pub async fn ls_install(
 
     // 5. 记录激活版本 + 清理旧版本与临时文件
     write_installed(
-        &root,
+        &lang_root,
         &InstalledRecord {
-            version: manifest.version.clone(),
+            version: lang_manifest.version.clone(),
             installed_at: chrono::Local::now().to_rfc3339(),
         },
     )?;
-    prune_old_versions(&root, &manifest.version);
+    prune_old_versions(&lang_root, &lang_manifest.version);
     remove_dir_if_exists(&tmp_dir);
 
     emit("done", 0, 0, 100.0, "");
-    Ok(manifest.version)
+    Ok(lang_manifest.version.clone())
 }
 
-/// 卸载语言服务捆绑包（删除版本目录与安装记录）
+/// 卸载指定语言的语言服务捆绑包（删除版本目录与安装记录）
 #[tauri::command]
-pub async fn ls_uninstall(app: AppHandle) -> Result<(), String> {
+pub async fn ls_uninstall(app: AppHandle, language: String) -> Result<(), String> {
     let _guard = ls_ops_lock().lock().await;
 
     let root = ls_root(&app)?;
-    if let Some(record) = read_installed(&root) {
-        remove_dir_if_exists(&version_dir(&root, &record.version));
+    let lang_root = ls_lang_root(&root, &language);
+    if let Some(record) = read_installed(&lang_root) {
+        remove_dir_if_exists(&version_dir(&lang_root, &record.version));
     }
-    let _ = std::fs::remove_file(installed_path(&root));
+    let _ = std::fs::remove_file(installed_path(&lang_root));
     Ok(())
 }
 
@@ -698,8 +747,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 构造一个结构完整的假 bundle 目录（与打包脚本产物结构一致）
-    fn make_fake_bundle(dir: &std::path::Path) {
+    /// 构造一个结构完整的假 bundle 目录（与打包脚本产物结构一致，单语言单入口）
+    fn make_fake_bundle(dir: &std::path::Path, language: &str, version: &str) {
         // node 可执行文件（Unix 结构 node/bin/node；Windows 结构 node/node.exe）
         if cfg!(target_os = "windows") {
             std::fs::create_dir_all(dir.join("node")).unwrap();
@@ -708,24 +757,24 @@ mod tests {
             std::fs::create_dir_all(dir.join("node/bin")).unwrap();
             std::fs::write(dir.join("node/bin/node"), b"#!/bin/sh\nexit 0\n").unwrap();
         }
-        // 两个 server 入口
-        let ts = dir.join("node_modules/typescript-language-server/lib/node.js");
-        std::fs::create_dir_all(ts.parent().unwrap()).unwrap();
-        std::fs::write(&ts, b"// fake\n").unwrap();
-        let vue = dir.join("node_modules/@vue/language-server/bin/vue-language-server.js");
-        std::fs::create_dir_all(vue.parent().unwrap()).unwrap();
-        std::fs::write(&vue, b"// fake\n").unwrap();
-        // manifest.json
+        // server 入口（按语言不同）
+        let entry = match language {
+            "ts" => "node_modules/typescript-language-server/lib/cli.mjs",
+            "vue" => "node_modules/@vue/language-server/bin/vue-language-server.js",
+            _ => "node_modules/fake-server/index.js",
+        };
+        let entry_path = dir.join(entry);
+        std::fs::create_dir_all(entry_path.parent().unwrap()).unwrap();
+        std::fs::write(&entry_path, b"// fake\n").unwrap();
+        // manifest.json（单语言单入口格式）
         std::fs::write(
             dir.join("manifest.json"),
             serde_json::json!({
-                "version": "0.1.0",
+                "language": language,
+                "version": version,
                 "nodeVersion": "22.14.0",
                 "platform": "darwin-arm64",
-                "entries": {
-                    "ts": "node_modules/typescript-language-server/lib/node.js",
-                    "vue": "node_modules/@vue/language-server/bin/vue-language-server.js"
-                }
+                "entry": entry,
             })
             .to_string(),
         )
@@ -733,25 +782,34 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_bundle_dir_valid() {
+    fn test_resolve_bundle_dir_valid_ts() {
         let dir = tempfile::tempdir().unwrap();
-        make_fake_bundle(dir.path());
+        make_fake_bundle(dir.path(), "ts", "0.2.0");
 
         let rt = resolve_bundle_dir(dir.path()).expect("应能解析合法 bundle");
-        assert_eq!(rt.version, "0.1.0");
+        assert_eq!(rt.version, "0.2.0");
         if cfg!(target_os = "windows") {
             assert_eq!(rt.node_path, dir.path().join("node/node.exe"));
         } else {
             assert_eq!(rt.node_path, dir.path().join("node/bin/node"));
         }
-        assert!(rt.ts_entry.ends_with("typescript-language-server/lib/node.js"));
-        assert!(rt.vue_entry.ends_with("vue-language-server.js"));
+        assert!(rt.entry.ends_with("typescript-language-server/lib/cli.mjs"));
+    }
+
+    #[test]
+    fn test_resolve_bundle_dir_valid_vue() {
+        let dir = tempfile::tempdir().unwrap();
+        make_fake_bundle(dir.path(), "vue", "0.2.0");
+
+        let rt = resolve_bundle_dir(dir.path()).expect("应能解析合法 bundle");
+        assert_eq!(rt.version, "0.2.0");
+        assert!(rt.entry.ends_with("vue-language-server.js"));
     }
 
     #[test]
     fn test_resolve_bundle_dir_missing_manifest() {
         let dir = tempfile::tempdir().unwrap();
-        make_fake_bundle(dir.path());
+        make_fake_bundle(dir.path(), "ts", "0.2.0");
         std::fs::remove_file(dir.path().join("manifest.json")).unwrap();
         assert!(resolve_bundle_dir(dir.path()).is_none());
     }
@@ -759,20 +817,54 @@ mod tests {
     #[test]
     fn test_resolve_bundle_dir_missing_entry() {
         let dir = tempfile::tempdir().unwrap();
-        make_fake_bundle(dir.path());
-        // 删除 vue 入口文件
-        std::fs::remove_dir_all(
-            dir.path().join("node_modules/@vue/language-server"),
-        )
-        .unwrap();
+        make_fake_bundle(dir.path(), "ts", "0.2.0");
+        // 删除 server 入口文件
+        std::fs::remove_dir_all(dir.path().join("node_modules/typescript-language-server"))
+            .unwrap();
         assert!(resolve_bundle_dir(dir.path()).is_none());
     }
 
     #[test]
     fn test_resolve_bundle_dir_missing_node() {
         let dir = tempfile::tempdir().unwrap();
-        make_fake_bundle(dir.path());
+        make_fake_bundle(dir.path(), "ts", "0.2.0");
         std::fs::remove_dir_all(dir.path().join("node")).unwrap();
         assert!(resolve_bundle_dir(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_remote_manifest_deserialize() {
+        // 验证双层清单格式能正确反序列化
+        let raw = serde_json::json!({
+            "version": "0.2.0",
+            "languages": {
+                "ts": {
+                    "version": "0.2.0",
+                    "platforms": {
+                        "darwin-arm64": {
+                            "url": "ls-ts-0.2.0-darwin-arm64.zip",
+                            "sha256": "abc123"
+                        }
+                    }
+                },
+                "vue": {
+                    "version": "0.2.0",
+                    "platforms": {
+                        "darwin-arm64": {
+                            "url": "ls-vue-0.2.0-darwin-arm64.zip",
+                            "sha256": "def456"
+                        }
+                    }
+                }
+            }
+        });
+        let manifest: RemoteManifest = serde_json::from_value(raw).unwrap();
+        assert_eq!(manifest.languages.len(), 2);
+        let ts = manifest.languages.get("ts").unwrap();
+        assert_eq!(ts.version, "0.2.0");
+        assert_eq!(ts.platforms.len(), 1);
+        let asset = ts.platforms.get("darwin-arm64").unwrap();
+        assert_eq!(asset.url, "ls-ts-0.2.0-darwin-arm64.zip");
+        assert_eq!(asset.sha256, "abc123");
     }
 }

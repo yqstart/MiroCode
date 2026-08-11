@@ -138,7 +138,7 @@ class LspManagerImpl {
     this.root = root;
     this.setStatus("checking");
 
-    // 检测运行时
+    // 检测运行时（按语言独立：bundle 已装或宿主有对应 server）
     const runtime = await detectRuntime();
     if (!runtime.node) {
       this.setStatus("unavailable");
@@ -149,7 +149,7 @@ class LspManagerImpl {
 
     this.setStatus("starting");
 
-    // 启动 TS server（如果可用）
+    // 启动 TS server（bundle 已装或宿主 typescript-language-server 可用）
     if (runtime.tsLs && !this.clients.has("ts")) {
       try {
         const serverId = await startServer("ts", root);
@@ -167,7 +167,7 @@ class LspManagerImpl {
       }
     }
 
-    // 启动 Vue server（如果可用）
+    // 启动 Vue server（bundle 已装或宿主 vue-language-server 可用）
     if (runtime.volar && !this.clients.has("vue")) {
       try {
         const serverId = await startServer("vue", root);

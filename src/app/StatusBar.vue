@@ -9,11 +9,13 @@ import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
 import { useSshStore } from "@/stores/ssh";
+import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useI18n } from "@/i18n";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
+const ui = useUiStore();
 const workspace = useWorkspaceStore();
 const editor = useEditorStore();
 const git = useGitStore();
@@ -129,6 +131,11 @@ function cycleTheme() {
   settings.setTheme(next);
 }
 
+/** 点击 LSP 指示器：打开设置面板的语言服务分区 */
+function openLsPanel() {
+  ui.openSettings("editor");
+}
+
 function toggleBranches(event: MouseEvent) {
   event.stopPropagation();
   if (!branch.value) return;
@@ -208,12 +215,14 @@ onBeforeUnmount(() => {
       >
         {{ t("status.conflicts", { count: snapshot.conflictCount }) }}
       </button>
-      <span
+      <button
         v-if="lspStatusLabel"
+        type="button"
         class="lsp-status"
         :class="lspStatusClass"
-        :title="lspStatusLabel"
-      >{{ lspStatusLabel }}</span>
+        :title="lspStatusLabel + ' · ' + t('lsp.statusClickHint')"
+        @click="openLsPanel"
+      >{{ lspStatusLabel }}</button>
       <span
         v-if="aiStatusLabel"
         class="ai-status"
@@ -390,8 +399,14 @@ onBeforeUnmount(() => {
 .lsp-status {
   font-size: 11px;
   flex-shrink: 0;
-  padding: 0 4px;
+  padding: 1px 6px;
   border-radius: 3px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.lsp-status:hover {
+  background: var(--accent-soft);
 }
 
 .lsp-ok {
@@ -400,10 +415,16 @@ onBeforeUnmount(() => {
 
 .lsp-warn {
   color: var(--warning, #f59e0b);
+  animation: lsp-pulse 2s ease-in-out infinite;
 }
 
 .lsp-info {
   color: var(--text-muted);
+}
+
+@keyframes lsp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 /* AI 补全状态指示器 */
