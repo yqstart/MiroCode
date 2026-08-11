@@ -127,6 +127,9 @@ jobs:
 
       # 固定 tag「language-servers」：每次发布覆盖更新该 Release，
       # 应用端通过 latest/download/language-servers/ls-latest.json 直接拉最新。
+      # 必须标记 --prerelease：GitHub 的 releases/latest 永不指向 pre-release，
+      # 否则 language-servers 会抢占 Latest 标记，导致应用更新端点
+      # releases/latest/download/latest.json 解析到它而 404。
       - name: Create / update Release
         id: release
         shell: bash
@@ -140,6 +143,7 @@ jobs:
             gh release delete "$TAG" --yes --cleanup-tag
           fi
           gh release create "$TAG" \
+            --prerelease \
             --title "Language Servers $VERSION" \
             --notes "语言服务捆绑包 v$VERSION（TS / Vue 各语言独立 zip，含便携 Node）。由 Miro Code 设置内按语言安装。" \
             dist/ls/ls-*.zip \
