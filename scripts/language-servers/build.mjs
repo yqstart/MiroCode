@@ -24,7 +24,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -160,14 +160,23 @@ async function main() {
   if (pkg.archive === "tar") {
     run("tar", ["-xzf", nodeArchive, "--strip-components=1", "-C", nodeDir]);
   } else {
-    // Windows：bsdtar/GNU tar 都支持 zip；--force-local 防止 Git Bash 的 GNU tar
-    // 把盘符路径（D:\...）误当作远程主机（"Cannot connect to D: resolve failed"）
-    run("tar", [
-      "-xf", nodeArchive,
-      "--force-local",
-      "--strip-components=1",
-      "-C", nodeDir,
+    // Windows：Git Bash 的 GNU tar 不支持 zip 格式，改用 PowerShell Expand-Archive。
+    // node zip 顶层是 node-vX.Y.Z-win-x64/，解压后剥离顶层目录再移动到 nodeDir。
+    const winExtract = join(staging, ".node-win-extract");
+    rmSync(winExtract, { recursive: true, force: true });
+    mkdirSync(winExtract, { recursive: true });
+    run("powershell", [
+      "-NoProfile",
+      "-Command",
+      `Expand-Archive -Path '${nodeArchive}' -DestinationPath '${winExtract}' -Force`,
     ]);
+    const topDir = readdirSync(winExtract).find(
+      (f) => existsSync(join(winExtract, f, "node.exe")),
+    );
+    if (!topDir) throw new Error("Node zip 结构异常，未找到 node.exe 所在顶层目录");
+    // 用 Node fs 拷贝（跨平台无 shell 转义问题），剥离顶层目录
+    cpSync(join(winExtract, topDir), nodeDir, { recursive: true });
+    rmSync(winExtract, { recursive: true, force: true });
   }
 
   // 3. 安装该语言的 language server 包到 staging/node_modules
