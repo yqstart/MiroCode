@@ -742,7 +742,7 @@ function onOverlayClick(event: MouseEvent) {
                 </div>
 
                 <!-- 镜像源选择 + 连通状态 -->
-                <label class="field delay-field">
+                <label class="field ls-mirror-field">
                   <span class="field-label">{{ t("lsp.mirror") }}</span>
                   <p class="desc">{{ t("lsp.mirrorDesc") }}</p>
                   <div class="ls-mirror-row">
@@ -1333,6 +1333,12 @@ function onOverlayClick(event: MouseEvent) {
   max-width: 200px;
 }
 
+/* 镜像行：不套 delay-field 的 200px 限制，select + 状态文字占满整行，
+   文字在 select 内显示不下时才截断，不再「文字跟着下拉框长度走」 */
+.ls-mirror-field {
+  margin-top: 14px;
+}
+
 .update-actions {
   margin-top: 14px;
   display: flex;
@@ -1558,6 +1564,7 @@ function onOverlayClick(event: MouseEvent) {
 .ls-mirror-row .ui-select {
   flex: 1;
   min-width: 0;
+  width: 100%; /* 原生 select 固有宽度 = 最长 option，显式 100% 让它占满整行 */
 }
 
 .ls-mirror-status {
