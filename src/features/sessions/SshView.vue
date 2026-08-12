@@ -1,16 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { HardDrive, LayoutGrid, TerminalSquare, X } from "lucide-vue-next";
+import { LayoutGrid, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import RemoteTerminal from "@/features/sessions/RemoteTerminal.vue";
-import SftpPanel from "@/features/sessions/SftpPanel.vue";
 import SshHostsView from "@/features/sessions/SshHostsView.vue";
-import {
-  parseHostKeyUnknown,
-  sftpOpen,
-  type SshConnectConfig,
-} from "@/shared/sshApi";
-import { sftpSessionId, useSshStore } from "@/stores/ssh";
+import { parseHostKeyUnknown, type SshConnectConfig } from "@/shared/sshApi";
+import { useSshStore } from "@/stores/ssh";
 import { useI18n } from "@/i18n";
 
 const { t } = useI18n();
@@ -19,12 +14,6 @@ const { surface, remoteSessions, activeRemoteId } = storeToRefs(ssh);
 
 const connecting = ref(false);
 const error = ref("");
-const sftpBusy = ref(false);
-const sftpError = ref("");
-
-const activeRemote = computed(() =>
-  remoteSessions.value.find((t) => t.id === activeRemoteId.value) ?? null,
-);
 
 const showHosts = computed(
   () => surface.value === "hosts" || !remoteSessions.value.length,
@@ -33,7 +22,6 @@ const showHosts = computed(
 function goHosts() {
   ssh.goHosts();
   error.value = "";
-  sftpError.value = "";
 }
 
 function onRemoteConnect(config: SshConnectConfig) {
@@ -83,46 +71,11 @@ async function closeRemoteFully(
   if (!ok) return;
   if (!remoteSessions.value.length && !opts.keepError) {
     error.value = "";
-    sftpError.value = "";
   }
 }
 
 function activateRemoteSession(id: string) {
   ssh.activateRemote(id);
-}
-
-async function switchRemotePane(pane: "shell" | "sftp") {
-  const session = activeRemote.value;
-  if (!session) return;
-  sftpError.value = "";
-  if (pane === "shell") {
-    ssh.setRemotePane(session.id, "shell");
-    return;
-  }
-  if (session.sftpOpened) {
-    ssh.setRemotePane(session.id, "sftp");
-    return;
-  }
-  sftpBusy.value = true;
-  try {
-    await sftpOpen(sftpSessionId(session.id), session.config);
-    ssh.markSftpOpened(session.id, true);
-  } catch (e) {
-    sftpError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    sftpBusy.value = false;
-  }
-}
-
-function onSftpFailed(id: string, message: string) {
-  sftpError.value = message;
-  ssh.markSftpOpened(id, false);
-  ssh.setRemotePane(id, "shell");
-}
-
-function onSftpDisconnected(id: string) {
-  ssh.markSftpOpened(id, false);
-  ssh.setRemotePane(id, "shell");
 }
 
 watch(remoteSessions, (list) => {
@@ -165,32 +118,6 @@ watch(remoteSessions, (list) => {
       </button>
     </header>
 
-    <div
-      v-if="!showHosts && activeRemote"
-      class="pane-switch"
-    >
-      <button
-        type="button"
-        class="pane-btn"
-        :class="{ active: activeRemote?.pane === 'shell' }"
-        @click="switchRemotePane('shell')"
-      >
-        <TerminalSquare :size="13" />
-        {{ t("sessions.shell") }}
-      </button>
-      <button
-        type="button"
-        class="pane-btn"
-        :class="{ active: activeRemote?.pane === 'sftp' }"
-        :disabled="sftpBusy"
-        @click="switchRemotePane('sftp')"
-      >
-        <HardDrive :size="13" />
-        {{ sftpBusy ? t("sessions.connecting") : t("sessions.sftp") }}
-      </button>
-      <p v-if="sftpError" class="pane-error">{{ sftpError }}</p>
-    </div>
-
     <div class="body">
       <SshHostsView
         v-show="showHosts"
@@ -200,36 +127,19 @@ watch(remoteSessions, (list) => {
       />
 
       <!-- 远程会话 -->
-      <template v-for="term in remoteSessions" :key="term.id">
-        <RemoteTerminal
-          v-show="
-            !showHosts &&
-            term.id === activeRemoteId &&
-            term.pane === 'shell'
-          "
-          :session-id="term.id"
-          :config="term.config"
-          :active="
-            !showHosts &&
-            term.id === activeRemoteId &&
-            term.pane === 'shell'
-          "
-          @failed="onRemoteFailed(term.id, $event)"
-          @closed="onRemoteClosed(term.id)"
-        />
-        <SftpPanel
-          v-if="term.sftpOpened"
-          v-show="
-            !showHosts &&
-            term.id === activeRemoteId &&
-            term.pane === 'sftp'
-          "
-          :session-id="sftpSessionId(term.id)"
-          :config="term.config"
-          @failed="onSftpFailed(term.id, $event)"
-          @disconnected="onSftpDisconnected(term.id)"
-        />
-      </template>
+      <RemoteTerminal
+        v-for="term in remoteSessions"
+        v-show="
+          !showHosts &&
+          term.id === activeRemoteId
+        "
+        :key="term.id"
+        :session-id="term.id"
+        :config="term.config"
+        :active="!showHosts && term.id === activeRemoteId"
+        @failed="onRemoteFailed(term.id, $event)"
+        @closed="onRemoteClosed(term.id)"
+      />
     </div>
   </div>
 </template>
@@ -287,52 +197,6 @@ watch(remoteSessions, (list) => {
 .subtab .close:hover {
   opacity: 1;
   background: var(--bg-app);
-}
-
-.pane-switch {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-panel);
-}
-
-.pane-btn {
-  height: 26px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.pane-btn:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: var(--accent-soft);
-}
-
-.pane-btn.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-weight: 600;
-}
-
-.pane-btn:disabled {
-  opacity: 0.55;
-  cursor: wait;
-}
-
-.pane-error {
-  margin: 0 0 0 auto;
-  font-size: 11px;
-  color: var(--danger);
-  max-width: 50%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .body {
