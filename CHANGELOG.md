@@ -6,6 +6,12 @@
 
 ### 新增
 
+- **格式化开箱即用**：内置 Prettier 引擎（前端 standalone 打包，零配置、零依赖、离线可用），覆盖 JS/TS/JSON/CSS/SCSS/Less/HTML/Vue/Markdown/YAML/GraphQL；项目已安装 prettier 时自动优先项目版本（尊重项目配置与插件），未安装时内置引擎兜底，任意项目直接可用
+  - **⌥⇧F（Shift+Alt+F）** 格式化当前文件，对齐 VS Code 惯例；右键菜单 / 文件树「格式化文档」同步生效
+  - **保存时格式化** 新设置（默认关）：保存前自动格式化，开启后对自动保存同样生效；格式化失败静默保留原内容，不阻塞保存
+  - **Prettier 默认开启**（原默认关闭）；设置面板与快捷键列表已同步更新
+- **补全开箱即用**：修复 LSP 补全 override 遮蔽本地补全的问题——本地关键词 / snippet / HTML / CSS / Tailwind / 文档词源与 LSP 语义补全合并共存，LSP server 不可用或无对应语言时本地补全自动生效，任意语言补全永不为空
+
 ### 修复
 
 - **Git Push 卡住但终端可立即成功**：应用内 `git_push` 之前走 `libgit2` 认证/SSH 回调链，和终端手动 `git push` 的系统 Git / OpenSSH / credential 环境不一致，导致部分机器上编辑器内推送卡住而终端秒成功；现改为后端直接执行系统 `git push`（保留现有前端 PushDialog / 认证弹窗协议），并为子进程增加真实 120s 超时终止、非交互环境变量（`GIT_TERMINAL_PROMPT=0` / `GCM_INTERACTIVE=never` / `SSH_ASKPASS_REQUIRE=never`）、HTTPS 一次性临时 credential-store 注入与成功后受限时长的 `git credential approve` 持久化，避免超时后后台残留挂起进程

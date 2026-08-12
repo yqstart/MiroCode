@@ -45,8 +45,10 @@ export interface EditorPreferences {
   autoSaveDelayMs: number;
   /** 启用工作区 ESLint 诊断。需项目已安装 eslint */
   eslintEnabled: boolean;
-  /** 启用工作区 Prettier（需项目已安装 prettier） */
+  /** 启用代码格式化（内置 Prettier 引擎，项目已装 prettier 时优先走项目本地） */
   prettierEnabled: boolean;
+  /** 保存文件前自动格式化（需 prettierEnabled） */
+  formatOnSave: boolean;
   /** 移动文件/文件夹后如何更新相对 import 引用 */
   updateImportsOnMove: UpdateImportsOnMove;
   /** 启用 LSP 语言服务（TS/JS/Vue）。需宿主已安装 Node + language server */
@@ -88,7 +90,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoSave: true,
     autoSaveDelayMs: 1000,
     eslintEnabled: false,
-    prettierEnabled: false,
+    prettierEnabled: true,
+    formatOnSave: false,
     updateImportsOnMove: "prompt",
     lspEnabled: true,
     aiCompletion: {

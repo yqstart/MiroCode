@@ -271,6 +271,14 @@ function createEditor() {
                 return true;
               },
             },
+            // ⌥⇧F：格式化当前文件（对齐 VS Code Shift+Alt+F；内置引擎开箱即用）
+            {
+              key: "Shift-Alt-f",
+              run: () => {
+                void editorStore.formatDocument();
+                return true;
+              },
+            },
           ]),
         ),
         langComp.of(lang ? [lang] : []),

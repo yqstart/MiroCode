@@ -452,7 +452,9 @@ function documentWordSource(context: CompletionContext): ReturnType<CompletionSo
   return completeAnyWord(context);
 }
 
-function sourcesForPath(filePath: string): CompletionSource[] {
+/** 按文件类型分发的本地补全源（关键词/snippet/HTML/CSS/Tailwind/文档词）；
+ *  导出供 LSP 扩展合并进 autocomplete override，避免 override 遮蔽本地兜底 */
+export function sourcesForPath(filePath: string): CompletionSource[] {
   const sources: CompletionSource[] = [];
 
   sources.push((context) => {

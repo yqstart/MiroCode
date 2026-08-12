@@ -5,12 +5,11 @@ import {
   languageFromPath,
   pathExists,
   readTextFile,
-  relativeToRoot,
   toAbsolutePath,
   writeTextFile,
 } from "@/shared/fs";
 import { isRasterImagePath } from "@/shared/media";
-import { formatWithPrettier } from "@/shared/toolingApi";
+import { formatDocumentContent } from "@/features/editor/formatting";
 import type { EditorFindRequest, EditorJumpTarget, EditorOpenAt } from "@/shared/types";
 import { useCompareStore } from "@/stores/compare";
 import { useGitStore } from "@/stores/git";
@@ -389,17 +388,21 @@ export const useEditorStore = defineStore("editor", () => {
     activate(prev.path);
   }
 
-  async function formatDocument(path?: string) {
+  /**
+   * 格式化文件（项目本地 prettier 优先，内置引擎兜底，开箱即用零配置）。
+   * quiet 模式用于「保存时格式化」：不弹成功/失败提示，失败静默保留原内容。
+   */
+  async function formatDocument(path?: string, options?: { quiet?: boolean }) {
     const workspace = useWorkspaceStore();
     const settings = useSettingsStore();
     if (!workspace.rootPath) return;
     if (!settings.editor.prettierEnabled) {
-      workspace.showNotice("请先在设置中启用 Prettier");
+      if (!options?.quiet) workspace.showNotice("请先在设置中启用代码格式化");
       return;
     }
     const targetPath = path ?? activePath.value;
     if (!targetPath) {
-      workspace.showNotice("当前无活动文件可格式化");
+      if (!options?.quiet) workspace.showNotice("当前无活动文件可格式化");
       return;
     }
     if (isRasterImagePath(targetPath)) return;
@@ -412,24 +415,25 @@ export const useEditorStore = defineStore("editor", () => {
     if (!tab) return;
 
     try {
-      const rel = relativeToRoot(workspace.rootPath, tab.path);
-      const formatted = await formatWithPrettier(
+      const formatted = await formatDocumentContent(
         workspace.rootPath,
-        rel,
+        tab.path,
         tab.content,
       );
       if (formatted !== tab.content) {
         markExternalUpdate(tab.path);
         tab.content = formatted;
-        workspace.showNotice(`已格式化 ${tab.name}`);
-      } else {
+        if (!options?.quiet) workspace.showNotice(`已格式化 ${tab.name}`);
+      } else if (!options?.quiet) {
         workspace.showNotice("无需格式化");
       }
     } catch (error) {
-      workspace.showNotice(
-        error instanceof Error ? error.message : String(error),
-        3200,
-      );
+      if (!options?.quiet) {
+        workspace.showNotice(
+          error instanceof Error ? error.message : String(error),
+          3200,
+        );
+      }
     }
   }
 
@@ -450,6 +454,12 @@ export const useEditorStore = defineStore("editor", () => {
         workspace.showNotice("当前无活动文件可保存");
       }
       return;
+    }
+
+    // 保存时格式化：先格式化再写盘（失败静默，保留原内容继续保存）
+    const settings = useSettingsStore();
+    if (settings.editor.formatOnSave) {
+      await formatDocument(tab.path, { quiet: true });
     }
 
     let content = tab.content;
@@ -484,8 +494,13 @@ export const useEditorStore = defineStore("editor", () => {
     if (!dirty.length) return;
     try {
       let saved = 0;
+      const settings = useSettingsStore();
       for (const tab of dirty) {
         if (!workspace.rootPath) continue;
+        // 保存时格式化：先格式化再写盘（失败静默，保留原内容继续保存）
+        if (settings.editor.formatOnSave) {
+          await formatDocument(tab.path, { quiet: true });
+        }
         workspace.markSelfWrite(tab.path);
         await writeTextFile(workspace.rootPath, tab.path, tab.content);
         tab.original = tab.content;

@@ -124,7 +124,10 @@ export const enUS = {
       "Show workspace ESLint diagnostics for JS/TS/Vue. Project eslint required.",
     prettierEnabled: "Prettier",
     prettierDesc:
-      "Enable Prettier; format-on-save depends on this. Project prettier required.",
+      "Built-in formatter, zero-config out of the box; uses the project's Prettier when installed.",
+    formatOnSave: "Format on Save",
+    formatOnSaveDesc:
+      "Format the file before saving (requires Prettier). Press {shortcut} to format manually.",
     updateImportsOnMove: "Update imports on move",
     updateImportsOnMoveDesc:
       "After drag-move, scan and update relative import paths (not npm packages or @ aliases).",
@@ -158,6 +161,7 @@ export const enUS = {
     shortcutQuickOpen: "Quick Open",
     shortcutFindInFiles: "Find in Files",
     shortcutSave: "Save",
+    shortcutFormat: "Format Document",
     shortcutSettings: "Open Settings",
     shortcutComplete: "Trigger Suggest",
     shortcutGoToDef: "Go to Import / Path",

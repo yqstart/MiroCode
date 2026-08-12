@@ -391,6 +391,10 @@ const shortcutRows = computed(() => [
     action: t("settings.shortcutFindInFiles"),
   },
   { keys: formatShortcut("mod", "S"), action: t("settings.shortcutSave") },
+  {
+    keys: formatShortcut("shift", "alt", "F"),
+    action: t("settings.shortcutFormat"),
+  },
   { keys: formatShortcut("mod", ","), action: t("settings.shortcutSettings") },
   { keys: formatShortcut("mod", "Space"), action: t("settings.shortcutComplete") },
   { keys: formatShortcut("mod", "Enter"), action: t("settings.shortcutGoToDef") },
@@ -615,6 +619,23 @@ function onOverlayClick(event: MouseEvent) {
                   :data-on="editor.prettierEnabled"
                   :title="editor.prettierEnabled ? t('settings.enabled') : t('settings.disabled')"
                   @click="settings.patchEditor({ prettierEnabled: !editor.prettierEnabled })"
+                />
+              </div>
+              <div class="save-row">
+                <div class="save-copy">
+                  <span class="field-label">{{ t("settings.formatOnSave") }}</span>
+                  <p class="desc">
+                    {{ t("settings.formatOnSaveDesc", { shortcut: formatShortcut("shift", "alt", "F") }) }}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="ui-toggle"
+                  role="switch"
+                  :aria-checked="editor.formatOnSave"
+                  :data-on="editor.formatOnSave"
+                  :title="editor.formatOnSave ? t('settings.enabled') : t('settings.disabled')"
+                  @click="settings.patchEditor({ formatOnSave: !editor.formatOnSave })"
                 />
               </div>
               <label class="field delay-field">

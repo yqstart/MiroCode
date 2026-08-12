@@ -121,7 +121,9 @@ export const zhCN = {
     eslintEnabled: "ESLint",
     eslintDesc: "对 JS/TS/Vue 等显示工作区 ESLint 诊断。需项目已安装 eslint。",
     prettierEnabled: "Prettier",
-    prettierDesc: "启用 Prettier；保存时格式化依赖此项。需项目已安装 prettier。",
+    prettierDesc: "内置格式化引擎，开箱即用零配置；项目已装 prettier 时自动优先使用项目版本。",
+    formatOnSave: "保存时格式化",
+    formatOnSaveDesc: "保存文件前自动格式化（需开启 Prettier）。快捷键 {shortcut} 可随时手动格式化。",
     updateImportsOnMove: "移动时更新 import",
     updateImportsOnMoveDesc:
       "拖拽或移动文件/文件夹后，扫描并更新项目内相对路径 import（不含 npm 包名与 @ 别名）。",
@@ -155,6 +157,7 @@ export const zhCN = {
     shortcutQuickOpen: "快速打开文件",
     shortcutFindInFiles: "在文件中查找",
     shortcutSave: "保存当前文件",
+    shortcutFormat: "格式化当前文件",
     shortcutSettings: "打开设置",
     shortcutComplete: "触发代码补全",
     shortcutGoToDef: "跳转到 import/路径",

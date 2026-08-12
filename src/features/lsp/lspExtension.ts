@@ -29,6 +29,7 @@ import { uriToPath } from "./client";
 import { findTargetAtPosAsync } from "@/features/editor/navigation";
 import { findReferences } from "@/features/editor/findReferences";
 import { renameSymbol } from "@/features/editor/renameSymbol";
+import { sourcesForPath } from "@/features/editor/completions";
 
 // ==================== 辅助函数 ====================
 
@@ -618,10 +619,15 @@ export function createLspExtension(filePath: string): Extension[] {
     createSignatureHelpExtension(filePath),
   ];
 
-  // 补全扩展（LSP source 作为 autocompletion source）
+  // 补全扩展：LSP 语义补全 + 本地兜底源（关键词/snippet/HTML/CSS/Tailwind/文档词）合并。
+  // CM6 override 为多 source 并行合并：LSP 不可用（返回 null）时本地 source 自动生效，
+  // 保证任意语言、无 server 环境下补全不为空（开箱即用）。
   extensions.push(
     autocompletion({
-      override: [createLspCompletionSource(filePath)],
+      override: [
+        createLspCompletionSource(filePath),
+        ...sourcesForPath(filePath),
+      ],
       activateOnTyping: true,
     }),
   );
