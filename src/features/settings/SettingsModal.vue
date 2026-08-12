@@ -632,7 +632,7 @@ function onOverlayClick(event: MouseEvent) {
                   @click="settings.patchEditor({ formatOnSave: !editor.formatOnSave })"
                 />
               </div>
-              <label class="field delay-field">
+              <label class="field ls-mirror-field">
                 <span class="field-label">{{ t("settings.updateImportsOnMove") }}</span>
                 <p class="desc">{{ t("settings.updateImportsOnMoveDesc") }}</p>
                 <select
@@ -1565,6 +1565,11 @@ function onOverlayClick(event: MouseEvent) {
   flex: 1;
   min-width: 0;
   width: 100%; /* 原生 select 固有宽度 = 最长 option，显式 100% 让它占满整行 */
+}
+
+/* 与镜像行同款全宽 select：移动时更新 import 等下拉也占满整行 */
+.ls-mirror-field > .ui-select {
+  width: 100%;
 }
 
 .ls-mirror-status {
