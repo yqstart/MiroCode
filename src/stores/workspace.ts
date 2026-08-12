@@ -315,30 +315,57 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (!selected || Array.isArray(selected)) return false;
 
       const previousRoot = rootPath.value;
-      if (previousRoot !== selected) {
+      const isWorkspaceSwitch = previousRoot && previousRoot !== selected;
+      if (isWorkspaceSwitch) {
         const editor = useEditorStore();
         if (!editor.confirmDiscardForWorkspaceSwitch()) return false;
       }
 
+      // 先把所有会抛错的异步操作（list_dir、reset stores）跑完并吞错。
+      // 任一步失败都只 toast 通知 + 提前 return，绝不污染 rootPath 等已显示状态。
+      let entries: DirEntryInfo[] = [];
+      try {
+        entries = await listDir(selected, selected, extraIgnores.value);
+      } catch (error) {
+        showNotice(
+          `无法打开 ${selected}：${error instanceof Error ? error.message : String(error)}`,
+          3200,
+        );
+        return false;
+      }
+
+      // 收集所有 reset/refresh 调用的错误，仅记日志不影响主流程
+      const sideErrors: string[] = [];
+      async function safeCall(label: string, fn: () => unknown | Promise<unknown>) {
+        try {
+          await fn();
+        } catch (e) {
+          sideErrors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
+      // 提交语义：先改 UI 状态（rootPath 等），再触发 reset/refresh。
+      // 即使后续 reset 全部失败，UI 至少是「打开了」——比「半残状态」更可恢复。
       stopWatch();
       rootPath.value = selected;
       rootName.value = basename(selected);
-      childrenMap.value = {};
+      childrenMap.value = { [selected]: entries };
       expanded.value = new Set([selected]);
       selectedPath.value = selected;
       filter.value = "";
       locateHits.value = [];
       clipboard.value = null;
       selfWriteUntil.clear();
-      await loadChildren(selected);
       recentFolders.value = pushRecentFolder(selected);
 
-      if (previousRoot !== selected) {
+      if (isWorkspaceSwitch) {
         useEditorStore().clearForWorkspaceSwitch();
         useCompareStore().clearAll();
-        await useSessionsStore().resetLocalForWorkspace(selected);
+        await safeCall("sessions", () =>
+          useSessionsStore().resetLocalForWorkspace(selected),
+        );
         const { useSshStore } = await import("@/stores/ssh");
-        await useSshStore().resetForWorkspace();
+        await safeCall("ssh", () => useSshStore().resetForWorkspace());
         const search = useSearchStore();
         search.clearResults();
         search.closeQuickOpen();
@@ -347,6 +374,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         const { usePackageScriptsStore } = await import("@/stores/packageScripts");
         usePackageScriptsStore().clear();
         void usePackageScriptsStore().refresh(true);
+      }
+
+      if (sideErrors.length) {
+        console.warn("[openFolder] side resets had errors:", sideErrors);
       }
 
       if (!options?.quiet) {
