@@ -2,26 +2,23 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
-## [Unreleased]
+## [0.13.0] - 2026-08-12
 
 ### 新增
 
-- **格式化开箱即用**：内置 Prettier 引擎（前端 standalone 打包，零配置、零依赖、离线可用），覆盖 JS/TS/JSON/CSS/SCSS/Less/HTML/Vue/Markdown/YAML/GraphQL；项目已安装 prettier 时自动优先项目版本（尊重项目配置与插件），未安装时内置引擎兜底，任意项目直接可用
-  - **⌥⇧F（Shift+Alt+F）** 格式化当前文件，对齐 VS Code 惯例；右键菜单 / 文件树「格式化文档」同步生效
-  - **保存时格式化** 新设置（默认关）：保存前自动格式化，开启后对自动保存同样生效；格式化失败静默保留原内容，不阻塞保存
-  - **Prettier 默认开启**（原默认关闭）；设置面板与快捷键列表已同步更新
-- **补全开箱即用**：修复 LSP 补全 override 遮蔽本地补全的问题——本地关键词 / snippet / HTML / CSS / Tailwind / 文档词源与 LSP 语义补全合并共存，LSP server 不可用或无对应语言时本地补全自动生效，任意语言补全永不为空
-- **终端顶栏 Scripts 快捷芯片（勾选制）**：活动栏 Package 弹层中逐条**勾选**脚本，勾选的脚本以芯片形式常驻本地终端顶栏右侧，点击即在当前终端执行；勾选集合**按项目记忆**（`localStorage` 独立 key），取消勾选即从顶栏消失，脚本被删除时对应芯片自动隐藏
+- **Markdown 渲染重做为 Cursor 风格**：白底干净 + 紧凑排版 + 完整结构（标题分级 / 列表缩进 / 引用 / 表格 / 分割线 / 链接 / 图片 / 代码块 全部规范化）
+  - 容器 `max-width: 920px` 居中，行距 1.65；正文改用 `--text-primary` 不再降级
+  - **自研轻量代码高亮**（`src/features/editor/markdown/highlight.ts`）：5 类 token（keyword / string / comment / number / type），覆盖 JS / TS / JSX / TSX / JSON / Bash / Python / YAML / MD；不引 `highlight.js` / `shiki`，bundle 不增加新依赖
+  - **marked 单例封装**（`src/features/editor/markdown/preview.ts`）：GFM + breaks + 自定义 code 渲染器，调用方只 import `renderMarkdown`
+- **MD 预览/编辑切换** 改为 **右上角 Segmented Control**（眼睛/笔两段浮动控件），与 Cursor 入口对位；标签栏单按钮改为仅 SVG 保留
 
-### 修复
+### 优化
 
-- **Git Push 卡住但终端可立即成功**：应用内 `git_push` 之前走 `libgit2` 认证/SSH 回调链，和终端手动 `git push` 的系统 Git / OpenSSH / credential 环境不一致，导致部分机器上编辑器内推送卡住而终端秒成功；现改为后端直接执行系统 `git push`（保留现有前端 PushDialog / 认证弹窗协议），并为子进程增加真实 120s 超时终止、非交互环境变量（`GIT_TERMINAL_PROMPT=0` / `GCM_INTERACTIVE=never` / `SSH_ASKPASS_REQUIRE=never`）、HTTPS 一次性临时 credential-store 注入与成功后受限时长的 `git credential approve` 持久化，避免超时后后台残留挂起进程
+- **活动栏 Git Log 入口挪到左上 Git 图标下**：顶组顺序 Files → Commit → Log，底组 Scripts → Settings；Git 区域视觉聚合，操作更顺手
 
-### 移除
+### 持久化
 
-- **SFTP 功能**：Miro Code 定位回到「面向智能体的代码查看器」，移除 SFTP 子面板、双击远程文件编辑、`miro-sftp://` 虚拟路径、12 个 `sftp_*` 后端命令、SFTP 复用 Shell 共享 Session 的 `pause` 同步机制（`ShellSession.session` 字段与 `wait_shell_io_ready` / `with_sftp_io`）一并下线。SSH 终端（主机列表 / 远程 Shell / 凭据 / known_hosts）保持完全可用
-- **本地终端顶栏 Package 快捷芯片**：终端顶栏不再渲染「Scripts [npm] + serve/dev/test/...」横排 chips，纯净多标签布局；`package.json scripts` 仍可通过活动栏 Package 入口启动
-- **活动栏终端入口 + subtab 关闭按钮**：移除 ActivityBar 的 TerminalSquare 入口（终端入口统一为 `⌘/Ctrl+J` / 资源树右键「在终端中打开」 / 欢迎页 CTA），移除 subtab 标签的 `×` 关闭按钮（每个 subtab 不再可独立关闭，编辑区「终端」标签的 × 仍可整体关闭终端视图）
+- MD 模式按文件路径存 `localStorage['mirocode.md-mode:<path>']`（'preview' / 'edit'），切回同一文件自动恢复上次选择；不污染 `EditorTab` 字段
 
 ## [0.12.0] - 2026-08-11
 
@@ -541,8 +538,8 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.12.0...HEAD
-[0.12.0]: https://github.com/yqstart/MiroCode/compare/v0.11.1...v0.12.0
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/yqstart/MiroCode/compare/v0.12.0...v0.13.0
 [0.11.1]: https://github.com/yqstart/MiroCode/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/yqstart/MiroCode/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/yqstart/MiroCode/compare/v0.10.0...v0.10.1
