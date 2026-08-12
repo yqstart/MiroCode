@@ -154,20 +154,20 @@ export function attachTerminalInputBridge(
       rawWrite(data);
       return;
     }
+    const now = performance.now();
     // 删除控制字符：xterm custom handler 返回 true 后经 onData 派发，
     // 用 rawWrite 绕过 safeWrite 去重，保证按住删除键可连续删除。
     if (data === "\x7f" || data === "\x1b[3~") {
       rawWrite(data);
       return;
     }
-    const now = performance.now();
     // 删除/Tab 后的误插空白兜底（主防线在 beforeinput，此处为副防线）
-    // 追加场景：打包环境 Backspace 的 keydown 会被 IME 层吞掉（lastDeleteAt 不更新），
-    // 残留的提交文本被 IME 替换为等长空格后经 xterm _inputEvent 派发——
-    // 特征是无 keydown 对应（keyDownSeen=false）且发生在最近一次组合提交后。
+    // 组合态（ime.composing）中的空白数据只有「IME 退格把拼音替换为等长空格」
+    // 这一个来源（选字/上屏不产生空格字节），直接拦截；非组合态靠时间窗兜底。
     if (
       isWhitespaceOnly(data) &&
-      (now - ime.lastCompositionEndAt < 300 ||
+      (ime.composing ||
+        now - ime.lastCompositionEndAt < 300 ||
         now - ime.lastDeleteAt < 300 ||
         (!ime.keyDownSeen && now - ime.lastCompositionEndAt < 1500))
     ) {
@@ -211,7 +211,15 @@ export function attachTerminalInputBridge(
       if (tuiMode) return;
       if (ev.target !== textarea) return;
       const ie = ev as InputEvent;
-      if (ie.isComposing) return;
+      if (ie.isComposing) {
+        // 组合态中的空白 input：IME 退格把拼音替换为等长空格占位（macOS 拼音
+        // 行为），放行会经 xterm _inputEvent 二次派发泄漏（「删除键变空格」根因）。
+        // 组合态空格只有泄漏这一个来源（选字/上屏不产生空格 input），安全拦截。
+        if (ie.data && isWhitespaceOnly(ie.data)) {
+          ev.stopPropagation();
+        }
+        return;
+      }
       const now = performance.now();
       // 删除/Tab 后的误插空白兜底（主防线在 beforeinput，此处为副防线）：
       // 打包环境 preventDefault 不可靠时，浏览器对 textarea 的 input 事件
