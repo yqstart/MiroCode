@@ -144,9 +144,7 @@ onBeforeUnmount(() => {
         <GitCommitHorizontal :size="20" :stroke-width="1.75" />
         <span v-if="gitBadge" class="badge">{{ gitBadge }}</span>
       </button>
-    </div>
-
-    <div class="group">
+      <!-- Git Log：紧贴左上 Git 图标下，与 commit 组成 git 区 -->
       <button
         class="item"
         type="button"
@@ -156,6 +154,9 @@ onBeforeUnmount(() => {
       >
         <History :size="18" :stroke-width="1.75" />
       </button>
+    </div>
+
+    <div class="group">
       <button
         ref="scriptsBtn"
         class="item"
