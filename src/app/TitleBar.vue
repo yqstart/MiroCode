@@ -234,9 +234,9 @@ onUnmounted(() => {
 }
 
 /* 终端入口：与红绿灯那侧对称的右留白
-   （红绿灯侧 .traffic-spacer 78px 含控件 + trafficLightPosition.x:14 边距） */
+   （红绿灯侧 trafficLightPosition.x:14 逻辑点 + .traffic-spacer 78pt 间距） */
 .terminal-btn {
-  margin-left: var(--space-3);
+  margin-left: var(--space-5);
 }
 
 .sidebar-btn:hover {
