@@ -204,6 +204,12 @@ onUnmounted(() => {
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
+/* 终端入口：与红绿灯那侧对称的右留白
+   （红绿灯侧 .traffic-spacer 78px 含控件 + trafficLightPosition.x:14 边距） */
+.terminal-btn {
+  margin-left: var(--space-3);
+}
+
 .sidebar-btn:hover {
   color: var(--text-primary);
   background: var(--accent-soft);
