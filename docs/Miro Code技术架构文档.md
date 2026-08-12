@@ -16,7 +16,7 @@
 | 阶段 | **功能定版**：核心功能集已收敛，进入优化迭代期（性能 / 流畅度 / 交互体验） |
 | 明确不做 | AI 对话面板、AI Agent、MCP / Skills 生态、插件市场、Monaco 替换 CM6 |
 
-已落地能力：资源树、多标签编辑、全局搜索 / 替换、Git（Commit / Log / Branches / Rebase / 冲突）、本地终端、SSH + SFTP、四主题、中英文界面、**LSP（TS / Vue）**、**AI 行内补全（ghost text）**、应用内更新。
+已落地能力：资源树、多标签编辑、全局搜索 / 替换、Git（Commit / Log / Branches / Rebase / 冲突）、本地终端、SSH 远程 Shell、四主题、中英文界面、**LSP（TS / Vue）**、**AI 行内补全（ghost text）**、应用内更新。
 
 ---
 
@@ -45,9 +45,9 @@
 | 文件系统 | `@tauri-apps/plugin-fs` + Rust `fs.rs` | 打开目录、读写、变更监听（watch） |
 | 对话框 | `@tauri-apps/plugin-dialog` | 打开文件夹 / 保存 / 确认删除 |
 | 自动更新 | `@tauri-apps/plugin-updater` + GitHub `latest.json` | 启动 / 手动检查；需签名私钥（CI Secrets） |
-| Git | **Rust `git2`（libgit2）** | vendored，含 HTTPS + SSH |
+| Git | **Rust `git2` + 系统 Git** | 状态/提交/冲突以 `git2` 为主；push/rebase/delete-remote 等远端或兼容性敏感路径按需走系统 Git |
 | 搜索 | **Rust walkdir + ignore + 正则** | async + `spawn_blocking` + LRU 文件列表缓存 |
-| SSH | **Rust `ssh2`（libssh2，vendored）** | 主机列表、凭据、SFTP |
+| SSH | **Rust `ssh2`（libssh2，vendored）** | 主机列表、凭据、远程 Shell |
 | AI 补全 | **Rust `reqwest` 流式请求 + tokio** | SSE 逐 chunk 推送前端，取消在途请求 |
 | LSP | **Rust stdio transport + 外部语言服务器** | `typescript-language-server` + `@vue/language-server` |
 | 终端 | **`@xterm/xterm` + `tauri-plugin-pty`** | 本地 PTY；SSH 走 ssh2 原生通道 |
@@ -66,7 +66,7 @@
 ### 3.3 明确不做的自研
 
 - 不自研文本缓冲与渲染引擎（用 CM6）
-- 不自研 Git 协议栈（用 libgit2）
+- 不自研 Git 协议栈（优先复用 `git2` / 系统 Git，按能力边界混合实现）
 - 不自研 LSP 服务端（桥接官方/社区语言服务器，宿主提供 Node，缺 Node 降级 v1 正则方案）
 
 ---
@@ -85,7 +85,7 @@
 │              Tauri IPC（commands + events）                   │
 ├──────────┬──────────┬──────────┬──────────┬──────────┬───────┤
 │ fs.rs    │ search.rs│ git.rs   │ ssh.rs   │ ai.rs    │ lsp.rs│
-│ 文件读写  │ 文件名/内容 │ 状态/提交  │ SSH/SFTP │ AI 流式  │ LSP  │
+│ 文件读写  │ 文件名/内容 │ 状态/提交  │ 远程终端  │ AI 流式  │ LSP  │
 │ 监听     │ 搜索/替换 │ 分支/Rebase│ 远程终端  │ 补全请求 │ 传输  │
 └──────────┴──────────┴──────────┴──────────┴──────────┴───────┘
                            │
@@ -97,7 +97,7 @@
 | 进程 | 职责 |
 |---|---|
 | WebView（前端） | UI、编辑器实例、主题、交互状态、AI ghost text 渲染 |
-| Rust 主进程 | 文件访问、Git、目录遍历、搜索、SSH/SFTP、AI 请求、LSP 子进程管理、窗口控制（macOS 红绿灯） |
+| Rust 主进程 | 文件访问、Git、目录遍历、搜索、SSH Shell、AI 请求、LSP 子进程管理、窗口控制（macOS 红绿灯） |
 | 外部子进程 | 内置捆绑包的 Node + `typescript-language-server` + `@vue/language-server`（设置内一键安装）；回退时用宿主 npx 启动上述 server 与 Prettier / ESLint；PTY shell |
 
 ### 4.2 目录结构（定版）
@@ -112,7 +112,7 @@ MiroCode/
 │   │   ├── search/           # QuickOpen（⌘P）/ FindInFiles（⌘⇧F）
 │   │   ├── git/              # CommitPanel / GitLogPanel / BranchesPopup / CompareView（冲突）/
 │   │   │                     # InteractiveRebaseDialog / PushDialog / UpdateProjectDialog
-│   │   ├── sessions/         # 本地终端 / SSH / SFTP / Package 脚本芯片
+│   │   ├── sessions/         # 本地终端 / SSH 远程 Shell / Package 脚本芯片
 │   │   ├── settings/         # 设置弹层（editor / ai / shortcuts / system）
 │   │   ├── lsp/              # LSP client（manager / transport / extension / nodeDetector）
 │   │   └── ai/               # AI 补全（manager / providers / fimTemplates / streamFilter / …）
@@ -165,7 +165,7 @@ MiroCode/
 | `git` / `gitLog` | Git 状态、远程操作守卫（`remoteInFlight` 防并发）、提交历史 |
 | `search` | 搜索历史、文件列表缓存 |
 | `sessions` | 本地终端会话（PTY 生命周期） |
-| `ssh` | SSH 主机列表、远程 shell / SFTP、切换项目强制断开 |
+| `ssh` | SSH 主机列表、远程 Shell、切换项目强制断开 |
 | `settings` | 应用设置（主题 / 编辑器 / AI / 更新） |
 | `compare` / `packageScripts` / `appUpdate` | 冲突分栏 / npm scripts / 更新状态 |
 
@@ -267,11 +267,10 @@ MiroCode/
 | 项 | 说明 |
 |---|---|
 | 本地终端 | 编辑区独立标签，⌘J 开关；xterm + PTY（`tauri-plugin-pty`），多标签顶栏 + Package 快捷芯片；隐藏时保活，关闭标签才销毁 |
-| SSH | **独立编辑区标签**（与本地终端解耦），状态栏左下角 Server 按钮入口；主机列表 / 远程终端 / SFTP 子标签 |
+| SSH | **独立编辑区标签**（与本地终端解耦），状态栏左下角 Server 按钮入口；主机列表 / 远程终端 |
 | 主机配置 | `~/.mirocode/ssh-profiles.json`（应用级全局，与项目无关）；「记住密码」写 `~/.mirocode/ssh-credentials.json`（0600） |
 | 密钥校验 | `~/.ssh/known_hosts` + `~/.mirocode/known_hosts`；未知主机指纹需用户确认（TOFU） |
-| SFTP | 双击目录进入、双击文本文件在编辑区打开（⌘S 写回远程）、右键 下载 / 编辑 / 重命名 / 删除、上传按钮 |
-| 切换项目 | 强制关闭本窗口全部远程 Shell / SFTP；本地终端随工作区重建 |
+| 切换项目 | 强制关闭本窗口全部远程 Shell；本地终端随工作区重建 |
 | 输入桥 | `terminalInputBridge.ts` 拦截纯 Backspace/Delete 直接写控制字符（WKWebView 误报空格兜底 + `suppressNextWhitespace` 标志） |
 | 终端尺寸 | 外层 padding + 内层无 padding 挂 xterm；可见后才 `fit + spawn`（隐藏态错误尺寸会致提示符折行） |
 
@@ -306,7 +305,7 @@ MiroCode/
 
 前端只通过类型化封装调用（`src/shared/` 下的 API 包装），不直接拼裸字符串命令。
 
-**命令命名空间**（Rust `commands/*.rs`）：`fs.*`（读写 / watch / pathExists）、`search.*`（files / content / replace）、`git.*`（status / stage / commit / branch / push / pull / rebase / stash / conflict…）、`ssh.*`（profile / connect / sftp_*）、`ai_*`（请求 / 取消 / 凭据）、`lsp_*`（start / check_runtime）、`tooling.*`（format_with_prettier / lint_with_eslint）、`window_chrome.*`（macOS 红绿灯）。
+**命令命名空间**（Rust `commands/*.rs`）：`fs.*`（读写 / watch / pathExists）、`search.*`（files / content / replace）、`git.*`（status / stage / commit / branch / push / pull / rebase / stash / conflict…）、`ssh.*`（profile / connect / shell）、`ai_*`（请求 / 取消 / 凭据）、`lsp_*`（start / check_runtime）、`tooling.*`（format_with_prettier / lint_with_eslint）、`window_chrome.*`（macOS 红绿灯）。
 
 **事件**：
 - `ai://delta/{req_id}`、`ai://done|error/{req_id}`：AI 流式补全

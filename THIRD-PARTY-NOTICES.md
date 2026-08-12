@@ -100,7 +100,7 @@
 ### ssh2 / libssh2-sys
 - 仓库：https://github.com/alexcrichton/ssh2-rs
 - 许可证：MIT OR Apache-2.0
-- 用途：SSH 远程终端 / SFTP（vendored OpenSSL）
+- 用途：SSH 远程终端（vendored OpenSSL）
 
 ### reqwest / tokio / futures-util
 - 仓库：https://github.com/seanmonstar/reqwest 、https://github.com/tokio-rs/tokio

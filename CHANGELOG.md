@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### 新增
+
+### 修复
+
+- **Git Push 卡住但终端可立即成功**：应用内 `git_push` 之前走 `libgit2` 认证/SSH 回调链，和终端手动 `git push` 的系统 Git / OpenSSH / credential 环境不一致，导致部分机器上编辑器内推送卡住而终端秒成功；现改为后端直接执行系统 `git push`（保留现有前端 PushDialog / 认证弹窗协议），并为子进程增加真实 120s 超时终止、非交互环境变量（`GIT_TERMINAL_PROMPT=0` / `GCM_INTERACTIVE=never` / `SSH_ASKPASS_REQUIRE=never`）、HTTPS 一次性临时 credential-store 注入与成功后受限时长的 `git credential approve` 持久化，避免超时后后台残留挂起进程
+
+### 移除
+
+- **SFTP 功能**：Miro Code 定位回到「面向智能体的代码查看器」，移除 SFTP 子面板、双击远程文件编辑、`miro-sftp://` 虚拟路径、12 个 `sftp_*` 后端命令、SFTP 复用 Shell 共享 Session 的 `pause` 同步机制（`ShellSession.session` 字段与 `wait_shell_io_ready` / `with_sftp_io`）一并下线。SSH 终端（主机列表 / 远程 Shell / 凭据 / known_hosts）保持完全可用
+
 ## [0.12.0] - 2026-08-11
 
 ### 新增

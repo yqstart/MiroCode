@@ -279,10 +279,63 @@ Midnight / Cyberpunk 各自维护完整 `HighlightStyle`（青蓝 / 霓虹粉青
 
 ## 8. 动效与可访问性
 
-- 面板展开 / 折叠、弹层过渡、标签动画、树 Chevron 旋转、Toast：150–200ms ease，纯 CSS
+### 8.1 全局动效 token
+
+| Token | 值 | 用途 |
+|---|---|---|
+| `--transition-fast` | `140ms` | hover / 轻反馈（按钮、tab、文字色） |
+| `--transition-medium` | `200ms` | 弹层 / popover / tooltip |
+| `--transition-slow` | `280ms` | 画布切换 / welcome |
+| `--ease-out` | `cubic-bezier(0.16, 1, 0.3, 1)` | 全局缓动 |
+
+### 8.2 全局关键帧
+
+| 关键帧 | 用途 | 形态 |
+|---|---|---|
+| `miro-overlay-in` | 遮罩淡入 | `opacity 0 → 1` |
+| `miro-dialog-in` | dialog 弹入 | `translateY(6px) scale(0.98) → 1` |
+| `miro-tab-in` | tab 入场 | `translateY(2px) + opacity` |
+| `miro-toast-in` | toast 入场 | `translateY(8px) scale(0.98) → 1` |
+| `miro-canvas-in` | 画布主区切换 | `translateY(2px) + opacity` |
+| `miro-tooltip-in` | CM6 tooltip / completion / signature enter | `translateY(3px) scale(0.98) → 1` |
+| `miro-popover-in` | context menu / dropdown / project menu | `scale(0.96) + opacity → 1` |
+| `miro-status-pulse` | 状态点脉动 | `opacity 1 ↔ 0.55` |
+| `miro-dot-pop` | dirty / git dot 一次性弹入 | `scale 0.4 → 1.25 → 1` |
+| `miro-blink` | bracket match / accept hint | 一次性高亮 fade |
+
+### 8.3 动效密度（当前实现）
+
+| 区域 | 动效策略 |
+|---|---|
+| 文件 tab | TransitionGroup + `miro-tab-in` + active `::after` 缩放 |
+| 画布主区（CM/ImagePreview/md-preview/welcome） | `<Transition name="canvas" mode="out-in">` |
+| CodeMirror 弹层 | enter-only（CM6 原生无 leave 钩子） |
+| find panel / ctx menu / dropdown | `miro-popover-in` + leave 淡出 |
+| ActivityBar / StatusBar 状态点 | `miro-status-pulse` |
+| 资源树 / Commit 行 hover | `background/color/box-shadow` transition |
+| UpdateBadge / TitleBar icon | 简短 crossfade / badge enter |
+
+### 8.4 Reduced motion
+
+- 必须尊重系统「减少动态效果」偏好：
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+```
+
+### 8.5 原则
+
+- 面板展开 / 折叠、弹层过渡、标签动画、树 Chevron 旋转、Toast：**140–280ms**，纯 CSS
 - 主题切换允许短暂交叉淡入，避免整页闪白
 - 对比度：正文与背景满足可读；错误色不仅依赖颜色，需配合图标 / 下划线
-- 减少动态效果：尊重系统「减少动态效果」偏好（能读到则遵循）
+- CodeMirror 交互反馈（tooltip/completion/ghost text/bracket match）要**克制**：辅助感，不要干扰编码
 
 ---
 

@@ -35,7 +35,7 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 - LSP：Rust stdio transport 桥接 `typescript-language-server` + `@vue/language-server`；启动优先**已安装的语言服务捆绑包**（设置内按语言独立安装的 Node + server，`app_data_dir/language-servers/<language>/`），未安装回退宿主 npx（缺则降级 v1 正则）
 - AI 补全：Rust reqwest 流式 + SSE 推送，ghost text 渲染（DeepSeek / 自定义 provider）
 - 搜索：Rust walk + 模糊/内容检索/替换（async + LRU 缓存）
-- Git：Rust `git2`（日常操作 + 冲突解决）
+- Git：Rust `git2` + 系统 Git（状态/提交/冲突走 `git2`；push/rebase/delete-remote 等远端/兼容性敏感操作按需走系统 Git）
 - 主题：`miro-dark` / `dawn` / `midnight` / `cyberpunk`
 - 文件图标：Material Icon Theme（资源树 / Commit / 快速打开等）
 
@@ -61,11 +61,10 @@ AI 行内补全（`features/ai` + `features/editor/aiCompletion`）：ghost text
 会话视图：本地终端（`features/sessions`，编辑区标签，⌘J）与 SSH 远程（`features/sessions/SshView.vue` + `stores/ssh.ts`，独立编辑区标签，状态栏左下角 SSH 按钮入口）**已拆分解耦**。
 - 本地终端：随工作区切换重建（cwd = 项目根）；多标签顶栏 + Package 快捷芯片；仅关闭标签或切换工作区时销毁（PTY 随组件卸载退出）
 - package.json scripts：活动栏终端上方 Package 入口 + 本地终端顶栏快捷芯片；点击后在本地终端注入 `pnpm/npm/yarn/bun run …`
-- SSH 远程：独立编辑区标签，含主机列表 / 远程终端 / SFTP；关闭 SSH 标签不影响本地终端，反之亦然
+- SSH 远程：独立编辑区标签，含主机列表 / 远程终端；关闭 SSH 标签不影响本地终端，反之亦然
 - SSH 主机配置：应用级全局（`~/.mirocode/ssh-profiles.json`），与项目/窗口无关；可选「记住密码」写入 `~/.mirocode/ssh-credentials.json`（0600）
 - SSH 主机密钥：校验 `~/.ssh/known_hosts` + `~/.mirocode/known_hosts`；未知密钥需用户确认（TOFU）
-- SSH 活跃连接：切换项目时强制关闭本窗口全部远程 Shell / SFTP；SFTP 优先复用同一 Shell Session
-- SFTP：上传/下载；双击文件夹进入、双击文本文件在编辑区打开（⌘S 保存回远程）；右键编辑/下载/重命名/删除
+- SSH 活跃连接：切换项目时强制关闭本窗口全部远程 Shell
 
 ## 命名规范
 

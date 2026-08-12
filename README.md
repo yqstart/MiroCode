@@ -20,7 +20,7 @@
 - **AI 行内智能补全**（ghost text，类 Copilot）：DeepSeek / 自定义 provider，流式生成，Tab 接受
 - ⌘P 文件查找、⌘⇧F 全局搜索与替换
 - Git 全功能：左侧 Commit、编辑区 Git Log、Branches、交互式 Rebase、冲突分栏解决、HTTPS 登录
-- 本地终端（⌘J）与 SSH 远程（状态栏入口，终端 + SFTP）
+- 本地终端（⌘J）与 SSH 远程（状态栏入口，远程终端）
 - 四套主题：`miro-dark`（默认）/ `dawn` / `midnight` / `cyberpunk`
 - 中 / 英界面语言切换（无需重启）
 - 应用内检查更新（GitHub Release）
