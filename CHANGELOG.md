@@ -2,6 +2,15 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.13.3] - 2026-08-12
+
+### 修复
+
+- **打开项目后 macOS Dock 菜单真崩溃**（用户截图控制台 `unrecognized selector sent to NSMenu instance` + `libc++abi: terminating due to uncaught exception of type NSException`）
+  - 根因：`set_dock_menu_macos` 里 5 处把 `NSMenu` class 当 `NSMenuItem` 用了：`item_recent / empty_item / 循环里 item / 当前文件 item` 都用 `nsmenu_class`（`NSMenu`）`alloc`，但接着调的是 `initWithTitle:action:keyEquivalent:`（`NSMenuItem` 的 init selector）。结果 alloc 出来的是 `NSMenu` 实例，selector 不识别抛 `NSException`；release profile `panic = "abort"` 把整进程 abort 掉
+  - 修：单独拿一次 `nsmenuitem_class`，所有 `NSMenuItem` 实例的 alloc 切到它；`NSMenu` 仍走 `nsmenu_class`
+  - 加固：`set_dock_menu` 外层 `std::panic::catch_unwind` + `AssertUnwindSafe`，即使后续再有 Rust panic 也只 `eprintln` 日志 + 返回 `Ok`，不再二次 abort
+
 ## [0.13.2] - 2026-08-12
 
 ### 新增
@@ -596,6 +605,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
+[0.13.3]: https://github.com/yqstart/MiroCode/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/yqstart/MiroCode/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/yqstart/MiroCode/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/yqstart/MiroCode/compare/v0.12.0...v0.13.0
