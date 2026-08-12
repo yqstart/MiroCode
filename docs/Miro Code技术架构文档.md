@@ -112,7 +112,7 @@ MiroCode/
 │   │   ├── search/           # QuickOpen（⌘P）/ FindInFiles（⌘⇧F）
 │   │   ├── git/              # CommitPanel / GitLogPanel / BranchesPopup / CompareView（冲突）/
 │   │   │                     # InteractiveRebaseDialog / PushDialog / UpdateProjectDialog
-│   │   ├── sessions/         # 本地终端 / SSH 远程 Shell / Package 脚本芯片
+│   │   ├── sessions/         # 本地终端 / SSH 远程 Shell
 │   │   ├── settings/         # 设置弹层（editor / ai / shortcuts / system）
 │   │   ├── lsp/              # LSP client（manager / transport / extension / nodeDetector）
 │   │   └── ai/               # AI 补全（manager / providers / fimTemplates / streamFilter / …）
@@ -266,7 +266,7 @@ MiroCode/
 
 | 项 | 说明 |
 |---|---|
-| 本地终端 | 编辑区独立标签，⌘J 开关；xterm + PTY（`tauri-plugin-pty`），多标签顶栏 + Package 快捷芯片；隐藏时保活，关闭标签才销毁 |
+| 本地终端 | 编辑区独立标签，⌘J 开关；xterm + PTY（`tauri-plugin-pty`），多标签顶栏；隐藏时保活，关闭标签才销毁 |
 | SSH | **独立编辑区标签**（与本地终端解耦），状态栏左下角 Server 按钮入口；主机列表 / 远程终端 |
 | 主机配置 | `~/.mirocode/ssh-profiles.json`（应用级全局，与项目无关）；「记住密码」写 `~/.mirocode/ssh-credentials.json`（0600） |
 | 密钥校验 | `~/.ssh/known_hosts` + `~/.mirocode/known_hosts`；未知主机指纹需用户确认（TOFU） |

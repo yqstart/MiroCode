@@ -1,32 +1,19 @@
 <script setup lang="ts">
 import { Plus, TerminalSquare, X } from "lucide-vue-next";
-import { watch } from "vue";
 import { storeToRefs } from "pinia";
 import LocalTerminal from "@/features/sessions/LocalTerminal.vue";
-import PackageScriptsMenu from "@/features/sessions/PackageScriptsMenu.vue";
 import { useSessionsStore } from "@/stores/sessions";
-import { usePackageScriptsStore } from "@/stores/packageScripts";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useI18n } from "@/i18n";
 
 const { t } = useI18n();
 const sessions = useSessionsStore();
 const workspace = useWorkspaceStore();
-const pkg = usePackageScriptsStore();
 const { localTerminals, activeLocalId } = storeToRefs(sessions);
-const { available: hasScripts } = storeToRefs(pkg);
 
 function onAddLocal() {
   sessions.addLocalTerminal(workspace.rootPath);
 }
-
-watch(
-  () => workspace.rootPath,
-  () => {
-    void pkg.refresh(true);
-  },
-  { immediate: true },
-);
 </script>
 
 <template>
@@ -58,9 +45,6 @@ watch(
       >
         <Plus :size="14" />
       </button>
-      <div v-if="hasScripts" class="scripts-slot">
-        <PackageScriptsMenu variant="compact" />
-      </div>
     </header>
 
     <div class="body">
@@ -101,15 +85,6 @@ watch(
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-panel);
   min-width: 0;
-}
-
-.scripts-slot {
-  flex: 1;
-  min-width: 0;
-  margin-left: 4px;
-  display: flex;
-  justify-content: flex-end;
-  overflow: hidden;
 }
 
 .subtab {
