@@ -75,37 +75,6 @@ function onDocMouseDown(event: MouseEvent) {
   contextMenu.value = null;
 }
 
-function statusLabel(status: string) {
-  const map: Record<string, string> = {
-    modified: "M",
-    untracked: "U",
-    deleted: "D",
-    renamed: "R",
-    conflict: "C",
-    changed: "M",
-  };
-  return map[status] ?? status.slice(0, 1).toUpperCase();
-}
-
-function statusTitle(status: string) {
-  const map: Record<string, string> = {
-    modified: t("git.statusModified"),
-    untracked: t("git.statusUntracked"),
-    deleted: t("git.statusDeleted"),
-    renamed: t("git.statusRenamed"),
-    conflict: t("git.statusConflict"),
-    changed: t("git.statusChanged"),
-  };
-  return map[status] ?? status;
-}
-
-function statusClass(status: string) {
-  if (status === "untracked") return "st-untracked";
-  if (status === "deleted") return "st-deleted";
-  if (status === "conflict") return "st-conflict";
-  return "st-modified";
-}
-
 function dirOf(path: string) {
   return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
 }
@@ -488,9 +457,9 @@ function onCommitKeydown(event: KeyboardEvent) {
               <span class="dir" :title="entry.path">{{ dirOf(entry.path) }}</span>
               <span
                 class="status"
-                :class="statusClass(entry.status)"
-                :title="statusTitle(entry.status)"
-                >{{ statusLabel(entry.status) }}</span
+                :class="git.statusClass(entry.status)"
+                :title="git.statusTitle(entry.status)"
+                >{{ git.statusLabel(entry.status) }}</span
               >
               <div class="row-actions" @click.stop>
                 <button
@@ -558,9 +527,9 @@ function onCommitKeydown(event: KeyboardEvent) {
               <span class="dir" :title="entry.path">{{ dirOf(entry.path) }}</span>
               <span
                 class="status"
-                :class="statusClass(entry.status)"
-                :title="statusTitle(entry.status)"
-                >{{ statusLabel(entry.status) }}</span
+                :class="git.statusClass(entry.status)"
+                :title="git.statusTitle(entry.status)"
+                >{{ git.statusLabel(entry.status) }}</span
               >
               <div class="row-actions" @click.stop>
                 <button
