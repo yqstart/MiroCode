@@ -24,6 +24,7 @@ export const useSearchStore = defineStore("search", () => {
   const findInFilesVisible = ref(false);
   // 请求序号：只应用最后一次发起的搜索，丢弃过期（被后续搜索/关闭覆盖）的结果
   let contentSearchSeq = 0;
+  let fileSearchSeq = 0;
 
   function parseExtensions(): string[] | undefined {
     const raw = extensions.value.trim();
@@ -43,6 +44,8 @@ export const useSearchStore = defineStore("search", () => {
       fileResults.value = [];
       return;
     }
+    // 请求序号：快速输入时只保留最后一次的响应，旧的返回直接丢弃
+    const seq = ++fileSearchSeq;
     loading.value = true;
     try {
       const result = await Promise.race([
@@ -58,14 +61,16 @@ export const useSearchStore = defineStore("search", () => {
           ),
         ),
       ]);
+      if (seq !== fileSearchSeq) return; // 已有更新的搜索，丢弃过期结果
       fileResults.value = result;
     } catch (error) {
+      if (seq !== fileSearchSeq) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
       );
     } finally {
-      loading.value = false;
+      if (seq === fileSearchSeq) loading.value = false;
     }
   }
 

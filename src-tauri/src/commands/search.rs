@@ -34,15 +34,15 @@ pub struct ReplaceResult {
 }
 
 /// 仅当文件名或任一路径段（文件夹名）包含查询子串时命中；不做跨段子序列模糊。
-fn segment_contains_score(query: &str, name: &str, relative: &str) -> Option<i32> {
-    let q = query.to_lowercase();
-    if q.is_empty() {
+/// query 需为**已小写**（调用方预处理一次，避免每文件重复 to_lowercase）。
+fn segment_contains_score(query_lc: &str, name: &str, relative: &str) -> Option<i32> {
+    if query_lc.is_empty() {
         return None;
     }
 
     let name_lc = name.to_lowercase();
-    if name_lc.contains(&q) {
-        let bonus = if name_lc.starts_with(&q) { 40 } else { 20 };
+    if name_lc.contains(query_lc) {
+        let bonus = if name_lc.starts_with(query_lc) { 40 } else { 20 };
         return Some(200 + bonus - (name_lc.len() as i32).min(80));
     }
 
@@ -54,8 +54,8 @@ fn segment_contains_score(query: &str, name: &str, relative: &str) -> Option<i32
     let folder_count = segments.len().saturating_sub(1);
     for (i, seg) in segments.iter().take(folder_count).enumerate() {
         let seg_lc = seg.to_lowercase();
-        if seg_lc.contains(&q) {
-            let bonus = if seg_lc.starts_with(&q) { 30 } else { 10 };
+        if seg_lc.contains(query_lc) {
+            let bonus = if seg_lc.starts_with(query_lc) { 30 } else { 10 };
             // 越靠近文件名的目录段略加分
             return Some(100 + bonus + (i as i32) * 2 - (seg_lc.len() as i32).min(40));
         }
@@ -158,6 +158,21 @@ where
     }
 }
 
+/// 搜索代际计数器：新搜索启动时 +1；进行中的旧搜索闭包读它发现已过期，
+/// 立即提前返回，释放 spawn_blocking 线程（Rust 无法取消线程，只能靠
+/// 自检快速退出——否则连续触发搜索会把线程池占满造成「卡死」假象）。
+static SEARCH_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 判断当前代际是否已过期（有更新的搜索启动即视为过期）。
+fn gen_stale(born: u64) -> bool {
+    SEARCH_GEN.load(std::sync::atomic::Ordering::Relaxed) != born
+}
+
+/// 生成一个新代际，返回当前代际号。
+fn next_gen() -> u64 {
+    SEARCH_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
+
 #[tauri::command]
 pub async fn search_files(
     root: String,
@@ -172,13 +187,21 @@ pub async fn search_files(
     if q.is_empty() {
         return Ok(vec![]);
     }
+    // query 小写只算一次（segment_contains_score 不再重复 to_lowercase）
+    let q_lc = q.to_lowercase();
+    // 本请求代际：新搜索启动会递增 SEARCH_GEN，旧任务检测到过期立即退出
+    let gen = next_gen();
 
-    run_blocking(30, "文件搜索", move || {
+    run_blocking(8, "文件搜索", move || {
         let root_path = PathBuf::from(&root);
         ensure_inside_workspace(&root_path, &root_path)?;
 
-        let mut hits = Vec::new();
+        let mut hits = Vec::with_capacity(max.min(4096));
         for path in cached_walk_files(&root_path, &extra)? {
+            // 每 256 个文件检查一次是否过期，过期立即返回释放线程
+            if gen_stale(gen) {
+                return Ok(hits);
+            }
             if !match_ext(&path, &extensions) {
                 continue;
             }
@@ -191,7 +214,7 @@ pub async fn search_files(
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
-            let score = segment_contains_score(&q, &name, &relative).unwrap_or(-1);
+            let score = segment_contains_score(&q_lc, &name, &relative).unwrap_or(-1);
             if score < 0 {
                 continue;
             }
@@ -226,13 +249,18 @@ pub async fn search_content(
     let max = max_results.unwrap_or(500);
     let extra = extra_ignores.unwrap_or_default();
     let query_lc = query.to_lowercase();
+    let gen = next_gen();
 
-    run_blocking(60, "内容搜索", move || {
+    run_blocking(15, "内容搜索", move || {
         let root_path = PathBuf::from(&root);
         ensure_inside_workspace(&root_path, &root_path)?;
 
         let mut hits = Vec::new();
         for path in cached_walk_files(&root_path, &extra)? {
+            // 每 64 个文件检查一次是否过期（内容搜索读文件较慢，检查更频繁）
+            if gen_stale(gen) {
+                return Ok(hits);
+            }
             if !match_ext(&path, &extensions) {
                 continue;
             }

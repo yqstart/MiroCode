@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Search } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import FileTypeIcon from "@/shared/FileTypeIcon.vue";
@@ -15,16 +15,22 @@ const { fileQuery, fileResults, quickOpenVisible, loading } = storeToRefs(search
 
 const inputRef = ref<HTMLInputElement | null>(null);
 const activeIndex = ref(0);
+let searchTimer: number | null = null;
 
 const displayResults = computed(() => fileResults.value);
 
 watch(fileQuery, (q) => {
   activeIndex.value = 0;
-  if (q.trim()) {
-    void search.runFileSearch(q);
-  } else {
+  if (!q.trim()) {
     search.fileResults = [];
+    if (searchTimer != null) window.clearTimeout(searchTimer);
+    return;
   }
+  // 防抖 150ms：连续输入时只发最后一次，避免每键一次全量搜索
+  if (searchTimer != null) window.clearTimeout(searchTimer);
+  searchTimer = window.setTimeout(() => {
+    void search.runFileSearch(q);
+  }, 150);
 });
 
 watch(quickOpenVisible, async (open) => {
@@ -78,6 +84,10 @@ onMounted(() => {
   if (quickOpenVisible.value) {
     inputRef.value?.focus();
   }
+});
+
+onBeforeUnmount(() => {
+  if (searchTimer != null) window.clearTimeout(searchTimer);
 });
 </script>
 
