@@ -318,15 +318,16 @@ pub fn run() {
         .plugin(tauri_plugin_pty::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        // 窗口位置/最大化/全屏/可见性/装饰状态自动恢复（多窗口）。
-        // 故意不记 SIZE：宽高始终走 tauri.conf.json 的默认值
-        // （旧版误把窗口拖小后 .window-state.json 会记住，下次启动仍然是窄窗口；
-        //  与 Cursor/VSCode 行为一致——它们也不持久化用户拖的窗口大小）
+        // 窗口最大化/全屏/可见性/装饰状态自动恢复（多窗口）。
+        // 故意不记 SIZE 和 POSITION：
+        // - SIZE：宽高始终走 tauri.conf.json 默认值（1440x900），与 Cursor/VSCode
+        //   「每次给固定默认尺寸」一致；旧版拖小后被持久化、下次启动仍窄的 bug 不再出现
+        // - POSITION：旧版记着 1280 宽时的 x，新版改 1440 宽后右侧溢出屏幕；
+        //   去掉后让 tauri.conf.json 的 center:true 把窗口居中，每次启动都居中
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
-                    tauri_plugin_window_state::StateFlags::POSITION
-                        | tauri_plugin_window_state::StateFlags::MAXIMIZED
+                    tauri_plugin_window_state::StateFlags::MAXIMIZED
                         | tauri_plugin_window_state::StateFlags::VISIBLE
                         | tauri_plugin_window_state::StateFlags::DECORATIONS
                         | tauri_plugin_window_state::StateFlags::FULLSCREEN,
