@@ -1054,6 +1054,7 @@ defineExpose({ locateActiveFile });
 }
 
 .project-item.primary {
+  align-items: center;
   font-weight: 600;
   color: var(--accent);
 }
