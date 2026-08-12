@@ -1,7 +1,6 @@
-//! 极简 SSH Shell + SFTP（ssh2）。
+//! 极简 SSH Shell（ssh2）。
 //!
 //! - Shell：交互式远程终端，输出经 `ssh://data/{id}` 推送
-//! - SFTP：优先复用同一 Shell 的 Session（单 TCP）；否则独立连接
 //! - 主机密钥：校验 `~/.ssh/known_hosts` + `~/.mirocode/known_hosts`
 //! - 密码凭据：`~/.mirocode/ssh-credentials.json`（0600）
 
@@ -17,9 +16,7 @@ use std::time::Duration;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-use ssh2::{
-    CheckResult, HashType, KnownHostFileKind, KnownHostKeyFormat, Session, Sftp,
-};
+use ssh2::{CheckResult, HashType, KnownHostFileKind, KnownHostKeyFormat, Session};
 use tauri::{AppHandle, Emitter, State};
 
 type CmdResult<T> = Result<T, String>;
@@ -46,49 +43,19 @@ pub struct SshSecretStored {
     pub passphrase: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SftpEntry {
-    pub name: String,
-    pub path: String,
-    pub is_dir: bool,
-    pub size: u64,
-}
-
 struct ShellSession {
     stop: Arc<AtomicBool>,
-    /// SFTP 操作期间暂停读循环，避免与非阻塞 Session 争用
-    pause: Arc<AtomicBool>,
-    session: Arc<Mutex<Session>>,
     channel: Arc<Mutex<ssh2::Channel>>,
-}
-
-enum SftpBackend {
-    Owned {
-        _session: Session,
-        sftp: Sftp,
-    },
-    Shared {
-        pause: Arc<AtomicBool>,
-        session: Arc<Mutex<Session>>,
-        sftp: Sftp,
-    },
-}
-
-struct SftpSession {
-    backend: SftpBackend,
 }
 
 pub struct SshState {
     shells: Mutex<HashMap<String, ShellSession>>,
-    sftps: Mutex<HashMap<String, SftpSession>>,
 }
 
 impl Default for SshState {
     fn default() -> Self {
         Self {
             shells: Mutex::new(HashMap::new()),
-            sftps: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -319,57 +286,6 @@ fn connect_session(cfg: &SshConnectConfig) -> CmdResult<Session> {
     Ok(sess)
 }
 
-fn join_remote(parent: &str, name: &str) -> String {
-    if parent == "/" || parent.is_empty() {
-        format!("/{name}")
-    } else if parent.ends_with('/') {
-        format!("{parent}{name}")
-    } else {
-        format!("{parent}/{name}")
-    }
-}
-
-/// 拒绝危险远程路径（空、根、空字节、`..` 段）
-fn validate_remote_path_str(path: &str) -> CmdResult<()> {
-    let remote = path.trim();
-    if remote.is_empty() || remote == "/" {
-        return Err("非法远程路径".into());
-    }
-    if remote.contains('\0') {
-        return Err("远程路径包含非法字符".into());
-    }
-    for seg in remote.split(['/', '\\']) {
-        if seg == ".." {
-            return Err("远程路径不允许包含 ..".into());
-        }
-    }
-    Ok(())
-}
-
-fn validate_remote_path(path: &str) -> CmdResult<&Path> {
-    validate_remote_path_str(path)?;
-    Ok(Path::new(path.trim()))
-}
-
-/// SFTP 操作期间等待 pause 解除，避免 Channel 写与 Session 阻塞 I/O 争用
-fn wait_shell_io_ready(pause: &AtomicBool, stop: &AtomicBool) -> CmdResult<()> {
-    // 大文件上传/递归删除可能超过 2.5s；放宽到 30s 避免误报「会话繁忙」，
-    // 超过仍提示，防止输入请求无限挂起
-    for _ in 0..3000 {
-        if stop.load(Ordering::SeqCst) {
-            return Err("SSH 会话已关闭".into());
-        }
-        if !pause.load(Ordering::SeqCst) {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    if pause.load(Ordering::SeqCst) {
-        return Err("SSH 会话繁忙（SFTP 操作中），请稍后重试".into());
-    }
-    Ok(())
-}
-
 fn write_all_retry(ch: &mut ssh2::Channel, data: &[u8]) -> std::io::Result<()> {
     let mut offset = 0;
     let mut spins = 0;
@@ -397,35 +313,6 @@ fn write_all_retry(ch: &mut ssh2::Channel, data: &[u8]) -> std::io::Result<()> {
     }
     let _ = ch.flush();
     Ok(())
-}
-
-fn with_sftp_io<R>(backend: &SftpBackend, f: impl FnOnce(&Sftp) -> CmdResult<R>) -> CmdResult<R> {
-    match backend {
-        SftpBackend::Owned { sftp, .. } => f(sftp),
-        SftpBackend::Shared {
-            pause,
-            session,
-            sftp,
-        } => {
-            pause.store(true, Ordering::SeqCst);
-            // 等读线程至少让出一次；随后整个 SFTP 操作期间持有 session 锁，
-            // 使 shell 读/写线程在 ch.read()/write() 内部（ssh2 会锁 session）被挡在锁外，
-            // 避免读线程在 blocking 模式 session 上并发调用 libssh2 破坏状态机
-            // （此前正是该竞态产生 transport read 误判断连与写入失败）。
-            thread::sleep(Duration::from_millis(40));
-            let result = {
-                let sess = session.lock().map_err(|e| e.to_string())?;
-                sess.set_blocking(true);
-                sess.set_timeout(30_000);
-                let r = f(sftp);
-                sess.set_timeout(0);
-                sess.set_blocking(false);
-                r
-            };
-            pause.store(false, Ordering::SeqCst);
-            result
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -588,8 +475,6 @@ pub fn ssh_shell_open(
     sess.set_blocking(false);
 
     let stop = Arc::new(AtomicBool::new(false));
-    let pause = Arc::new(AtomicBool::new(false));
-    let session = Arc::new(Mutex::new(sess));
     let channel = Arc::new(Mutex::new(channel));
 
     {
@@ -598,8 +483,6 @@ pub fn ssh_shell_open(
             id.clone(),
             ShellSession {
                 stop: Arc::clone(&stop),
-                pause: Arc::clone(&pause),
-                session: Arc::clone(&session),
                 channel: Arc::clone(&channel),
             },
         );
@@ -616,10 +499,6 @@ pub fn ssh_shell_open(
         loop {
             if stop.load(Ordering::SeqCst) {
                 break;
-            }
-            if pause.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_millis(16));
-                continue;
             }
             let read_result = {
                 let mut ch = match channel.lock() {
@@ -649,7 +528,7 @@ pub fn ssh_shell_open(
                         continue;
                     }
                     if is_soft_transport_error(&err) {
-                        // 瞬时 transport read（网络抖动/SFTP 切换等）不应立即判定断连。
+                        // 瞬时 transport read（网络抖动等）不应立即判定断连。
                         // 真断连时 channel 会收到 eof（Read 返回 Ok(0)）或稳定硬错误，
                         // 软错误计数只作为长期无进展的兜底（400 次 × 25ms ≈ 10s）。
                         soft_err_streak = soft_err_streak.saturating_add(1);
@@ -680,44 +559,29 @@ pub fn ssh_shell_open(
 
 #[tauri::command]
 pub fn ssh_shell_write(state: State<'_, SshState>, id: String, data: String) -> CmdResult<()> {
-    let (pause, channel, stop) = {
+    let channel = {
         let shells = state.shells.lock().map_err(|e| e.to_string())?;
         let shell = shells.get(&id).ok_or_else(|| "SSH 会话不存在".to_string())?;
         if shell.stop.load(Ordering::SeqCst) {
             return Err("SSH 会话已关闭".into());
         }
-        (
-            Arc::clone(&shell.pause),
-            Arc::clone(&shell.channel),
-            Arc::clone(&shell.stop),
-        )
+        Arc::clone(&shell.channel)
     };
-    wait_shell_io_ready(&pause, &stop)?;
     let mut ch = channel.lock().map_err(|e| e.to_string())?;
     write_all_retry(&mut ch, data.as_bytes()).map_err(|e| format!("写入失败: {e}"))?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn ssh_shell_resize(
-    state: State<'_, SshState>,
-    id: String,
-    cols: u32,
-    rows: u32,
-) -> CmdResult<()> {
-    let (pause, channel, stop) = {
+pub fn ssh_shell_resize(state: State<'_, SshState>, id: String, cols: u32, rows: u32) -> CmdResult<()> {
+    let channel = {
         let shells = state.shells.lock().map_err(|e| e.to_string())?;
         let shell = shells.get(&id).ok_or_else(|| "SSH 会话不存在".to_string())?;
         if shell.stop.load(Ordering::SeqCst) {
             return Ok(());
         }
-        (
-            Arc::clone(&shell.pause),
-            Arc::clone(&shell.channel),
-            Arc::clone(&shell.stop),
-        )
+        Arc::clone(&shell.channel)
     };
-    let _ = wait_shell_io_ready(&pause, &stop);
     let cols = cols.max(20);
     let rows = rows.max(5);
     let mut ch = channel.lock().map_err(|e| e.to_string())?;
@@ -727,17 +591,9 @@ pub fn ssh_shell_resize(
 
 #[tauri::command]
 pub fn ssh_shell_close(state: State<'_, SshState>, id: String) -> CmdResult<()> {
-    // 顺带关掉挂在该 Shell 上的共享 SFTP
-    let sftp_id = format!("sftp-{id}");
-    {
-        let mut sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-        sftps.remove(&sftp_id);
-    }
-
     let mut shells = state.shells.lock().map_err(|e| e.to_string())?;
     if let Some(shell) = shells.remove(&id) {
         shell.stop.store(true, Ordering::SeqCst);
-        shell.pause.store(false, Ordering::SeqCst);
         if let Ok(mut ch) = shell.channel.lock() {
             let _ = ch.send_eof();
             let _ = ch.close();
@@ -745,444 +601,4 @@ pub fn ssh_shell_close(state: State<'_, SshState>, id: String) -> CmdResult<()> 
         }
     }
     Ok(())
-}
-
-// ==================== SFTP ====================
-
-#[tauri::command]
-pub fn sftp_open(
-    state: State<'_, SshState>,
-    id: String,
-    config: SshConnectConfig,
-) -> CmdResult<()> {
-    {
-        let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-        if sftps.contains_key(&id) {
-            return Err("该 SFTP 会话已存在".into());
-        }
-    }
-
-    // 优先复用同名 Shell（id = sftp-{shellId}）的 Session，避免第二条 TCP
-    if let Some(shell_id) = id.strip_prefix("sftp-") {
-        let shells = state.shells.lock().map_err(|e| e.to_string())?;
-        if let Some(shell) = shells.get(shell_id) {
-            shell.pause.store(true, Ordering::SeqCst);
-            thread::sleep(Duration::from_millis(40));
-            let sftp = {
-                let sess = shell.session.lock().map_err(|e| e.to_string())?;
-                sess.set_blocking(true);
-                sess.set_timeout(30_000);
-                let sftp = sess.sftp().map_err(|e| format!("打开 SFTP 失败: {e}"))?;
-                sess.set_timeout(0);
-                sess.set_blocking(false);
-                sftp
-            };
-            let backend = SftpBackend::Shared {
-                pause: Arc::clone(&shell.pause),
-                session: Arc::clone(&shell.session),
-                sftp,
-            };
-            shell.pause.store(false, Ordering::SeqCst);
-            drop(shells);
-            let mut sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-            sftps.insert(id, SftpSession { backend });
-            return Ok(());
-        }
-    }
-
-    let sess = connect_session(&config)?;
-    sess.set_timeout(30_000);
-    let sftp = sess.sftp().map_err(|e| format!("打开 SFTP 失败: {e}"))?;
-    let mut sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    sftps.insert(
-        id,
-        SftpSession {
-            backend: SftpBackend::Owned {
-                _session: sess,
-                sftp,
-            },
-        },
-    );
-    Ok(())
-}
-
-#[tauri::command]
-pub fn sftp_list(state: State<'_, SshState>, id: String, path: String) -> CmdResult<Vec<SftpEntry>> {
-    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    let session = sftps
-        .get(&id)
-        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
-
-    let remote = if path.trim().is_empty() {
-        "."
-    } else {
-        path.trim()
-    };
-    // 浏览允许根目录；写入类操作仍走 validate_remote_path_str
-    if remote != "." && remote != "/" {
-        validate_remote_path_str(remote)?;
-    }
-
-    with_sftp_io(&session.backend, |sftp| {
-        let entries = sftp
-            .readdir(Path::new(remote))
-            .map_err(|e| format!("读取目录失败: {e}"))?;
-
-        let base = if remote == "." {
-            match sftp.realpath(Path::new(".")) {
-                Ok(p) => p.to_string_lossy().to_string(),
-                Err(_) => "/".into(),
-            }
-        } else {
-            remote.to_string()
-        };
-
-        let mut out: Vec<SftpEntry> = entries
-            .into_iter()
-            .filter_map(|(p, stat)| {
-                let name = p
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| p.to_string_lossy().to_string());
-                if name == "." || name == ".." {
-                    return None;
-                }
-                let is_dir = stat.is_dir();
-                let full = join_remote(&base, &name);
-                Some(SftpEntry {
-                    name,
-                    path: full,
-                    is_dir,
-                    size: stat.size.unwrap_or(0),
-                })
-            })
-            .collect();
-
-        out.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        });
-        Ok(out)
-    })
-}
-
-#[tauri::command]
-pub fn sftp_pwd(state: State<'_, SshState>, id: String) -> CmdResult<String> {
-    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    let session = sftps
-        .get(&id)
-        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
-    with_sftp_io(&session.backend, |sftp| {
-        let path = sftp
-            .realpath(Path::new("."))
-            .map_err(|e| format!("获取当前目录失败: {e}"))?;
-        Ok(path.to_string_lossy().to_string())
-    })
-}
-
-#[tauri::command]
-pub fn sftp_upload(
-    app: AppHandle,
-    state: State<'_, SshState>,
-    id: String,
-    local_path: String,
-    remote_path: String,
-) -> CmdResult<()> {
-    validate_remote_path_str(&remote_path)?;
-    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    let session = sftps
-        .get(&id)
-        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
-
-    let total = std::fs::metadata(&local_path)
-        .map_err(|e| format!("读取本地文件失败: {e}"))?
-        .len();
-    let event = format!("sftp://progress/{id}");
-    let mut last_emit = std::time::Instant::now() - Duration::from_millis(500);
-
-    with_sftp_io(&session.backend, move |sftp| {
-        let mut local =
-            std::fs::File::open(&local_path).map_err(|e| format!("打开本地文件失败: {e}"))?;
-        let mut remote = sftp
-            .create(Path::new(remote_path.trim()))
-            .map_err(|e| format!("创建远程文件失败: {e}"))?;
-
-        let mut buf = [0u8; 64 * 1024];
-        let mut written: u64 = 0;
-        loop {
-            let n = local
-                .read(&mut buf)
-                .map_err(|e| format!("读取本地文件失败: {e}"))?;
-            if n == 0 {
-                break;
-            }
-            remote
-                .write_all(&buf[..n])
-                .map_err(|e| format!("写入远程文件失败: {e}"))?;
-            written += n as u64;
-            // 节流：每 150ms 推一次进度，避免大文件高频事件拖垮前端
-            if last_emit.elapsed() >= Duration::from_millis(150) {
-                last_emit = std::time::Instant::now();
-                let _ = app.emit(
-                    &event,
-                    serde_json::json!({
-                        "localPath": local_path,
-                        "remotePath": remote_path,
-                        "written": written,
-                        "total": total,
-                    }),
-                );
-            }
-        }
-        let _ = app.emit(
-            &event,
-            serde_json::json!({
-                "localPath": local_path,
-                "remotePath": remote_path,
-                "written": written,
-                "total": total,
-            }),
-        );
-        Ok(())
-    })
-}
-
-#[tauri::command]
-pub fn sftp_download(
-    state: State<'_, SshState>,
-    id: String,
-    remote_path: String,
-    local_path: String,
-) -> CmdResult<()> {
-    validate_remote_path_str(&remote_path)?;
-    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    let session = sftps
-        .get(&id)
-        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
-
-    with_sftp_io(&session.backend, |sftp| {
-        let mut remote = sftp
-            .open(Path::new(remote_path.trim()))
-            .map_err(|e| format!("打开远程文件失败: {e}"))?;
-        let mut local =
-            std::fs::File::create(&local_path).map_err(|e| format!("创建本地文件失败: {e}"))?;
-
-        let mut buf = [0u8; 64 * 1024];
-        loop {
-            let n = remote
-                .read(&mut buf)
-                .map_err(|e| format!("读取远程文件失败: {e}"))?;
-            if n == 0 {
-                break;
-            }
-            local
-                .write_all(&buf[..n])
-                .map_err(|e| format!("写入本地文件失败: {e}"))?;
-        }
-        Ok(())
-    })
-}
-
-#[tauri::command]
-pub fn sftp_read(
-    state: State<'_, SshState>,
-    id: String,
-    path: String,
-    max_bytes: Option<u64>,
-) -> CmdResult<String> {
-    let remote = validate_remote_path(&path)?.to_path_buf();
-    let limit = max_bytes.unwrap_or(2 * 1024 * 1024);
-    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    let session = sftps
-        .get(&id)
-        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
-
-    with_sftp_io(&session.backend, |sftp| {
-        let meta = sftp
-            .stat(&remote)
-            .map_err(|e| format!("读取远程文件失败: {e}"))?;
-        if meta.is_dir() {
-            return Err("目标是目录，不是文件".into());
-        }
-        let size = meta.size.unwrap_or(0);
-        if size > limit {
-            return Err(format!(
-                "文件过大（{} 字节），请使用下载；上限 {limit} 字节",
-                size
-            ));
-        }
-
-        let mut remote_file = sftp
-            .open(&remote)
-            .map_err(|e| format!("打开远程文件失败: {e}"))?;
-        let mut data = Vec::new();
-        let mut buf = [0u8; 64 * 1024];
-        loop {
-            let n = remote_file
-                .read(&mut buf)
-                .map_err(|e| format!("读取远程文件失败: {e}"))?;
-            if n == 0 {
-                break;
-            }
-            data.extend_from_slice(&buf[..n]);
-            if data.len() as u64 > limit {
-                return Err(format!("文件过大，请使用下载；上限 {limit} 字节"));
-            }
-        }
-        if data.iter().any(|b| *b == 0) {
-            return Err("文件含二进制内容，请使用下载".into());
-        }
-        String::from_utf8(data).map_err(|_| "文件不是 UTF-8 文本，请使用下载".into())
-    })
-}
-
-#[tauri::command]
-pub fn sftp_write(
-    state: State<'_, SshState>,
-    id: String,
-    remote_path: String,
-    content: String,
-) -> CmdResult<()> {
-    validate_remote_path_str(&remote_path)?;
-    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    let session = sftps
-        .get(&id)
-        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
-
-    with_sftp_io(&session.backend, |sftp| {
-        let mut remote = sftp
-            .create(Path::new(remote_path.trim()))
-            .map_err(|e| format!("打开远程文件失败: {e}"))?;
-        remote
-            .write_all(content.as_bytes())
-            .map_err(|e| format!("写入远程文件失败: {e}"))?;
-        Ok(())
-    })
-}
-
-#[tauri::command]
-pub fn sftp_mkdir(state: State<'_, SshState>, id: String, path: String) -> CmdResult<()> {
-    let remote = validate_remote_path(&path)?.to_path_buf();
-    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    let session = sftps
-        .get(&id)
-        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
-    with_sftp_io(&session.backend, |sftp| {
-        sftp.mkdir(&remote, 0o755)
-            .map_err(|e| format!("创建目录失败: {e}"))
-    })
-}
-
-#[tauri::command]
-pub fn sftp_create_file(state: State<'_, SshState>, id: String, path: String) -> CmdResult<()> {
-    let remote = validate_remote_path(&path)?.to_path_buf();
-    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    let session = sftps
-        .get(&id)
-        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
-    with_sftp_io(&session.backend, |sftp| {
-        let _file = sftp
-            .create(&remote)
-            .map_err(|e| format!("创建文件失败: {e}"))?;
-        Ok(())
-    })
-}
-
-#[tauri::command]
-pub fn sftp_rename(
-    state: State<'_, SshState>,
-    id: String,
-    from: String,
-    to: String,
-) -> CmdResult<()> {
-    let from_path = validate_remote_path(&from)?.to_path_buf();
-    let to_path = validate_remote_path(&to)?.to_path_buf();
-    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    let session = sftps
-        .get(&id)
-        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
-    with_sftp_io(&session.backend, |sftp| {
-        sftp.rename(&from_path, &to_path, None)
-            .map_err(|e| format!("重命名失败: {e}"))
-    })
-}
-
-fn sftp_remove_recursive(sftp: &Sftp, path: &Path, depth: u32) -> CmdResult<()> {
-    // 深度上限兜底：防止符号链接环（stat 会跟随链接）导致的无限递归栈溢出崩溃
-    if depth > 64 {
-        return Err("目录层级过深，删除中止（可能包含符号链接环）".into());
-    }
-    // lstat 不跟随符号链接：链接一律按文件 unlink，绝不对链接目标递归，
-    // 避免指向祖先目录的 symlink 环让递归无限深入而崩溃
-    let meta = sftp
-        .lstat(path)
-        .map_err(|e| format!("读取远程路径失败: {e}"))?;
-    if meta.is_dir() {
-        let base = path.to_string_lossy().to_string();
-        let entries = sftp
-            .readdir(path)
-            .map_err(|e| format!("读取目录失败: {e}"))?;
-        for (child, _) in entries {
-            let name = child
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            if name.is_empty() || name == "." || name == ".." {
-                continue;
-            }
-            let full = PathBuf::from(join_remote(&base, &name));
-            sftp_remove_recursive(sftp, &full, depth + 1)?;
-        }
-        sftp.rmdir(path)
-            .map_err(|e| format!("删除目录失败: {e}"))?;
-    } else {
-        sftp.unlink(path)
-            .map_err(|e| format!("删除文件失败: {e}"))?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub fn sftp_remove(state: State<'_, SshState>, id: String, path: String) -> CmdResult<()> {
-    let remote = validate_remote_path(&path)?.to_path_buf();
-    let sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    let session = sftps
-        .get(&id)
-        .ok_or_else(|| "SFTP 会话不存在".to_string())?;
-    with_sftp_io(&session.backend, |sftp| {
-        sftp_remove_recursive(sftp, &remote, 0)
-    })
-}
-
-#[tauri::command]
-pub fn sftp_close(state: State<'_, SshState>, id: String) -> CmdResult<()> {
-    let mut sftps = state.sftps.lock().map_err(|e| e.to_string())?;
-    sftps.remove(&id);
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn validate_rejects_root_and_empty() {
-        assert!(validate_remote_path_str("").is_err());
-        assert!(validate_remote_path_str("/").is_err());
-        assert!(validate_remote_path_str("   ").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_dotdot() {
-        assert!(validate_remote_path_str("/home/../etc/passwd").is_err());
-        assert!(validate_remote_path_str("../secret").is_err());
-        assert!(validate_remote_path_str("/tmp\\..\\x").is_err());
-    }
-
-    #[test]
-    fn validate_accepts_normal() {
-        assert!(validate_remote_path_str("/home/user/file.txt").is_ok());
-        assert!(validate_remote_path_str("/var/log").is_ok());
-    }
 }
