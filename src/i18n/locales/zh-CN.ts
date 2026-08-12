@@ -119,8 +119,6 @@ export const zhCN = {
     autoSaveDesc: "编辑后延迟写盘；窗口隐藏或退出前会强制落盘，降低崩溃丢改风险。",
     fileSave: "文件保存",
     tooling: "代码工具",
-    eslintEnabled: "ESLint",
-    eslintDesc: "对 JS/TS/Vue 等显示工作区 ESLint 诊断。需项目已安装 eslint。",
     prettierEnabled: "Prettier",
     prettierDesc: "内置格式化引擎，开箱即用零配置；项目已装 prettier 时自动优先使用项目版本。",
     formatOnSave: "保存时格式化",

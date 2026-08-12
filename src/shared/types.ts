@@ -43,8 +43,6 @@ export interface EditorPreferences {
   autoSave: boolean;
   /** 自动保存延迟（毫秒） */
   autoSaveDelayMs: number;
-  /** 启用工作区 ESLint 诊断。需项目已安装 eslint */
-  eslintEnabled: boolean;
   /** 启用代码格式化（内置 Prettier 引擎，项目已装 prettier 时优先走项目本地） */
   prettierEnabled: boolean;
   /** 保存文件前自动格式化（需 prettierEnabled） */
@@ -89,7 +87,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     lineNumbers: true,
     autoSave: true,
     autoSaveDelayMs: 1000,
-    eslintEnabled: false,
     prettierEnabled: true,
     formatOnSave: false,
     updateImportsOnMove: "prompt",

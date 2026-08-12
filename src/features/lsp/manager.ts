@@ -202,7 +202,10 @@ class LspManagerImpl {
     }
     this.clients.clear();
     await stopAllServers();
-    this.setStatus(this.enabled ? "disabled" : "disabled");
+    // 旧版两支同字符串（"disabled"/"disabled"）为典型复制残留 bug。
+    // enabled 时 stop 通常紧跟 start()，留 "ready" 在窗口期偏乐观；改回初始态 "disabled"，
+    // 状态机由下一次 start() 推进（checking -> starting -> ready/unavailable）。
+    this.setStatus("disabled");
   }
 
   /** 销毁（取消事件监听） */

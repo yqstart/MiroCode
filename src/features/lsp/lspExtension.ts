@@ -372,7 +372,7 @@ function lspCompletionKindToCm(kind?: number): string | undefined {
 
 // ==================== 4. 类型诊断 ====================
 
-/** 诊断合流器：LSP 诊断 + ESLint 诊断 */
+/** 诊断合流器：当前仅消费 LSP 诊断（ESLint 链路已移除） */
 export interface DiagnosticsMerger {
   /** 设置 LSP 诊断 */
   setLspDiagnostics(view: EditorView, uri: string, diagnostics: Array<{
@@ -381,22 +381,15 @@ export interface DiagnosticsMerger {
     message?: string;
     source?: string;
   }>): void;
-  /** 设置 ESLint 诊断 */
-  setEslintDiagnostics(view: EditorView, diagnostics: Diagnostic[]): void;
 }
 
-/** 创建诊断管理器（按文件维度存储 LSP + ESLint 诊断，合流后 setDiagnostics） */
+/** 创建诊断管理器（按文件维度缓存 LSP 诊断，setDiagnostics 到编辑器） */
 export function createDiagnosticsManager(filePath: string): DiagnosticsMerger & { dispose: () => void } {
-  // 当前文件的 LSP 诊断缓存
   let lspDiags: Diagnostic[] = [];
-  // ESLint 诊断缓存
-  let eslintDiags: Diagnostic[] = [];
 
-  function mergeAndApply(view: EditorView) {
-    // 按 from-to-severity 去重（LSP 优先）
+  function apply(view: EditorView) {
     const seen = new Set<string>();
     const merged: Diagnostic[] = [];
-
     for (const d of lspDiags) {
       const key = `${d.from}-${d.to}-${d.severity}`;
       if (!seen.has(key)) {
@@ -404,14 +397,6 @@ export function createDiagnosticsManager(filePath: string): DiagnosticsMerger & 
         merged.push(d);
       }
     }
-    for (const d of eslintDiags) {
-      const key = `${d.from}-${d.to}-${d.severity}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        merged.push(d);
-      }
-    }
-
     view.dispatch(setDiagnostics(view.state, merged));
   }
 
@@ -431,15 +416,10 @@ export function createDiagnosticsManager(filePath: string): DiagnosticsMerger & 
           source: d.source ?? "lsp",
         } satisfies Diagnostic;
       });
-      mergeAndApply(view);
-    },
-    setEslintDiagnostics(view, diagnostics) {
-      eslintDiags = diagnostics;
-      mergeAndApply(view);
+      apply(view);
     },
     dispose() {
       lspDiags = [];
-      eslintDiags = [];
     },
   };
 }

@@ -17,7 +17,7 @@ import {
   foldKeymap,
   indentOnInput,
 } from "@codemirror/language";
-import { lintGutter, setDiagnostics } from "@codemirror/lint";
+import { lintGutter } from "@codemirror/lint";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorState, Prec } from "@codemirror/state";
 import {
@@ -37,7 +37,6 @@ import { createCompletionExtension } from "@/features/editor/completions";
 import { createAiGhostTextExtension } from "@/features/editor/aiCompletion/ghostTextExtension";
 import { aiManager } from "@/features/ai/manager";
 import { createDiagnosticsExtension } from "@/features/editor/diagnostics";
-import { createEslintScheduler } from "@/features/editor/eslintLinter";
 import { languageExtensionForPath } from "@/features/editor/languages";
 import {
   createNavigationExtension,
@@ -74,7 +73,7 @@ const lspComp = new Compartment();
 const aiComp = new Compartment();
 let applyingExternal = false;
 
-// LSP 诊断合流器（LSP 类型诊断 + ESLint 规则诊断 -> 同一 setDiagnostics）
+// LSP 诊断合流器（当前仅消费 LSP 诊断，ESLint 链路已移除）
 let diagManager: ReturnType<typeof createDiagnosticsManager> | null = null;
 
 // LSP 文档同步：didChange 防抖
@@ -82,24 +81,6 @@ let lspChangeTimer: ReturnType<typeof setTimeout> | null = null;
 
 // LSP 诊断订阅标记（onDiagnostics 只需订阅一次，handler 内引用最新 diagManager）
 let lspDiagSubscribed = false;
-
-const eslint = createEslintScheduler(
-  () => view,
-  {
-    filePath: () => props.path,
-    workspaceRoot: () => workspace.rootPath,
-    enabled: () => editor.value.eslintEnabled,
-    onDiagnostics: (diags) => {
-      // ESLint 诊断走合流器（与 LSP 类型诊断合流）
-      if (diagManager && view) {
-        diagManager.setEslintDiagnostics(view, diags);
-      } else if (view) {
-        // LSP 不可用时直接 setDiagnostics
-        view.dispatch(setDiagnostics(view.state, diags));
-      }
-    },
-  },
-);
 
 const navHandlers = {
   onNavigate: (path: string, line: number, column: number) => {
@@ -187,6 +168,30 @@ function scrollTo(line: number, column: number) {
   emitCursor(view);
 }
 
+/** 字体大小调节：10-24，每次 ±1，节流 60ms 避免 wheel 抖动 */
+const FONT_SIZE_MIN = 10;
+const FONT_SIZE_MAX = 24;
+let lastFontAdjust = 0;
+function adjustFontSize(delta: number) {
+  const now = performance.now();
+  if (now - lastFontAdjust < 60) return;
+  lastFontAdjust = now;
+  const cur = settings.editor.fontSize;
+  const next = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, cur + delta));
+  if (next === cur) return;
+  settings.patchEditor({ fontSize: next });
+}
+
+/** ⌘/Ctrl + 滚轮调字号（VS Code 行为：deltaY>0 调小，<0 调大） */
+function wheelFontSize(event: WheelEvent): boolean {
+  if (!(event.metaKey || event.ctrlKey)) return false;
+  event.preventDefault();
+  // deltaY 单位约为 ±100/格，1 步为 ±1px
+  const step = event.deltaY < 0 ? 1 : -1;
+  adjustFontSize(step);
+  return true;
+}
+
 function createEditor() {
   if (!host.value) return;
   const lang = languageExtensionForPath(props.path);
@@ -212,6 +217,10 @@ function createEditor() {
         // 勿用 domEventHandlers 处理 contextmenu：
         // main.ts 已在捕获阶段 preventDefault，CM 会跳过 defaultPrevented 的 handler，导致右键菜单失效。
         // 父级 @contextmenu 通过 Vue 透传到本组件根节点即可。
+        // ⌘/Ctrl + 滚轮调字号（VS Code 行为）；只拦截带修饰键的滚轮，其他滚轮照旧滚动。
+        EditorView.domEventHandlers({
+          wheel: (event) => wheelFontSize(event),
+        }),
         rectangularSelection(),
         crosshairCursor(),
         highlightActiveLine(),
@@ -297,7 +306,6 @@ function createEditor() {
           if (!view) return;
           if (update.docChanged && !applyingExternal) {
             editorStore.setContent(props.path, update.state.doc.toString());
-            eslint.schedule();
             // LSP 文档同步：didChange 防抖 300ms
             scheduleLspChange(props.path);
           }
@@ -309,7 +317,6 @@ function createEditor() {
     }),
   });
   emitCursor(view);
-  eslint.schedule();
   // LSP 文档同步：didOpen
   void refreshLspDoc(props.path, props.content);
 }
@@ -329,7 +336,6 @@ onBeforeUnmount(() => {
   }
   diagManager?.dispose();
   diagManager = null;
-  eslint.dispose();
   view?.destroy();
   view = null;
 });
@@ -345,7 +351,6 @@ watch(
     }
     diagManager?.dispose();
     diagManager = null;
-    eslint.dispose();
     view?.destroy();
     view = null;
     // 切换文件后立刻拉一次 git status，避免刚切换就右键时 statusMap 暂空
@@ -435,16 +440,8 @@ watch(
     view?.dispatch({
       effects: prefsComp.reconfigure(buildPrefs()),
     });
-    eslint.schedule();
   },
   { deep: true },
-);
-
-watch(
-  () => editor.value.eslintEnabled,
-  () => {
-    void eslint.runNow();
-  },
 );
 
 // AI 补全开关热更新（Compartment reconfigure）

@@ -153,12 +153,17 @@ async function installLanguageService(language: LanguageId) {
   }
   const ver = lsInstaller.getState(language).status?.installedVersion ?? "";
   workspace.showNotice(t("lsp.installed", { version: ver }));
-  // 安装完成后重启工作区 LSP，立即使用新安装的语言服务
+  // 安装完成后重启工作区 LSP，立即使用新安装的语言服务。
+  // 关键：先清掉 nodeDetector 的 cached 运行时检测结果（否则会拿到安装前的
+  // node:false 一直降级到 unavailable），再 stop+start 让 start() 重新检测。
+  const { clearRuntimeCache } = await import("@/features/lsp/nodeDetector");
   const { lspManager } = await import("@/features/lsp/manager");
+  clearRuntimeCache();
   if (workspace.rootPath) {
     await lspManager.stop();
     await lspManager.start(workspace.rootPath);
   }
+  void updateLspStatus();
 }
 
 /** 卸载指定语言 */
@@ -170,11 +175,15 @@ async function uninstallLanguageService(language: LanguageId) {
     return;
   }
   workspace.showNotice(t("lsp.uninstalled"));
+  // 卸载后清缓存 + 重启 LSP，让运行时检测拿到最新路径。
+  const { clearRuntimeCache } = await import("@/features/lsp/nodeDetector");
   const { lspManager } = await import("@/features/lsp/manager");
+  clearRuntimeCache();
   if (workspace.rootPath) {
     await lspManager.stop();
     await lspManager.start(workspace.rootPath);
   }
+  void updateLspStatus();
 }
 
 /** 切换镜像源后重新拉取状态 */
@@ -591,21 +600,6 @@ function onOverlayClick(event: MouseEvent) {
 
             <div class="ui-card section">
               <h3>{{ t("settings.tooling") }}</h3>
-              <div class="save-row">
-                <div class="save-copy">
-                  <span class="field-label">{{ t("settings.eslintEnabled") }}</span>
-                  <p class="desc">{{ t("settings.eslintDesc") }}</p>
-                </div>
-                <button
-                  type="button"
-                  class="ui-toggle"
-                  role="switch"
-                  :aria-checked="editor.eslintEnabled"
-                  :data-on="editor.eslintEnabled"
-                  :title="editor.eslintEnabled ? t('settings.enabled') : t('settings.disabled')"
-                  @click="settings.patchEditor({ eslintEnabled: !editor.eslintEnabled })"
-                />
-              </div>
               <div class="save-row">
                 <div class="save-copy">
                   <span class="field-label">{{ t("settings.prettierEnabled") }}</span>

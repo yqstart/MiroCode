@@ -69,6 +69,7 @@ const lightHighlight = HighlightStyle.define([
   { tag: t.string, color: "#047857" },
   { tag: t.comment, color: "#6b7280", fontStyle: "italic" },
   { tag: t.lineComment, color: "#6b7280", fontStyle: "italic" },
+  { tag: t.blockComment, color: "#6b7280", fontStyle: "italic" },
   { tag: t.function(t.variableName), color: "#6d28d9" },
   { tag: t.definition(t.function(t.variableName)), color: "#5b21b6" },
   { tag: t.number, color: "#c2410c" },
@@ -84,8 +85,8 @@ const lightHighlight = HighlightStyle.define([
   { tag: t.tagName, color: "#1d4ed8" },
   { tag: t.attributeName, color: "#0f766e" },
   { tag: t.regexp, color: "#a21caf" },
-  { tag: t.variableName, color: "#1c1c21" },
-  { tag: t.definition(t.variableName), color: "#111827" },
+  { tag: t.variableName, color: "#27272a" },
+  { tag: t.definition(t.variableName), color: "#18181b" },
   { tag: t.special(t.variableName), color: "#7c3aed" },
   { tag: t.unit, color: "#c2410c" },
   { tag: t.color, color: "#c2410c" },
@@ -148,7 +149,7 @@ const cyberHighlight = HighlightStyle.define([
 const PALETTES: Record<ThemeId, ThemePalette> = {
   "miro-dark": {
     bg: "#0f0f12",
-    fg: "#f5f8ff",
+    fg: "#fafbff",
     gutter: "#16161a",
     gutterFg: "#a1a1aa",
     activeLine: "rgba(139,92,246,0.08)",
@@ -160,7 +161,7 @@ const PALETTES: Record<ThemeId, ThemePalette> = {
   },
   dawn: {
     bg: "#ffffff",
-    fg: "#111114",
+    fg: "#1c1c1e",
     gutter: "#fafbfc",
     gutterFg: "#71717a",
     activeLine: "rgba(37,99,235,0.06)",
@@ -172,7 +173,7 @@ const PALETTES: Record<ThemeId, ThemePalette> = {
   },
   midnight: {
     bg: "#0b1220",
-    fg: "#f1f5f9",
+    fg: "#f8fafc",
     gutter: "#0f172a",
     gutterFg: "#94a3b8",
     activeLine: "rgba(56,189,248,0.08)",
@@ -184,7 +185,7 @@ const PALETTES: Record<ThemeId, ThemePalette> = {
   },
   cyberpunk: {
     bg: "#120a16",
-    fg: "#faf5ff",
+    fg: "#fdfcff",
     gutter: "#1a1020",
     gutterFg: "#c4b5fd",
     activeLine: "rgba(244,114,182,0.1)",

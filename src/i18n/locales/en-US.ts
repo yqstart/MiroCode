@@ -120,9 +120,6 @@ export const enUS = {
       "Save to disk after a delay. Also flushes when the window hides or quits.",
     fileSave: "File Save",
     tooling: "Tooling",
-    eslintEnabled: "ESLint",
-    eslintDesc:
-      "Show workspace ESLint diagnostics for JS/TS/Vue. Project eslint required.",
     prettierEnabled: "Prettier",
     prettierDesc:
       "Built-in formatter, zero-config out of the box; uses the project's Prettier when installed.",

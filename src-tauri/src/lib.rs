@@ -273,7 +273,6 @@ pub fn run() {
             commands::ssh::ssh_secret_set,
             commands::ssh::ssh_secret_remove,
             commands::tooling::format_with_prettier,
-            commands::tooling::lint_with_eslint,
             commands::lsp::lsp_check_runtime,
             commands::lsp::lsp_start,
             commands::lsp::lsp_send_request,
