@@ -1,13 +1,15 @@
 use chrono::{Local, TimeZone};
 use git2::{
-    build::CheckoutBuilder, BranchType, Cred, DiffOptions, PushOptions, RemoteCallbacks,
-    Repository, ResetType, Signature, StashFlags, StatusOptions,
+    build::CheckoutBuilder, BranchType, Cred, DiffOptions, RemoteCallbacks, Repository, ResetType,
+    Signature, StashFlags, StatusOptions,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 fn open_repo(root: &str) -> Result<Repository, String> {
     Repository::discover(root).map_err(|e| format!("未找到 Git 仓库: {e}"))
@@ -234,7 +236,9 @@ pub fn git_init(root: String) -> Result<(), String> {
 pub fn git_set_remote(root: String, name: String, url: String) -> Result<(), String> {
     let repo = open_repo(&root)?;
     match repo.find_remote(&name) {
-        Ok(_) => repo.remote_set_url(&name, &url).map_err(|e| e.to_string())?,
+        Ok(_) => repo
+            .remote_set_url(&name, &url)
+            .map_err(|e| e.to_string())?,
         Err(_) => {
             repo.remote(&name, &url).map_err(|e| e.to_string())?;
         }
@@ -576,12 +580,7 @@ pub fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>,
 
         commits.push(GitCommitInfo {
             id,
-            summary: commit
-                .summary()
-                .ok()
-                .flatten()
-                .unwrap_or("")
-                .to_string(),
+            summary: commit.summary().ok().flatten().unwrap_or("").to_string(),
             author: commit.author().name().unwrap_or("").to_string(),
             time,
             files,
@@ -615,8 +614,7 @@ pub fn git_discard_paths(root: String, paths: Vec<String>) -> Result<(), String>
         p.replace('\\', "/")
     }
 
-    let path_set: std::collections::HashSet<String> =
-        paths.iter().map(|p| norm(p)).collect();
+    let path_set: std::collections::HashSet<String> = paths.iter().map(|p| norm(p)).collect();
     let mut tracked: Vec<String> = Vec::new();
     let mut untracked: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -930,7 +928,9 @@ fn try_ssh_agent_with_timeout(
     match rx.recv_timeout(timeout) {
         Ok(Ok(SendCred(Some(cred)))) => Ok(Some(cred)),
         Ok(Ok(SendCred(None))) => Err(git2::Error::from_str("ssh agent 返回空凭据")),
-        Ok(Err(detail)) => Err(git2::Error::from_str(&format!("ssh agent 不可用: {detail}"))),
+        Ok(Err(detail)) => Err(git2::Error::from_str(&format!(
+            "ssh agent 不可用: {detail}"
+        ))),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             // 主动让 helper 线程泄漏（detach）；它继续跑也不影响主流程
             // std::thread 没有安全 detach API，但 join handle 析构即 detach 行为
@@ -953,7 +953,12 @@ fn parse_http_remote(url: &str) -> Option<(String, String)> {
     } else {
         return None;
     };
-    let host = rest.split('/').next().unwrap_or("").split('@').next_back()?;
+    let host = rest
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split('@')
+        .next_back()?;
     if host.is_empty() {
         return None;
     }
@@ -966,9 +971,172 @@ fn cred_host_key(url: &str) -> Option<String> {
     Some(format!("{protocol}://{host}"))
 }
 
+fn parse_http_remote_for_store(url: &str) -> Option<(String, String, String)> {
+    let url = url.trim();
+    let (protocol, rest) = if let Some(r) = url.strip_prefix("https://") {
+        ("https", r)
+    } else if let Some(r) = url.strip_prefix("http://") {
+        ("http", r)
+    } else {
+        return None;
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    let host = authority.split('@').next_back()?.trim();
+    if host.is_empty() {
+        return None;
+    }
+    let path = if let Some((_, tail)) = rest.split_once('/') {
+        format!("/{}", tail)
+    } else {
+        "/".to_string()
+    };
+    Some((protocol.to_string(), host.to_string(), path))
+}
+
+struct TempGitCredentialStore {
+    path: PathBuf,
+}
+
+impl TempGitCredentialStore {
+    fn new(url: &str, username: &str, password: &str) -> Result<Self, String> {
+        let (protocol, host, path) = parse_http_remote_for_store(url)
+            .ok_or_else(|| "仅 HTTPS/HTTP 远程支持账号密码重试".to_string())?;
+        let dir = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path_buf = dir.join(format!("mirocode-git-cred-{nonce}.txt"));
+        let payload = format!(
+            "{protocol}://{}:{}@{host}{path}\n",
+            percent_encode_credential(username),
+            percent_encode_credential(password)
+        );
+        std::fs::write(&path_buf, payload).map_err(|e| format!("写入临时 Git 凭据失败: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path_buf, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(Self { path: path_buf })
+    }
+
+    fn helper_arg(&self) -> String {
+        let mut path = self.path.to_string_lossy().replace('\\', "/");
+        if path.contains('"') {
+            path = path.replace('"', "\\\"");
+        }
+        if path.chars().any(char::is_whitespace) {
+            format!("store --file=\"{path}\"")
+        } else {
+            format!("store --file={path}")
+        }
+    }
+}
+
+impl Drop for TempGitCredentialStore {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn percent_encode_credential(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for b in raw.bytes() {
+        let is_unreserved =
+            matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~');
+        if is_unreserved {
+            out.push(char::from(b));
+        } else {
+            out.push('%');
+            out.push_str(&format!("{b:02X}"));
+        }
+    }
+    out
+}
+
+async fn read_child_pipe<R>(pipe: Option<R>) -> Vec<u8>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut buf = Vec::new();
+    if let Some(mut reader) = pipe {
+        let _ = reader.read_to_end(&mut buf).await;
+    }
+    buf
+}
+
+fn looks_like_auth_failure(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("authentication failed")
+        || lower.contains("authentication required")
+        || lower.contains("could not read username")
+        || lower.contains("could not read password")
+        || lower.contains("fatal: could not") && lower.contains("authenticate")
+        || lower.contains("permission denied")
+        || lower.contains("publickey")
+        || lower.contains("askpass")
+        || lower.contains("terminal prompts disabled")
+        || lower.contains("credential") && lower.contains("denied")
+}
+
+fn format_cli_remote_error(op: &str, detail: &str, remote_url: &str) -> String {
+    let msg = detail.trim();
+    if looks_like_auth_failure(msg) {
+        return format!("{AUTH_REQUIRED_PREFIX}{AUTH_SEP}{remote_url}{AUTH_SEP}{msg}");
+    }
+    if msg.is_empty() {
+        format!("{op}失败")
+    } else {
+        format!("{op}失败: {msg}")
+    }
+}
+
+fn save_git_credential_with_timeout(url: &str, username: &str, password: &str) {
+    save_miro_cred(url, username, password);
+
+    let Some((protocol, host)) = parse_http_remote(url) else {
+        return;
+    };
+    let payload =
+        format!("protocol={protocol}\nhost={host}\nusername={username}\npassword={password}\n\n");
+    let mut child = match std::process::Command::new("git")
+        .args(["credential", "approve"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = stdin.write_all(payload.as_bytes());
+    }
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() < Duration::from_secs(3) => {
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+}
 fn miro_cred_store_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    Some(PathBuf::from(home).join(".mirocode").join("git-credentials.json"))
+    Some(
+        PathBuf::from(home)
+            .join(".mirocode")
+            .join("git-credentials.json"),
+    )
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -981,8 +1149,7 @@ fn load_miro_cred(url: &str) -> Option<(String, String)> {
     let key = cred_host_key(url)?;
     let path = miro_cred_store_path()?;
     let raw = std::fs::read_to_string(path).ok()?;
-    let map: std::collections::HashMap<String, StoredGitCred> =
-        serde_json::from_str(&raw).ok()?;
+    let map: std::collections::HashMap<String, StoredGitCred> = serde_json::from_str(&raw).ok()?;
     let c = map.get(&key)?;
     if c.username.is_empty() || c.password.is_empty() {
         return None;
@@ -1000,11 +1167,10 @@ fn save_miro_cred(url: &str, username: &str, password: &str) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let mut map: std::collections::HashMap<String, StoredGitCred> =
-        std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default();
+    let mut map: std::collections::HashMap<String, StoredGitCred> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
     map.insert(
         key,
         StoredGitCred {
@@ -1024,31 +1190,7 @@ fn save_miro_cred(url: &str, username: &str, password: &str) {
 
 /// 写入系统 git credential（尽力而为）+ Miro Code 本地凭据（可靠记住）
 fn save_git_credential(url: &str, username: &str, password: &str) {
-    // 1. 应用内凭据：下次拉推可直接命中（不依赖钥匙串）
-    save_miro_cred(url, username, password);
-
-    // 2. 系统 helper（osxkeychain 等），失败不影响应用内记住
-    let Some((protocol, host)) = parse_http_remote(url) else {
-        return;
-    };
-    let payload = format!(
-        "protocol={protocol}\nhost={host}\nusername={username}\npassword={password}\n\n"
-    );
-    let mut child = match std::process::Command::new("git")
-        .args(["credential", "approve"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        let _ = stdin.write_all(payload.as_bytes());
-    }
-    let _ = child.wait();
+    save_git_credential_with_timeout(url, username, password);
 }
 
 /// 供登录弹窗预填：按远程 URL 查 Miro Code 已存用户名
@@ -1058,10 +1200,7 @@ pub fn git_stored_username(url: String) -> Option<String> {
 }
 
 /// 远程凭据：显式账号密码 → Miro 已存凭据 → SSH → git credential helper
-fn make_callbacks(
-    username: Option<String>,
-    password: Option<String>,
-) -> RemoteCallbacks<'static> {
+fn make_callbacks(username: Option<String>, password: Option<String>) -> RemoteCallbacks<'static> {
     let mut cb = RemoteCallbacks::new();
     cb.credentials(move |url, username_from_url, allowed| {
         let explicit_user = username.as_deref();
@@ -1137,9 +1276,8 @@ pub async fn git_pull(
     password: Option<String>,
     remember: Option<bool>,
 ) -> Result<String, String> {
-    let handle = tokio::task::spawn_blocking(move || {
-        git_pull_blocking(root, username, password, remember)
-    });
+    let handle =
+        tokio::task::spawn_blocking(move || git_pull_blocking(root, username, password, remember));
     match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("拉取任务失败: {join}")),
@@ -1172,7 +1310,9 @@ fn git_pull_blocking(
         }
     }
 
-    let fetch_head = repo.find_reference("FETCH_HEAD").map_err(|e| e.to_string())?;
+    let fetch_head = repo
+        .find_reference("FETCH_HEAD")
+        .map_err(|e| e.to_string())?;
     let fetch_commit = repo
         .reference_to_annotated_commit(&fetch_head)
         .map_err(|e| e.to_string())?;
@@ -1213,40 +1353,82 @@ pub async fn git_push(
     password: Option<String>,
     remember: Option<bool>,
 ) -> Result<String, String> {
-    let handle = tokio::task::spawn_blocking(move || {
-        git_push_blocking(root, force, username, password, remember)
-    });
-    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
-        Ok(Ok(r)) => r,
-        Ok(Err(join)) => Err(format!("推送任务失败: {join}")),
-        Err(_) => Err("推送超时（120s），请检查网络或稍后重试".into()),
-    }
-}
-
-fn git_push_blocking(
-    root: String,
-    force: Option<bool>,
-    username: Option<String>,
-    password: Option<String>,
-    remember: Option<bool>,
-) -> Result<String, String> {
-    let repo = open_repo(&root)?;
-    let head = repo.head().map_err(|e| e.to_string())?;
-    let branch = head.shorthand().map_err(|e| e.to_string())?.to_string();
-    let mut remote = repo
-        .find_remote("origin")
-        .map_err(|e| format!("缺少 origin 远程: {e}"))?;
-    let url = remote_url(&remote);
-    let mut push_opts = PushOptions::new();
-    push_opts.remote_callbacks(make_callbacks(username.clone(), password.clone()));
+    let (branch, url) = {
+        let repo = open_repo(&root)?;
+        let head = repo.head().map_err(|e| e.to_string())?;
+        let branch = head.shorthand().map_err(|e| e.to_string())?.to_string();
+        let remote = repo
+            .find_remote("origin")
+            .map_err(|e| format!("缺少 origin 远程: {e}"))?;
+        let url = remote_url(&remote);
+        (branch, url)
+    };
     let refspec = if force.unwrap_or(false) {
         format!("+refs/heads/{branch}:refs/heads/{branch}")
     } else {
         format!("refs/heads/{branch}:refs/heads/{branch}")
     };
-    remote
-        .push(&[refspec.as_str()], Some(&mut push_opts))
-        .map_err(|e| format_remote_error("推送", e, &url))?;
+
+    let temp_store = match (username.as_deref(), password.as_deref()) {
+        (Some(u), Some(p)) if parse_http_remote(&url).is_some() => {
+            Some(TempGitCredentialStore::new(&url, u, p)?)
+        }
+        _ => None,
+    };
+
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.current_dir(&root)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never")
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(store) = temp_store.as_ref() {
+        cmd.arg("-c")
+            .arg("credential.helper=")
+            .arg("-c")
+            .arg(format!("credential.helper={}", store.helper_arg()));
+    }
+    cmd.args(["push", "origin", &refspec]);
+
+    let mut child = cmd.spawn().map_err(|e| format!("无法执行 git push: {e}"))?;
+    let stdout_task = tokio::spawn(read_child_pipe(child.stdout.take()));
+    let stderr_task = tokio::spawn(read_child_pipe(child.stderr.take()));
+
+    let status = match tokio::time::timeout(Duration::from_secs(120), child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(e)) => {
+            let _ = child.kill().await;
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+            return Err(format!("推送任务失败: {e}"));
+        }
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+            return Err("推送超时（120s），请检查网络或稍后重试".into());
+        }
+    };
+
+    let stdout = stdout_task
+        .await
+        .map_err(|e| format!("读取 git push 输出失败: {e}"))?;
+    let stderr = stderr_task
+        .await
+        .map_err(|e| format!("读取 git push 错误输出失败: {e}"))?;
+    let stdout = String::from_utf8_lossy(&stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+
+    if !status.success() {
+        let detail = if stderr.is_empty() {
+            stdout.as_str()
+        } else {
+            stderr.as_str()
+        };
+        return Err(format_cli_remote_error("推送", detail, &url));
+    }
 
     if remember.unwrap_or(false) {
         if let (Some(u), Some(p)) = (username.as_deref(), password.as_deref()) {
@@ -1495,9 +1677,7 @@ pub async fn git_unpushed_commits(
     if let Some(cached) = read_unpushed_cache(&root) {
         return Ok(cached);
     }
-    let handle = tokio::task::spawn_blocking(move || {
-        git_unpushed_commits_blocking(root, limit)
-    });
+    let handle = tokio::task::spawn_blocking(move || git_unpushed_commits_blocking(root, limit));
     match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("读取未推送提交任务失败: {join}")),
@@ -1563,12 +1743,7 @@ fn git_unpushed_commits_blocking(
             .collect();
         commits.push(GitCommitInfo {
             id: id_str,
-            summary: commit
-                .summary()
-                .ok()
-                .flatten()
-                .unwrap_or("")
-                .to_string(),
+            summary: commit.summary().ok().flatten().unwrap_or("").to_string(),
             author: commit.author().name().unwrap_or("").to_string(),
             time,
             files: vec![],
@@ -1743,10 +1918,7 @@ fn git_update_project_blocking(
     }
 }
 
-fn resolve_branch_commit<'a>(
-    repo: &'a Repository,
-    name: &str,
-) -> Result<git2::Commit<'a>, String> {
+fn resolve_branch_commit<'a>(repo: &'a Repository, name: &str) -> Result<git2::Commit<'a>, String> {
     repo.find_branch(name, BranchType::Local)
         .or_else(|_| {
             let n = if name.contains('/') {
@@ -1856,13 +2028,7 @@ pub fn git_blame(root: String, path: String) -> Result<Vec<GitBlameLine>, String
             .unwrap_or_default();
         let summary_text = commit
             .as_ref()
-            .map(|c| {
-                c.summary()
-                    .ok()
-                    .flatten()
-                    .unwrap_or("")
-                    .to_string()
-            })
+            .map(|c| c.summary().ok().flatten().unwrap_or("").to_string())
             .unwrap_or_default();
         let start = hunk.final_start_line();
         let lines_in_hunk = hunk.lines_in_hunk();
@@ -1946,11 +2112,7 @@ fn run_git(root: &str, args: &[&str]) -> Result<String, String> {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if output.status.success() {
-        Ok(if stdout.is_empty() {
-            stderr
-        } else {
-            stdout
-        })
+        Ok(if stdout.is_empty() { stderr } else { stdout })
     } else {
         let msg = if stderr.is_empty() { stdout } else { stderr };
         Err(msg)
@@ -2030,12 +2192,7 @@ fn commit_info_from_oid(repo: &Repository, oid: git2::Oid) -> Result<GitCommitIn
         .map(|id| id.to_string())
         .collect();
     let author = commit.author().name().unwrap_or("").to_string();
-    let summary = commit
-        .summary()
-        .ok()
-        .flatten()
-        .unwrap_or("")
-        .to_string();
+    let summary = commit.summary().ok().flatten().unwrap_or("").to_string();
     Ok(GitCommitInfo {
         id: oid.to_string(),
         summary,
@@ -2099,22 +2256,18 @@ pub fn git_rebase_continue(root: String) -> Result<String, String> {
         }
         // 若处于 cherry-pick 中间态
         if repo.path().join("CHERRY_PICK_HEAD").is_file() {
-            let _ = run_git(&root, &["-c", "core.editor=true", "cherry-pick", "--continue"]);
-        } else if !repo
-            .statuses(None)
-            .map(|s| s.is_empty())
-            .unwrap_or(true)
-        {
+            let _ = run_git(
+                &root,
+                &["-c", "core.editor=true", "cherry-pick", "--continue"],
+            );
+        } else if !repo.statuses(None).map(|s| s.is_empty()).unwrap_or(true) {
             // 有已暂存变更则提交
             let msg = "Miro Code rebase continue";
             let _ = git_commit(root.clone(), msg.into(), None, None);
         }
         return replay_miro_rebase(root);
     }
-    match run_git(
-        &root,
-        &["-c", "core.editor=true", "rebase", "--continue"],
-    ) {
+    match run_git(&root, &["-c", "core.editor=true", "rebase", "--continue"]) {
         Ok(msg) => Ok(if msg.is_empty() {
             "Rebase 已继续".into()
         } else {
@@ -2122,9 +2275,7 @@ pub fn git_rebase_continue(root: String) -> Result<String, String> {
         }),
         Err(e) => {
             if is_rebase_in_progress(&root) {
-                Err(format!(
-                    "GIT_REBASE_CONFLICT|||继续 Rebase 仍有冲突\n{e}"
-                ))
+                Err(format!("GIT_REBASE_CONFLICT|||继续 Rebase 仍有冲突\n{e}"))
             } else {
                 Err(e)
             }
@@ -2229,7 +2380,7 @@ fn replay_miro_rebase(root: String) -> Result<String, String> {
                         .unwrap_or(false)
                     {
                         return Err(
-                            "GIT_REBASE_CONFLICT|||交互 Rebase 冲突，请解决后 Continue".into(),
+                            "GIT_REBASE_CONFLICT|||交互 Rebase 冲突，请解决后 Continue".into()
                         );
                     }
                     return Err(format!(
@@ -2258,7 +2409,7 @@ fn replay_miro_rebase(root: String) -> Result<String, String> {
                         .unwrap_or(false)
                     {
                         return Err(
-                            "GIT_REBASE_CONFLICT|||交互 Rebase 冲突，请解决后 Continue".into(),
+                            "GIT_REBASE_CONFLICT|||交互 Rebase 冲突，请解决后 Continue".into()
                         );
                     }
                     return Err(format!(
@@ -2267,10 +2418,7 @@ fn replay_miro_rebase(root: String) -> Result<String, String> {
                     ));
                 }
                 // amend 保留原信息
-                let _ = run_git(
-                    &root,
-                    &["commit", "--amend", "--no-edit", "--allow-empty"],
-                );
+                let _ = run_git(&root, &["commit", "--amend", "--no-edit", "--allow-empty"]);
             }
             "squash" => {
                 let out = std::process::Command::new("git")
@@ -2287,7 +2435,7 @@ fn replay_miro_rebase(root: String) -> Result<String, String> {
                         .unwrap_or(false)
                     {
                         return Err(
-                            "GIT_REBASE_CONFLICT|||交互 Rebase 冲突，请解决后 Continue".into(),
+                            "GIT_REBASE_CONFLICT|||交互 Rebase 冲突，请解决后 Continue".into()
                         );
                     }
                     return Err(format!(
@@ -2378,13 +2526,14 @@ pub fn git_revert_commit(root: String, commit_id: String) -> Result<String, Stri
         &root,
         &["-c", "core.editor=true", "revert", "--no-edit", &commit_id],
     ) {
-        Ok(_) => Ok(format!("已 revert {}", &commit_id[..7.min(commit_id.len())])),
+        Ok(_) => Ok(format!(
+            "已 revert {}",
+            &commit_id[..7.min(commit_id.len())]
+        )),
         Err(e) => {
             let repo = open_repo(&root)?;
             if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
-                Err(format!(
-                    "Revert 产生冲突，请在 Commit 面板解决\n{e}"
-                ))
+                Err(format!("Revert 产生冲突，请在 Commit 面板解决\n{e}"))
             } else {
                 Err(format!("Revert 失败: {e}"))
             }
@@ -2519,7 +2668,119 @@ pub async fn dev_fake_block(ms: u64) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use std::time::Duration;
+
+    fn run_git_ok(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?} 失败: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn percent_encode_credential_escapes_reserved_chars() {
+        assert_eq!(percent_encode_credential("user name"), "user%20name");
+        assert_eq!(
+            percent_encode_credential("p@ss:word/1"),
+            "p%40ss%3Aword%2F1"
+        );
+    }
+
+    #[test]
+    fn format_cli_remote_error_marks_auth_failures() {
+        let err = format_cli_remote_error(
+            "推送",
+            "fatal: Authentication failed for 'https://example.com/repo.git/'",
+            "https://example.com/repo.git",
+        );
+        assert!(err.starts_with("GIT_AUTH_REQUIRED|||https://example.com/repo.git|||"));
+    }
+
+    #[test]
+    fn format_cli_remote_error_keeps_regular_failures_plain() {
+        let err = format_cli_remote_error(
+            "推送",
+            "fatal: unable to access 'https://example.com/repo.git/': Failed to connect",
+            "https://example.com/repo.git",
+        );
+        assert_eq!(
+            err,
+            "推送失败: fatal: unable to access 'https://example.com/repo.git/': Failed to connect"
+        );
+    }
+
+    #[test]
+    fn temp_git_credential_store_writes_http_credential_line() {
+        let store = TempGitCredentialStore::new(
+            "https://example.com/team/repo.git",
+            "user name",
+            "p@ss:word/1",
+        )
+        .expect("temp store");
+        let raw = std::fs::read_to_string(&store.path).expect("read temp store");
+        assert_eq!(
+            raw,
+            "https://user%20name:p%40ss%3Aword%2F1@example.com/team/repo.git\n"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn git_push_uses_system_git_path() {
+        let remote_tmp = tempfile::tempdir().expect("remote tempdir");
+        let remote_path = remote_tmp.path();
+        run_git_ok(remote_path, &["init", "--bare"]);
+
+        let local_tmp = tempfile::tempdir().expect("local tempdir");
+        let local_path = local_tmp.path();
+        run_git_ok(local_path, &["init", "-b", "main"]);
+        run_git_ok(local_path, &["config", "user.name", "test"]);
+        run_git_ok(local_path, &["config", "user.email", "test@example.com"]);
+        run_git_ok(
+            local_path,
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote_path.to_string_lossy().as_ref(),
+            ],
+        );
+        std::fs::write(local_path.join("README.md"), "hello\n").expect("write file");
+        run_git_ok(local_path, &["add", "README.md"]);
+        run_git_ok(local_path, &["commit", "-m", "init"]);
+
+        let msg = git_push(
+            local_path.to_string_lossy().to_string(),
+            Some(false),
+            None,
+            None,
+            Some(false),
+        )
+        .await
+        .expect("git push");
+        assert_eq!(msg, "推送成功");
+
+        let remote_repo = Repository::open_bare(remote_path).expect("open bare remote");
+        let remote_head = remote_repo
+            .find_reference("refs/heads/main")
+            .expect("find remote main")
+            .target()
+            .expect("remote target");
+        let local_repo = Repository::discover(local_path).expect("open local repo");
+        let local_head = local_repo
+            .head()
+            .expect("head")
+            .target()
+            .expect("local target");
+        assert_eq!(remote_head, local_head, "远端 main 应指向本地 HEAD");
+    }
 
     /// 验证 `try_ssh_agent_with_timeout` 在无 / 假 SSH agent 环境下行为可控：
     /// - 必须在 timeout 之内返回（不会让 IPC worker 无限阻塞）
@@ -2535,9 +2796,8 @@ mod tests {
             "helper 必须严格在 timeout 之内返回；实际 {elapsed:?}"
         );
         // 三种结果都合法——只要 helper 本身不被卡死
-        let acceptable = result.is_err()
-            || matches!(result, Ok(None))
-            || matches!(result, Ok(Some(_)));
+        let acceptable =
+            result.is_err() || matches!(result, Ok(None)) || matches!(result, Ok(Some(_)));
         assert!(acceptable, "helper 返回类型不在约定范围");
     }
 
@@ -2630,4 +2890,3 @@ mod tests {
         rt.block_on(async { long_task.await.unwrap() });
     }
 }
-
