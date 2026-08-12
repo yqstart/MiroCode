@@ -1,24 +1,17 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
-import { sftpClose, sshShellClose, type SshConnectConfig } from "@/shared/sshApi";
+import { sshShellClose, type SshConnectConfig } from "@/shared/sshApi";
 
-export type RemotePane = "shell" | "sftp";
 export type SshSurface = "hosts" | "session";
 
-/** SSH 远程会话：终端与 SFTP 共用同一连接配置 */
+/** SSH 远程会话：仅终端，连接配置复用 SSH 凭据 */
 export interface RemoteSession {
   id: string;
   title: string;
   config: SshConnectConfig;
-  pane: RemotePane;
-  sftpOpened: boolean;
 }
 
 const SSH_TAB_ID = "miro://ssh";
-
-export function sftpSessionId(remoteId: string): string {
-  return `sftp-${remoteId}`;
-}
 
 /**
  * SSH 远程会话视图：作为独立编辑区标签打开（对齐 VS Code 远程开发入口形态），
@@ -96,9 +89,7 @@ export const useSshStore = defineStore("ssh", () => {
   /** 关闭 SSH 标签：断开全部远程连接、卸载视图并结束保活 */
   async function closeSsh(): Promise<boolean> {
     for (const session of remoteSessions.value.slice()) {
-      const ok = await disconnectRemoteSession(session.id, {
-        forceCloseEditorTabs: true,
-      });
+      const ok = await disconnectRemoteSession(session.id);
       if (!ok) return false;
     }
     remoteSessions.value = [];
@@ -110,31 +101,15 @@ export const useSshStore = defineStore("ssh", () => {
     return true;
   }
 
-  /** 主动断开远程 SSH/SFTP，并关闭对应远程编辑标签 */
-  async function disconnectRemoteSession(
-    id: string,
-    options?: { forceCloseEditorTabs?: boolean },
-  ): Promise<boolean> {
+  /** 主动断开远程 SSH 终端 */
+  async function disconnectRemoteSession(id: string): Promise<boolean> {
     const session = remoteSessions.value.find((t) => t.id === id);
     if (!session) return true;
-
-    const sid = sftpSessionId(id);
-    const { useEditorStore } = await import("@/stores/editor");
-    const editor = useEditorStore();
-    const tabsOk = await editor.closeRemoteTabsForSftpSession(sid, {
-      force: options?.forceCloseEditorTabs,
-    });
-    if (!tabsOk) return false;
 
     try {
       await sshShellClose(id);
     } catch {
       // 已断开则忽略
-    }
-    try {
-      await sftpClose(sid);
-    } catch {
-      // 未打开 SFTP 则忽略
     }
     return true;
   }
@@ -148,8 +123,6 @@ export const useSshStore = defineStore("ssh", () => {
       id,
       title,
       config,
-      pane: "shell",
-      sftpOpened: false,
     });
     activeRemoteId.value = id;
     surface.value = "session";
@@ -191,37 +164,14 @@ export const useSshStore = defineStore("ssh", () => {
     surface.value = "hosts";
   }
 
-  function setRemotePane(id: string, pane: RemotePane) {
-    const session = remoteSessions.value.find((t) => t.id === id);
-    if (!session) return;
-    session.pane = pane;
-  }
-
-  function markSftpOpened(id: string, opened = true) {
-    const session = remoteSessions.value.find((t) => t.id === id);
-    if (!session) return;
-    session.sftpOpened = opened;
-    if (opened) session.pane = "sftp";
-  }
-
-  /** 打开/切换工作区时强制断开本窗口全部 SSH/SFTP 远程连接（活跃会话） */
+  /** 打开/切换工作区时强制断开本窗口全部 SSH 远程连接（活跃会话） */
   async function resetForWorkspace() {
     const remotes = remoteSessions.value.slice();
-    const { useEditorStore } = await import("@/stores/editor");
-    const editor = useEditorStore();
     for (const session of remotes) {
-      await editor.closeRemoteTabsForSftpSession(sftpSessionId(session.id), {
-        force: true,
-      });
       try {
         await sshShellClose(session.id);
       } catch {
         // 已断开则忽略
-      }
-      try {
-        await sftpClose(sftpSessionId(session.id));
-      } catch {
-        // 未打开 SFTP 则忽略
       }
     }
     remoteSessions.value = [];
@@ -250,8 +200,6 @@ export const useSshStore = defineStore("ssh", () => {
     closeRemoteSession,
     activateRemote,
     goHosts,
-    setRemotePane,
-    markSftpOpened,
     resetForWorkspace,
   };
 });

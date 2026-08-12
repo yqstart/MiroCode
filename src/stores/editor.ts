@@ -10,14 +10,6 @@ import {
   writeTextFile,
 } from "@/shared/fs";
 import { isRasterImagePath } from "@/shared/media";
-import {
-  buildRemoteFileUri,
-  isRemoteFilePath,
-  parseRemoteFileUri,
-  remoteTabLabel,
-} from "@/shared/remoteFile";
-import { sftpRead, sftpWrite } from "@/shared/sshApi";
-import type { SshConnectConfig } from "@/shared/sshApi";
 import { formatWithPrettier } from "@/shared/toolingApi";
 import type { EditorFindRequest, EditorJumpTarget, EditorOpenAt } from "@/shared/types";
 import { useCompareStore } from "@/stores/compare";
@@ -115,100 +107,6 @@ export const useEditorStore = defineStore("editor", () => {
     findRequest.value = { path: activePath.value, requestId: findRequestSeq };
   }
 
-  async function openRemoteFile(
-    sftpSessionId: string,
-    remotePath: string,
-    meta: Pick<SshConnectConfig, "host" | "username" | "displayName">,
-  ) {
-    useSessionsStore().blurSessions();
-    useCompareStore().blurCompare();
-    void import("@/stores/gitLog").then(({ useGitLogStore }) => {
-      useGitLogStore().blurLog();
-    });
-
-    const uri = buildRemoteFileUri(sftpSessionId, remotePath);
-    const existing = tabs.value.find((t) => t.path === uri);
-    if (existing) {
-      activePath.value = uri;
-      markExternalUpdate(uri);
-      return;
-    }
-
-    const workspace = useWorkspaceStore();
-    try {
-      const content = await sftpRead(sftpSessionId, remotePath);
-      tabs.value.push({
-        id: uri,
-        path: uri,
-        name: remoteTabLabel(remotePath, meta),
-        content,
-        original: content,
-        language: languageFromPath(remotePath),
-        cursor: { line: 1, column: 1 },
-        previewNonce: Date.now(),
-        pinned: false,
-      });
-      activePath.value = uri;
-    } catch (error) {
-      workspace.showNotice(
-        error instanceof Error ? error.message : String(error),
-        3600,
-      );
-    }
-  }
-
-  async function persistRemoteTab(tab: EditorTab, quiet = false) {
-    const ref = parseRemoteFileUri(tab.path);
-    if (!ref) return;
-    const workspace = useWorkspaceStore();
-    await sftpWrite(ref.sftpSessionId, ref.remotePath, tab.content);
-    tab.original = tab.content;
-    if (!quiet) {
-      workspace.showNotice(`已保存到远程 ${basename(ref.remotePath)}`);
-    }
-  }
-
-  /** 保存后通知 LSP server（didSave），触发 server 侧保存后诊断/编译刷新 */
-  function notifyLspDidSave(path: string, text: string): void {
-    void import("@/features/lsp/manager").then(({ lspManager }) => {
-      void lspManager.didSave(path, text);
-    });
-  }
-
-  /** 同会话内 Vue 文件提示只弹一次（避免重复打扰） */
-  let vueLsHintShown = false;
-
-  /**
-   * 打开 Vue 文件且语言服务未就绪时，提示用户一键安装。
-   * 条件：当前 tab 是 Vue && LSP 已启用 && Vue 语言服务未安装 && 宿主无 volar。
-   * 同会话只提示一次。
-   */
-  async function maybeHintVueLanguageService() {
-    if (vueLsHintShown) return;
-    const tab = activeTab.value;
-    if (!tab || tab.language !== "Vue") return;
-    const settings = useSettingsStore();
-    if (!settings.editor.lspEnabled) return;
-    try {
-      const { lsInstaller } = await import("@/features/lsp/installer");
-      // Vue 语言服务已安装则无需提示
-      if (lsInstaller.getState("vue").status?.installedVersion) return;
-      const { detectRuntime } = await import("@/features/lsp/nodeDetector");
-      const rt = await detectRuntime();
-      // 宿主已装 volar 也无需提示
-      if (rt.volar) return;
-      vueLsHintShown = true;
-      const ui = useUiStore();
-      const workspace = useWorkspaceStore();
-      workspace.showNotice(t("lsp.vueFileHint"), 0, {
-        label: t("lsp.install"),
-        onClick: () => ui.openSettings("editor"),
-      });
-    } catch {
-      // 检测失败静默忽略（非 Tauri 环境等）
-    }
-  }
-
   async function openFile(path: string) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
@@ -255,6 +153,47 @@ export const useEditorStore = defineStore("editor", () => {
         error instanceof Error ? error.message : String(error),
         3200,
       );
+    }
+  }
+
+  /** 保存后通知 LSP server（didSave），触发 server 侧保存后诊断/编译刷新 */
+  function notifyLspDidSave(path: string, text: string): void {
+    void import("@/features/lsp/manager").then(({ lspManager }) => {
+      void lspManager.didSave(path, text);
+    });
+  }
+
+  /** 同会话内 Vue 文件提示只弹一次（避免重复打扰） */
+  let vueLsHintShown = false;
+
+  /**
+   * 打开 Vue 文件且语言服务未就绪时，提示用户一键安装。
+   * 条件：当前 tab 是 Vue && LSP 已启用 && Vue 语言服务未安装 && 宿主无 volar。
+   * 同会话只提示一次。
+   */
+  async function maybeHintVueLanguageService() {
+    if (vueLsHintShown) return;
+    const tab = activeTab.value;
+    if (!tab || tab.language !== "Vue") return;
+    const settings = useSettingsStore();
+    if (!settings.editor.lspEnabled) return;
+    try {
+      const { lsInstaller } = await import("@/features/lsp/installer");
+      // Vue 语言服务已安装则无需提示
+      if (lsInstaller.getState("vue").status?.installedVersion) return;
+      const { detectRuntime } = await import("@/features/lsp/nodeDetector");
+      const rt = await detectRuntime();
+      // 宿主已装 volar 也无需提示
+      if (rt.volar) return;
+      vueLsHintShown = true;
+      const ui = useUiStore();
+      const workspace = useWorkspaceStore();
+      workspace.showNotice(t("lsp.vueFileHint"), 0, {
+        label: t("lsp.install"),
+        onClick: () => ui.openSettings("editor"),
+      });
+    } catch {
+      // 检测失败静默忽略（非 Tauri 环境等）
     }
   }
 
@@ -463,10 +402,6 @@ export const useEditorStore = defineStore("editor", () => {
       workspace.showNotice("当前无活动文件可格式化");
       return;
     }
-    if (isRemoteFilePath(targetPath)) {
-      workspace.showNotice("远程文件暂不支持格式化");
-      return;
-    }
     if (isRasterImagePath(targetPath)) return;
 
     let tab = tabs.value.find((t) => t.path === targetPath) ?? null;
@@ -510,21 +445,6 @@ export const useEditorStore = defineStore("editor", () => {
     const tab = activeTab.value;
     if (isRasterImagePath(tab.path)) return;
 
-    if (isRemoteFilePath(tab.path)) {
-      if (tab.content === tab.original) return;
-      try {
-        await persistRemoteTab(tab, options?.quiet);
-      } catch (error) {
-        if (!options?.quiet) {
-          workspace.showNotice(
-            error instanceof Error ? error.message : String(error),
-            3200,
-          );
-        }
-      }
-      return;
-    }
-
     if (!workspace.rootPath) {
       if (!options?.quiet) {
         workspace.showNotice("当前无活动文件可保存");
@@ -565,11 +485,6 @@ export const useEditorStore = defineStore("editor", () => {
     try {
       let saved = 0;
       for (const tab of dirty) {
-        if (isRemoteFilePath(tab.path)) {
-          await persistRemoteTab(tab, true);
-          saved += 1;
-          continue;
-        }
         if (!workspace.rootPath) continue;
         workspace.markSelfWrite(tab.path);
         await writeTextFile(workspace.rootPath, tab.path, tab.content);
@@ -614,38 +529,6 @@ export const useEditorStore = defineStore("editor", () => {
         if (sessions.open) sessions.focusSessions();
       }
     }
-  }
-
-  /** 断开 SFTP 会话时关闭对应远程编辑标签；force 时跳过未保存确认 */
-  async function closeRemoteTabsForSftpSession(
-    sftpSessionId: string,
-    options?: { force?: boolean },
-  ): Promise<boolean> {
-    const victims = tabs.value.filter(
-      (t) => parseRemoteFileUri(t.path)?.sftpSessionId === sftpSessionId,
-    );
-    if (!victims.length) return true;
-
-    if (!options?.force) {
-      const dirty = victims.filter(
-        (t) => !isRasterImagePath(t.path) && t.content !== t.original,
-      );
-      if (dirty.length) {
-        const ok = window.confirm(
-          dirty.length === 1
-            ? `远程文件「${dirty[0].name}」有未保存更改，断开连接将关闭该标签。继续？`
-            : `${dirty.length} 个远程文件有未保存更改，断开连接将关闭这些标签。继续？`,
-        );
-        if (!ok) return false;
-      }
-    }
-
-    const paths = new Set(victims.map((t) => t.path));
-    tabs.value = tabs.value.filter((t) => !paths.has(t.path));
-    if (activePath.value && paths.has(activePath.value)) {
-      activePath.value = tabs.value[0]?.path ?? null;
-    }
-    return true;
   }
 
   /** 固定标签排到左侧，组内保持相对顺序 */
@@ -774,7 +657,6 @@ export const useEditorStore = defineStore("editor", () => {
     requestOpenAt,
     requestFind,
     openFile,
-    openRemoteFile,
     openFileAt,
     setContent,
     syncFromDisk,
@@ -790,7 +672,6 @@ export const useEditorStore = defineStore("editor", () => {
     saveAll,
     formatDocument,
     closeTab,
-    closeRemoteTabsForSftpSession,
     togglePin,
     closeOtherTabs,
     closeTabsToTheLeft,
