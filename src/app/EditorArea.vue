@@ -12,7 +12,6 @@ import SshView from "@/features/sessions/SshView.vue";
 import { basename, relativeToRoot } from "@/shared/fs";
 import { isRasterImagePath, isSvgPath } from "@/shared/media";
 import { formatShortcut } from "@/shared/platform";
-import { parseRemoteFileUri } from "@/shared/remoteFile";
 import { revealInOsExplorer } from "@/shared/revealInOs";
 import { disambiguateTabLabels, tabTooltip } from "@/shared/tabLabel";
 import { useCompareStore } from "@/stores/compare";
@@ -171,8 +170,6 @@ function fileTabLabel(path: string, name: string): string {
 }
 
 function fileTabTitle(path: string): string {
-  const remote = parseRemoteFileUri(path);
-  if (remote) return remote.remotePath;
   return tabTooltip(path, rootPath.value);
 }
 
@@ -646,117 +643,132 @@ onBeforeUnmount(() =>
     </div>
 
     <div class="canvas">
-      <SessionsView v-if="sessionsMounted" v-show="sessionsFocused" />
+      <Transition name="canvas-fade">
+        <SessionsView v-if="sessionsMounted" v-show="sessionsFocused" />
+      </Transition>
 
-      <SshView v-if="sshMounted" v-show="sshFocused" />
+      <Transition name="canvas-fade">
+        <SshView v-if="sshMounted" v-show="sshFocused" />
+      </Transition>
 
-      <GitLogPanel v-if="gitLogOpen" v-show="gitLogFocused" />
+      <Transition name="canvas-fade">
+        <GitLogPanel v-if="gitLogOpen" v-show="gitLogFocused" />
+      </Transition>
 
-      <CompareView
-        v-for="tab in compareTabs"
-        v-show="compareFocused && tab.id === compareActiveId"
-        :key="tab.id"
-        :tab-id="tab.id"
-        :active="compareFocused && tab.id === compareActiveId"
-      />
-
-      <template v-if="showFileEditor && activeTab">
-        <ImagePreview
-          v-if="showImagePreview"
-          :path="activeTab.path"
-          :content="isSvg ? activeTab.content : undefined"
-          :cache-key="activeTab.previewNonce"
+      <TransitionGroup name="canvas-fade" tag="div" class="canvas-stack">
+        <CompareView
+          v-for="tab in compareTabs"
+          v-show="compareFocused && tab.id === compareActiveId"
+          :key="tab.id"
+          :tab-id="tab.id"
+          :active="compareFocused && tab.id === compareActiveId"
         />
-        <CodeMirrorEditor
-          v-else-if="showTextEditor"
-          :key="activeTab.path"
-          :path="activeTab.path"
-          :content="activeTab.content"
-          @contextmenu="onEditorContextMenu"
-        />
+      </TransitionGroup>
+
+      <Transition name="canvas" mode="out-in">
+        <template v-if="showFileEditor && activeTab">
+          <ImagePreview
+            v-if="showImagePreview"
+            :key="`image-${activeTab.path}`"
+            :path="activeTab.path"
+            :content="isSvg ? activeTab.content : undefined"
+            :cache-key="activeTab.previewNonce"
+          />
+          <CodeMirrorEditor
+            v-else-if="showTextEditor"
+            :key="`editor-${activeTab.path}`"
+            :path="activeTab.path"
+            :content="activeTab.content"
+            @contextmenu="onEditorContextMenu"
+          />
+          <div
+            v-else-if="markdownPreview && isMarkdown"
+            :key="`md-${activeTab.path}`"
+            class="md-preview"
+            v-html="previewHtml"
+            @contextmenu="onEditorContextMenu"
+          />
+        </template>
         <div
-          v-else-if="markdownPreview && isMarkdown"
-          class="md-preview"
-          v-html="previewHtml"
-          @contextmenu="onEditorContextMenu"
-        />
-      </template>
-
-      <div
-        v-else-if="!sessionsFocused && !sshFocused && !compareFocused && !gitLogFocused && !activeTab"
-        class="welcome"
-      >
-        <h1>{{ t("app.name") }}</h1>
-        <p>{{ t("app.tagline") }}</p>
-        <div class="actions">
-          <button type="button" class="cta" @click="workspace.openFolder()">
-            {{ t("editor.openFolder") }}
-          </button>
-          <button type="button" class="ghost" @click="sessions.openSessions(workspace.rootPath)">
-            {{ t("editor.openTerminal") }}
-          </button>
-          <p class="hint">{{ welcomeShortcutHint }}</p>
+          v-else-if="!sessionsFocused && !sshFocused && !compareFocused && !gitLogFocused && !activeTab"
+          key="welcome"
+          class="welcome"
+        >
+          <h1>{{ t("app.name") }}</h1>
+          <p>{{ t("app.tagline") }}</p>
+          <div class="actions">
+            <button type="button" class="cta" @click="workspace.openFolder()">
+              {{ t("editor.openFolder") }}
+            </button>
+            <button type="button" class="ghost" @click="sessions.openSessions(workspace.rootPath)">
+              {{ t("editor.openTerminal") }}
+            </button>
+            <p class="hint">{{ welcomeShortcutHint }}</p>
+          </div>
         </div>
-      </div>
+      </Transition>
     </div>
 
     <Teleport to="body">
-      <div
-        v-if="tabCtx"
-        class="tab-ctx"
-        :style="{ left: `${tabCtx.x}px`, top: `${tabCtx.y}px` }"
-        @click.stop
-        @contextmenu.prevent
-      >
-        <button type="button" @click="runTabMenu('pin')">
-          {{ tabCtxPinned ? t("editor.unpin") : t("editor.pin") }}
-        </button>
-        <button type="button" @click="runTabMenu('revealInOs')">
-          {{ t("explorer.revealInOs") }}
-        </button>
-        <hr />
-        <button type="button" @click="runTabMenu('close')">
-          {{ t("editor.close") }}
-        </button>
-        <button
-          type="button"
-          :disabled="!tabCtxCanCloseOthers"
-          @click="runTabMenu('closeOthers')"
+      <Transition name="ctx">
+        <div
+          v-if="tabCtx"
+          class="tab-ctx"
+          :style="{ left: `${tabCtx.x}px`, top: `${tabCtx.y}px` }"
+          @click.stop
+          @contextmenu.prevent
         >
-          {{ t("editor.closeOthers") }}
-        </button>
-        <button
-          type="button"
-          :disabled="!tabCtxCanCloseLeft"
-          @click="runTabMenu('closeLeft')"
-        >
-          {{ t("editor.closeToTheLeft") }}
-        </button>
-        <button
-          type="button"
-          :disabled="!tabCtxCanCloseRight"
-          @click="runTabMenu('closeRight')"
-        >
-          {{ t("editor.closeToTheRight") }}
-        </button>
-        <button
-          type="button"
-          :disabled="!tabCtxCanCloseAll"
-          @click="runTabMenu('closeAll')"
-        >
-          {{ t("editor.closeAll") }}
-        </button>
-      </div>
+          <button type="button" @click="runTabMenu('pin')">
+            {{ tabCtxPinned ? t("editor.unpin") : t("editor.pin") }}
+          </button>
+          <button type="button" @click="runTabMenu('revealInOs')">
+            {{ t("explorer.revealInOs") }}
+          </button>
+          <hr />
+          <button type="button" @click="runTabMenu('close')">
+            {{ t("editor.close") }}
+          </button>
+          <button
+            type="button"
+            :disabled="!tabCtxCanCloseOthers"
+            @click="runTabMenu('closeOthers')"
+          >
+            {{ t("editor.closeOthers") }}
+          </button>
+          <button
+            type="button"
+            :disabled="!tabCtxCanCloseLeft"
+            @click="runTabMenu('closeLeft')"
+          >
+            {{ t("editor.closeToTheLeft") }}
+          </button>
+          <button
+            type="button"
+            :disabled="!tabCtxCanCloseRight"
+            @click="runTabMenu('closeRight')"
+          >
+            {{ t("editor.closeToTheRight") }}
+          </button>
+          <button
+            type="button"
+            :disabled="!tabCtxCanCloseAll"
+            @click="runTabMenu('closeAll')"
+          >
+            {{ t("editor.closeAll") }}
+          </button>
+        </div>
+      </Transition>
     </Teleport>
 
     <Teleport to="body">
-      <div
-        v-if="editorCtx"
-        class="editor-ctx"
-        :style="{ left: `${editorCtx.x}px`, top: `${editorCtx.y}px` }"
-        @click.stop
-        @contextmenu.prevent
-      >
+      <Transition name="ctx">
+        <div
+          v-if="editorCtx"
+          class="editor-ctx"
+          :style="{ left: `${editorCtx.x}px`, top: `${editorCtx.y}px` }"
+          @click.stop
+          @contextmenu.prevent
+        >
         <button
           type="button"
           :disabled="formatDocumentDisabled"
@@ -771,7 +783,8 @@ onBeforeUnmount(() =>
             {{ t("editor.discardChanges") }}
           </button>
         </template>
-      </div>
+        </div>
+      </Transition>
     </Teleport>
   </section>
 </template>
@@ -850,7 +863,7 @@ onBeforeUnmount(() =>
   animation: miro-tab-in 160ms var(--ease-out);
 }
 
-/* 底部 active 指示条：以 transition 平滑出现，替代 box-shadow 的瞬间切换 */
+/* 底部 active 指示条：单时间轴（统一 --transition-medium） */
 .tab::after {
   content: "";
   position: absolute;
@@ -862,7 +875,9 @@ onBeforeUnmount(() =>
   background: var(--accent);
   opacity: 0;
   transform: scaleX(0.4);
-  transition: opacity var(--transition-fast), transform var(--transition-normal) var(--ease-out);
+  transform-origin: center;
+  transition: opacity var(--transition-medium) var(--ease-out),
+    transform var(--transition-medium) var(--ease-out);
 }
 
 .tab:has(.name.disambiguated) {
@@ -939,11 +954,14 @@ onBeforeUnmount(() =>
   background: transparent;
   border: 1px solid var(--text-muted);
   flex-shrink: 0;
+  transition: background var(--transition-medium) var(--ease-out),
+    border-color var(--transition-medium) var(--ease-out);
 }
 
 .dot.dirty {
   background: var(--accent);
   border-color: var(--accent);
+  animation: miro-dot-pop 0.42s var(--ease-out) both;
 }
 
 .name {
@@ -959,6 +977,9 @@ onBeforeUnmount(() =>
   display: grid;
   place-items: center;
   opacity: 0;
+  transition: opacity var(--transition-fast) var(--ease-out),
+    background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
 }
 
 .tab:hover .close,
@@ -1019,6 +1040,82 @@ onBeforeUnmount(() =>
 .canvas > :deep(.log-panel),
 .canvas > :deep(.sessions-view) {
   height: 100%;
+}
+
+/* canvas-fade：v-show 视图（sessions/ssh/gitlog/compare）显隐淡入淡出 */
+.canvas-fade-enter-active,
+.canvas-fade-leave-active {
+  transition: opacity var(--transition-medium) var(--ease-out);
+}
+.canvas-fade-enter-from,
+.canvas-fade-leave-to {
+  opacity: 0;
+}
+
+/* canvas-stack：CompareView TransitionGroup 容器——叠放所有 compare 实例（v-show 切换） */
+.canvas-stack {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.canvas-stack > * {
+  pointer-events: auto;
+  height: 100%;
+}
+
+/* canvas：互斥视图（CM/Image/md/welcome）淡入淡出 + 轻微上移 */
+.canvas-enter-active {
+  transition: opacity var(--transition-slow) var(--ease-out),
+    transform var(--transition-slow) var(--ease-out);
+}
+.canvas-leave-active {
+  transition: opacity var(--transition-fast) var(--ease-out),
+    transform var(--transition-fast) var(--ease-out);
+}
+.canvas-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.canvas-leave-to {
+  opacity: 0;
+  transform: translateY(-2px);
+}
+
+/* ctx：tab-ctx / editor-ctx 右键菜单 popover */
+.ctx-enter-active {
+  transition: opacity var(--transition-medium) var(--ease-out),
+    transform var(--transition-medium) var(--ease-out);
+}
+.ctx-leave-active {
+  transition: opacity var(--transition-fast) var(--ease-out),
+    transform var(--transition-fast) var(--ease-out);
+}
+.ctx-enter-from {
+  opacity: 0;
+  transform: scale(0.96);
+}
+.ctx-leave-to {
+  opacity: 0;
+  transform: scale(0.98);
+}
+
+/* welcome 内部按钮 hover 平滑（之前是硬切） */
+.welcome .cta,
+.welcome .ghost {
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out),
+    border-color var(--transition-fast) var(--ease-out),
+    transform var(--transition-fast) var(--ease-out),
+    box-shadow var(--transition-fast) var(--ease-out);
+}
+.welcome .cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.welcome .ghost:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated));
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .md-preview {
