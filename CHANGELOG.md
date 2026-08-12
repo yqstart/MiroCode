@@ -2,6 +2,37 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.13.4] - 2026-08-12
+
+### 修复
+
+- **终端删除键变空格**（仅打包 app 复现：「输入几个字符，按删除键插入几个空格」）
+  - 根因：打包环境 WKWebView 下 keydown 的 `preventDefault` 不可靠/被 IME 层吞掉，浏览器把输入字符写进 xterm 隐藏 textarea 且无人清理（残留）；按 Backspace 时 IME 把残留字符替换为等长空格，经 xterm `_inputEvent` 二次派发（keydown 被吞时 `keyDownSeen=false` 触发派发条件）泄漏到 shell——原有 `lastDeleteAt < 300ms` 拦截因 keydown 未到达而失效
+  - 修（`terminalInputBridge.ts` 四层）：① `safeWrite` 派发后 `data === textarea.value` 同步清空（中文提交残留）；② onData 空白拦截追加 `!keyDownSeen && 组合提交后 1.5s 内` 条件；③ `onImeCommitInput` ASCII 分支清空残留（英文输入残留源头）；④ Backspace keydown（非组合态）主动清空 textarea
+- **应用内更新 403 安装失败**（中国大陆网络）
+  - 根因：tauri-action 生成的 `latest.json` 资产 url 指向 `api.github.com/releases/assets/<id>`，匿名访问受限流/风控（403）；`github.com/releases/latest` 清单路径在大陆网络下也不稳定
+  - 修：① updater `endpoints` 改数组（官方源 + ghfast.top 镜像按序 fallback）；② 新增 `scripts/rewrite-updater-urls.mjs` 把资产 url 改写为镜像直链（已对 v0.13.3 线上执行）；③ `release.yml` 新增 `finalize` job 每次发布自动改写
+- **macOS 红绿灯贴顶被窗口裁掉**
+  - 根因：配置了 `trafficLightPosition` 后，tao 0.35 的 `draw_rect` 每次窗口重绘都执行 `inset_traffic_lights`，把标题栏容器高度重置为 `按钮高 + y`（≈24pt），`apply_traffic_lights` 设的按钮 `origin_y=12` 在 24pt 容器下中心距顶仅 6pt（应为 19pt）
+  - 修：删除 `tauri.conf.json` 与 `openWorkspace.ts` 的 `trafficLightPosition`，位置完全由 Rust 端接管（setup 一次 + 窗口事件钩子）
+- **全局搜索卡死 + 关闭重开状态不重置**：文件列表缓存重建、搜索任务取消链路修正
+- **补回本地终端标签 × 关闭按钮**
+- **亮色主题终端底部黑条**：PTY 初始尺寸/背景色对齐修正
+- **窗口居中，不再持久化 POSITION**；**默认窗口对齐 Cursor/VSCode 1440×900，不再记 SIZE**
+- **右上角终端按钮离右边缘 14px**，与红绿灯左侧对称
+- **设置-关于区域删除最后一行文案**
+
+### 优化
+
+- **折叠箭头右移 6px**，不再紧贴 gutter 左缘
+- **项目标题居中**（TitleBar）
+- **设置-移动时更新 import 下拉改全宽**、**镜像行 select 占满整行**（不再跟随 option 文本宽度）
+- **终端入口左留白 12px → 20px** 加大右距
+
+### 性能
+
+- **搜索文件卡死优化**：防抖 + 代际取消 + 零分配匹配 + 超时缩短（`features/search`）
+
 ## [0.13.3] - 2026-08-12
 
 ### 修复
@@ -605,6 +636,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
+[0.13.4]: https://github.com/yqstart/MiroCode/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/yqstart/MiroCode/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/yqstart/MiroCode/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/yqstart/MiroCode/compare/v0.13.0...v0.13.1
