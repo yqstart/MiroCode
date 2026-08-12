@@ -2,6 +2,36 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.13.1] - 2026-08-12
+
+### 新增
+
+- **编辑器内 ⌘/Ctrl + 滚轮调节字体大小**（VS Code 行为，范围 10-24，节流 60ms 自动持久化到 `editor.fontSize`）
+  - 拦截带修饰键的 `wheel` 事件并 `preventDefault`；无修饰键的滚动照常生效
+  - `deltaY < 0` 调大、> 0 调小，每次 ±1px；不绑键位（避免与现有 ⌘+/⌘- 键位冲突）
+
+### 修复
+
+- **状态栏一直显示「LSP 降级」**：
+  - 根因：`nodeDetector.cached` 缓存的运行时检测结果，在语言服务安装/卸载后未失效，导致 `start()` 永远拿到安装前的 `node:false` 直接短路到 `unavailable`
+  - 修：`installLanguageService` / `uninstallLanguageService` 完成后调 `clearRuntimeCache()` 再 `stop+start`，让运行时检测拿到最新路径
+- **LSP `manager.stop()` 状态机复制残留 bug**：原 `setStatus(this.enabled ? "disabled" : "disabled")` 两支同字符串（典型复制残留），改回单值 `setStatus("disabled")` 初始态；状态机由下一次 `start()` 推进
+
+### 移除
+
+- **ESLint 整链路移除**（默认一直关闭、状态栏无指示、调度链路不被任何流程触发）
+  - 前端：`src/features/editor/eslintLinter.ts`（`createEslintScheduler`）/ `lintWithEslint` / `EslintDiag` / `editor.eslintEnabled` 设置项 / 设置面板 ESLint 开关 / i18n `eslintEnabled` + `eslintDesc` / `DiagnosticsMerger.setEslintDiagnostics` 合流方法
+  - Rust：`src-tauri/src/commands/tooling.rs` 中 `lint_with_eslint` 命令 + `EslintDiag` 结构体 / `lib.rs` 注册
+
+### 优化
+
+- **编辑器代码文字调亮**（4 主题 `fg` 全部上提一档，与全局 `--text-primary` 对齐）
+  - `miro-dark` `#f5f8ff → #fafbff`
+  - `dawn` `#111114 → #1c1c1e`（最显著，原色比全局 `--text-primary` 还暗 11 个 R 通道）
+  - `midnight` `#f1f5f9 → #f8fafc`
+  - `cyberpunk` `#faf5ff → #fdfcff`
+  - 同步微调 `lightHighlight` 的 `variableName` / `definition(variableName)`，保持关键字与正文相对对比度
+
 ## [0.13.0] - 2026-08-12
 
 ### 新增
@@ -538,7 +568,8 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/yqstart/MiroCode/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/yqstart/MiroCode/compare/v0.12.0...v0.13.0
 [0.11.1]: https://github.com/yqstart/MiroCode/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/yqstart/MiroCode/compare/v0.10.1...v0.11.0
