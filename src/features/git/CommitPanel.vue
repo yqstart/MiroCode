@@ -618,65 +618,69 @@ function onCommitKeydown(event: KeyboardEvent) {
             >
               <ChevronDown :size="14" />
             </button>
-            <div v-if="commitMenuOpen" class="commit-dropdown" @click.stop>
-              <button
-                type="button"
-                :disabled="!canCommit"
-                @click="doCommitAndPush"
-              >
-                {{ t("git.commitAndPush") }}
-              </button>
-            </div>
+            <Transition name="popover">
+              <div v-if="commitMenuOpen" class="commit-dropdown" @click.stop>
+                <button
+                  type="button"
+                  :disabled="!canCommit"
+                  @click="doCommitAndPush"
+                >
+                  {{ t("git.commitAndPush") }}
+                </button>
+              </div>
+            </Transition>
           </div>
         </div>
       </div>
     </template>
 
     <Teleport to="body">
-      <div
-        v-if="contextMenu"
-        class="ctx"
-        :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
-        @click.stop
-      >
-        <button
-          type="button"
-          @click="openFile(contextMenu.path); contextMenu = null"
+      <Transition name="ctx">
+        <div
+          v-if="contextMenu"
+          class="ctx"
+          :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+          @click.stop
         >
-          {{ t("git.openFile") }}
-        </button>
-        <button
-          type="button"
-          @click="
-            git.showDiff(contextMenu.path, contextMenu.staged);
-            contextMenu = null;
-          "
-        >
-          {{ t("git.showDiff") }}
-        </button>
-        <button
-          v-if="!contextMenu.staged"
-          type="button"
-          @click="onStage(contextMenu.path)"
-        >
-          {{ t("git.stage") }}
-        </button>
-        <button
-          v-else
-          type="button"
-          @click="onUnstage(contextMenu.path)"
-        >
-          {{ t("git.unstage") }}
-        </button>
-        <button
-          v-if="!contextMenu.staged"
-          type="button"
-          class="danger-item"
-          @click="onDiscard(contextMenu.path)"
-        >
-          {{ t("git.discardEllipsis") }}
-        </button>
-      </div>
+          <button
+            type="button"
+            @click="openFile(contextMenu.path); contextMenu = null"
+          >
+            {{ t("git.openFile") }}
+          </button>
+          <button
+            type="button"
+            @click="
+              git.showDiff(contextMenu.path, contextMenu.staged);
+              contextMenu = null;
+            "
+          >
+            {{ t("git.showDiff") }}
+          </button>
+          <button
+            v-if="!contextMenu.staged"
+            type="button"
+            @click="onStage(contextMenu.path)"
+          >
+            {{ t("git.stage") }}
+          </button>
+          <button
+            v-else
+            type="button"
+            @click="onUnstage(contextMenu.path)"
+          >
+            {{ t("git.unstage") }}
+          </button>
+          <button
+            v-if="!contextMenu.staged"
+            type="button"
+            class="danger-item"
+            @click="onDiscard(contextMenu.path)"
+          >
+            {{ t("git.discardEllipsis") }}
+          </button>
+        </div>
+      </Transition>
     </Teleport>
   </div>
 </template>
@@ -761,6 +765,10 @@ function onCommitKeydown(event: KeyboardEvent) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out),
+    opacity var(--transition-fast) var(--ease-out),
+    transform var(--transition-fast) var(--ease-out);
 }
 
 .cta:disabled,
@@ -971,6 +979,9 @@ function onCommitKeydown(event: KeyboardEvent) {
   font-size: 12px;
   cursor: default;
   min-width: 0;
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out),
+    opacity var(--transition-fast) var(--ease-out);
 }
 
 .row:hover {
@@ -1027,16 +1038,20 @@ function onCommitKeydown(event: KeyboardEvent) {
 }
 
 .row-actions {
-  display: none;
+  display: inline-flex;
   align-items: center;
   gap: 1px;
   flex-shrink: 0;
   margin-left: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast) var(--ease-out);
 }
 
 .row:hover .row-actions,
 .row-actions.always {
-  display: inline-flex;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .act-icon {
@@ -1046,6 +1061,8 @@ function onCommitKeydown(event: KeyboardEvent) {
   display: grid;
   place-items: center;
   color: var(--text-secondary);
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
 }
 
 .act-icon:hover {
@@ -1173,6 +1190,7 @@ function onCommitKeydown(event: KeyboardEvent) {
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-modal);
   z-index: 5;
+  transform-origin: bottom left;
 }
 
 .commit-dropdown button {
@@ -1199,6 +1217,7 @@ function onCommitKeydown(event: KeyboardEvent) {
   box-shadow: var(--shadow-modal);
   display: flex;
   flex-direction: column;
+  transform-origin: top left;
 }
 
 .ctx button {
@@ -1215,5 +1234,35 @@ function onCommitKeydown(event: KeyboardEvent) {
 
 .ctx .danger-item {
   color: var(--danger);
+}
+
+/* popover：commit-dropdown */
+.popover-enter-active {
+  transition: opacity var(--transition-medium) var(--ease-out),
+    transform var(--transition-medium) var(--ease-out);
+}
+.popover-leave-active {
+  transition: opacity var(--transition-fast) var(--ease-out),
+    transform var(--transition-fast) var(--ease-out);
+}
+.popover-enter-from,
+.popover-leave-to {
+  opacity: 0;
+  transform: scale(0.96) translateY(4px);
+}
+
+/* ctx：右键菜单 */
+.ctx-enter-active {
+  transition: opacity var(--transition-medium) var(--ease-out),
+    transform var(--transition-medium) var(--ease-out);
+}
+.ctx-leave-active {
+  transition: opacity var(--transition-fast) var(--ease-out),
+    transform var(--transition-fast) var(--ease-out);
+}
+.ctx-enter-from,
+.ctx-leave-to {
+  opacity: 0;
+  transform: scale(0.96) translateY(-3px);
 }
 </style>

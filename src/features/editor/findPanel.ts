@@ -372,15 +372,22 @@ class MiroFindPanel implements Panel {
   private refreshMatchCount() {
     this.query = getSearchQuery(this.view.state);
     const { current, total } = getMatchStats(this.view, this.query);
+    let next: string;
     if (!this.query.search.trim()) {
-      this.matchCountEl.textContent = "—";
-      return;
+      next = "—";
+    } else if (!total) {
+      next = t("editorFind.noResults");
+    } else {
+      next = t("editorFind.matchCount", { current, total });
     }
-    if (!total) {
-      this.matchCountEl.textContent = t("editorFind.noResults");
-      return;
+    if (this.matchCountEl.textContent !== next) {
+      // 翻牌特效：移除 + 强制 reflow + 添加（重启 CSS 动画）
+      this.matchCountEl.classList.remove("bump");
+      // 触发 reflow 让浏览器重新计算 animation
+      void this.matchCountEl.offsetWidth;
+      this.matchCountEl.classList.add("bump");
+      this.matchCountEl.textContent = next;
     }
-    this.matchCountEl.textContent = t("editorFind.matchCount", { current, total });
   }
 
   private keydown(e: KeyboardEvent) {

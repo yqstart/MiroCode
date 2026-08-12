@@ -596,11 +596,12 @@ defineExpose({ locateActiveFile });
           <span class="title">{{ panelTitle }}</span>
           <ChevronDown :size="14" class="title-caret" />
         </button>
-        <div v-if="projectMenuOpen" class="project-menu" @click.stop>
-          <button type="button" class="project-item primary" @click="onOpenNewProject">
-            <FolderInput :size="14" />
-            <span>{{ t("explorer.openNewProject") }}</span>
-          </button>
+        <Transition name="ctx">
+          <div v-if="projectMenuOpen" class="project-menu" @click.stop>
+            <button type="button" class="project-item primary" @click="onOpenNewProject">
+              <FolderInput :size="14" />
+              <span>{{ t("explorer.openNewProject") }}</span>
+            </button>
           <template v-if="switchCandidates.length">
             <div class="project-sep" />
             <div class="project-label-row">
@@ -638,7 +639,8 @@ defineExpose({ locateActiveFile });
               </button>
             </div>
           </template>
-        </div>
+          </div>
+        </Transition>
       </div>
       <div v-if="rootPath" class="header-actions">
         <button
@@ -686,42 +688,44 @@ defineExpose({ locateActiveFile });
       </div>
     </header>
 
-    <div
-      v-if="pendingOpenPath"
-      class="mode-overlay"
-      @mousedown.self="cancelOpenMode"
-    >
-      <div class="mode-card" @click.stop>
-        <p class="mode-title">{{ t("explorer.openProject") }}</p>
-        <p class="mode-path" :title="pendingOpenPath">
-          {{ basename(pendingOpenPath) }}
-        </p>
-        <button
-          type="button"
-          class="mode-btn"
-          :disabled="openingMode"
-          @click="confirmOpenMode('current')"
-        >
-          {{ t("explorer.openInThisWindow") }}
-        </button>
-        <button
-          type="button"
-          class="mode-btn accent"
-          :disabled="openingMode"
-          @click="confirmOpenMode('new')"
-        >
-          {{ t("explorer.openInNewWindow") }}
-        </button>
-        <button
-          type="button"
-          class="mode-cancel"
-          :disabled="openingMode"
-          @click="cancelOpenMode"
-        >
-          {{ t("common.cancel") }}
-        </button>
+    <Transition name="dialog">
+      <div
+        v-if="pendingOpenPath"
+        class="mode-overlay"
+        @mousedown.self="cancelOpenMode"
+      >
+        <div class="mode-card" @click.stop>
+          <p class="mode-title">{{ t("explorer.openProject") }}</p>
+          <p class="mode-path" :title="pendingOpenPath">
+            {{ basename(pendingOpenPath) }}
+          </p>
+          <button
+            type="button"
+            class="mode-btn"
+            :disabled="openingMode"
+            @click="confirmOpenMode('current')"
+          >
+            {{ t("explorer.openInThisWindow") }}
+          </button>
+          <button
+            type="button"
+            class="mode-btn accent"
+            :disabled="openingMode"
+            @click="confirmOpenMode('new')"
+          >
+            {{ t("explorer.openInNewWindow") }}
+          </button>
+          <button
+            type="button"
+            class="mode-cancel"
+            :disabled="openingMode"
+            @click="cancelOpenMode"
+          >
+            {{ t("common.cancel") }}
+          </button>
+        </div>
       </div>
-    </div>
+    </Transition>
 
     <div ref="treeBodyRef" class="body">
       <template v-if="!rootPath">
@@ -829,79 +833,81 @@ defineExpose({ locateActiveFile });
       </template>
     </div>
 
-    <div
-      v-if="menu"
-      ref="menuRef"
-      class="menu"
-      :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
-      @click.stop
-      @contextmenu.prevent
-    >
-      <button type="button" @click="runMenu('new-file')">
-        {{ t("explorer.newFile") }}
-      </button>
-      <button type="button" @click="runMenu('new-folder')">
-        {{ t("explorer.newFolder") }}
-      </button>
-      <hr />
-      <button
-        type="button"
-        :disabled="isRootTarget"
-        @click="runMenu('rename')"
+    <Transition name="ctx">
+      <div
+        v-if="menu"
+        ref="menuRef"
+        class="menu"
+        :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
       >
-        {{ t("explorer.rename") }}
-      </button>
-      <button
-        type="button"
-        :disabled="isRootTarget"
-        @click="runMenu('delete')"
-      >
-        {{ t("explorer.delete") }}
-      </button>
-      <hr />
-      <button type="button" @click="runMenu('copy')">
-        {{ t("explorer.copy") }}
-      </button>
-      <button
-        type="button"
-        :disabled="isRootTarget"
-        @click="runMenu('cut')"
-      >
-        {{ t("explorer.cut") }}
-      </button>
-      <button type="button" :disabled="!clipboard" @click="runMenu('paste')">
-        {{ t("explorer.paste") }}
-      </button>
-      <hr />
-      <button type="button" @click="runMenu('copy-abs-path')">
-        {{ t("explorer.copyAbsPath") }}
-      </button>
-      <button type="button" @click="runMenu('copy-rel-path')">
-        {{ t("explorer.copyRelPath") }}
-      </button>
-      <button
-        v-if="isFileTarget"
-        type="button"
-        @click="runMenu('copy-file-name')"
-      >
-        {{ t("explorer.copyFileName") }}
-      </button>
-      <button type="button" @click="runMenu('open-in-terminal')">
-        {{ t("explorer.openInTerminal") }}
-      </button>
-      <hr />
-      <button
-        type="button"
-        :disabled="!canFormatMenuTarget || formatMenuDisabled"
-        @click="runMenu('format-document')"
-      >
-        {{ t("editor.formatDocument") }}
-      </button>
-      <hr />
-      <button type="button" @click="runMenu('reveal-in-os')">
-        {{ t("explorer.revealInOs") }}
-      </button>
-    </div>
+        <button type="button" @click="runMenu('new-file')">
+          {{ t("explorer.newFile") }}
+        </button>
+        <button type="button" @click="runMenu('new-folder')">
+          {{ t("explorer.newFolder") }}
+        </button>
+        <hr />
+        <button
+          type="button"
+          :disabled="isRootTarget"
+          @click="runMenu('rename')"
+        >
+          {{ t("explorer.rename") }}
+        </button>
+        <button
+          type="button"
+          :disabled="isRootTarget"
+          @click="runMenu('delete')"
+        >
+          {{ t("explorer.delete") }}
+        </button>
+        <hr />
+        <button type="button" @click="runMenu('copy')">
+          {{ t("explorer.copy") }}
+        </button>
+        <button
+          type="button"
+          :disabled="isRootTarget"
+          @click="runMenu('cut')"
+        >
+          {{ t("explorer.cut") }}
+        </button>
+        <button type="button" :disabled="!clipboard" @click="runMenu('paste')">
+          {{ t("explorer.paste") }}
+        </button>
+        <hr />
+        <button type="button" @click="runMenu('copy-abs-path')">
+          {{ t("explorer.copyAbsPath") }}
+        </button>
+        <button type="button" @click="runMenu('copy-rel-path')">
+          {{ t("explorer.copyRelPath") }}
+        </button>
+        <button
+          v-if="isFileTarget"
+          type="button"
+          @click="runMenu('copy-file-name')"
+        >
+          {{ t("explorer.copyFileName") }}
+        </button>
+        <button type="button" @click="runMenu('open-in-terminal')">
+          {{ t("explorer.openInTerminal") }}
+        </button>
+        <hr />
+        <button
+          type="button"
+          :disabled="!canFormatMenuTarget || formatMenuDisabled"
+          @click="runMenu('format-document')"
+        >
+          {{ t("editor.formatDocument") }}
+        </button>
+        <hr />
+        <button type="button" @click="runMenu('reveal-in-os')">
+          {{ t("explorer.revealInOs") }}
+        </button>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -939,6 +945,8 @@ defineExpose({ locateActiveFile });
   padding: 2px 6px 2px 4px;
   border-radius: 6px;
   color: var(--text-secondary);
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
 }
 
 .title-btn:hover {
@@ -973,6 +981,7 @@ defineExpose({ locateActiveFile });
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-modal);
+  transform-origin: top left;
 }
 
 .project-item {
@@ -984,6 +993,8 @@ defineExpose({ locateActiveFile });
   border-radius: 6px;
   text-align: left;
   color: var(--text-primary);
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
 }
 
 .project-item.primary {
@@ -1035,6 +1046,8 @@ defineExpose({ locateActiveFile });
   border-radius: 4px;
   font-size: 10px;
   color: var(--text-muted);
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
 }
 
 .project-clear:hover {
@@ -1060,6 +1073,8 @@ defineExpose({ locateActiveFile });
   place-items: center;
   border-radius: 6px;
   color: var(--text-muted);
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
 }
 
 .project-remove:hover {
@@ -1150,6 +1165,9 @@ defineExpose({ locateActiveFile });
   display: grid;
   place-items: center;
   color: var(--text-muted);
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out),
+    opacity var(--transition-fast) var(--ease-out);
 }
 
 .icon-btn:hover:not(:disabled) {
@@ -1263,6 +1281,8 @@ defineExpose({ locateActiveFile });
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
 }
 
 .recent-remove {
@@ -1307,6 +1327,10 @@ defineExpose({ locateActiveFile });
   text-align: left;
   touch-action: none;
   cursor: default;
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out),
+    box-shadow var(--transition-fast) var(--ease-out),
+    opacity var(--transition-fast) var(--ease-out);
 }
 
 .row:hover {
@@ -1382,6 +1406,7 @@ defineExpose({ locateActiveFile });
   border-radius: 50%;
   flex-shrink: 0;
   margin-left: auto;
+  animation: miro-dot-pop 0.32s var(--ease-out) both;
 }
 
 .dirty-dot {
@@ -1391,6 +1416,7 @@ defineExpose({ locateActiveFile });
   border-radius: 50%;
   background: var(--accent);
   flex-shrink: 0;
+  animation: miro-dot-pop 0.32s var(--ease-out) both;
 }
 
 .menu {
@@ -1405,6 +1431,7 @@ defineExpose({ locateActiveFile });
   box-shadow: var(--shadow-modal);
   display: flex;
   flex-direction: column;
+  transform-origin: top left;
 }
 
 .menu button {
@@ -1428,5 +1455,40 @@ defineExpose({ locateActiveFile });
   border: none;
   border-top: 1px solid var(--border-subtle);
   margin: 4px 0;
+}
+
+/* ctx：project-menu / right-click menu */
+.ctx-enter-active {
+  transition: opacity var(--transition-medium) var(--ease-out),
+    transform var(--transition-medium) var(--ease-out);
+}
+.ctx-leave-active {
+  transition: opacity var(--transition-fast) var(--ease-out),
+    transform var(--transition-fast) var(--ease-out);
+}
+.ctx-enter-from,
+.ctx-leave-to {
+  opacity: 0;
+  transform: scale(0.96) translateY(-3px);
+}
+
+/* dialog：mode-overlay / mode-card */
+.dialog-enter-active,
+.dialog-leave-active {
+  transition: opacity var(--transition-medium) var(--ease-out);
+}
+.dialog-enter-from,
+.dialog-leave-to {
+  opacity: 0;
+}
+.dialog-enter-active .mode-card,
+.dialog-leave-active .mode-card {
+  transition: opacity var(--transition-medium) var(--ease-out),
+    transform var(--transition-medium) var(--ease-out);
+}
+.dialog-enter-from .mode-card,
+.dialog-leave-to .mode-card {
+  opacity: 0;
+  transform: translateY(6px) scale(0.98);
 }
 </style>

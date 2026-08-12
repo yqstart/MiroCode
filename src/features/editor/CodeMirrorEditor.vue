@@ -544,17 +544,24 @@ defineExpose({ scrollTo });
   gap: 6px;
 }
 
-/* VS Code 风格：查找行始终可见；替换行折叠时隐藏 */
-.cm-host :deep(.miro-find-row),
+/* 替换行：用 max-height + opacity 过渡实现折叠/展开（不依赖 display:none 硬切） */
 .cm-host :deep(.miro-find-replace-row) {
   display: flex;
   align-items: center;
   gap: 4px;
   min-width: 0;
+  max-height: 60px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height var(--transition-medium) var(--ease-out),
+    opacity var(--transition-fast) var(--ease-out),
+    margin var(--transition-medium) var(--ease-out);
 }
-
 .cm-host :deep(.miro-find-replace-row.is-collapsed) {
-  display: none;
+  max-height: 0;
+  opacity: 0;
+  margin-top: -6px;
+  pointer-events: none;
 }
 
 .cm-host :deep(.miro-find-spacer) {
@@ -659,5 +666,156 @@ defineExpose({ scrollTo });
 .cm-host :deep(.cm-searchMatch-selected) {
   background: color-mix(in srgb, var(--accent) 55%, transparent) !important;
   outline: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  /* 选中态从一个匹配跳到另一个时给 0.3s 缓动，避免硬切 */
+  transition: background var(--transition-fast) var(--ease-out),
+    outline-color var(--transition-fast) var(--ease-out);
+}
+
+/* ===== 弹层 enter 动画（CM6 仅提供 enter 钩子，leave 即时移除） ===== */
+.cm-host :deep(.cm-tooltip-autocomplete),
+.cm-host :deep(.cm-tooltip-hover),
+.cm-host :deep(.cm-tooltip-signature) {
+  transform-origin: var(--ease-out, 50% 0%);
+  animation: miro-tooltip-in var(--transition-medium) var(--ease-out) both;
+}
+
+/* completions 选项：箭头键切换时背景平滑 */
+.cm-host :deep(.cm-tooltip-autocomplete > ul > li) {
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
+}
+
+/* find panel 容器 popover 入场 */
+.cm-host :deep(.miro-find-panel) {
+  transform-origin: top right;
+  animation: miro-popover-in var(--transition-medium) var(--ease-out) both;
+}
+
+/* find panel 按钮：active/hover 平滑 */
+.cm-host :deep(.miro-find-btn) {
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
+}
+.cm-host :deep(.miro-find-text-btn) {
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out),
+    border-color var(--transition-fast) var(--ease-out);
+}
+
+/* find panel 输入：focus 缓动 */
+.cm-host :deep(.miro-find-input) {
+  transition: border-color var(--transition-fast) var(--ease-out),
+    box-shadow var(--transition-fast) var(--ease-out);
+}
+
+/* 匹配数翻牌：scale 0.92 → 1，0.3s 反弹 */
+.cm-host :deep(.miro-find-count) {
+  display: inline-block;
+  transition: color var(--transition-fast) var(--ease-out);
+}
+.cm-host :deep(.miro-find-count.bump) {
+  animation: miro-count-bump 0.32s var(--ease-out);
+}
+@keyframes miro-count-bump {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.4;
+  }
+  60% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ===== 代码区反馈过渡 ===== */
+.cm-host :deep(.cm-activeLine),
+.cm-host :deep(.cm-activeLineGutter) {
+  transition: background-color var(--transition-fast) var(--ease-out);
+}
+
+.cm-host :deep(.cm-selectionMatch) {
+  transition: background-color var(--transition-fast) var(--ease-out);
+}
+.cm-host :deep(.cm-searchMatch) {
+  transition: background-color var(--transition-fast) var(--ease-out);
+}
+
+/* bracket match 短 pulse：0.3s 一次性高亮（依赖动效，需要在 theme.ts 注入临时 class） */
+.cm-host :deep(.cm-matchingBracket) {
+  transition: background-color var(--transition-fast) var(--ease-out),
+    box-shadow var(--transition-fast) var(--ease-out);
+  border-radius: 2px;
+}
+.cm-host :deep(.cm-matchingBracket.miro-bracket-pulse) {
+  animation: miro-bracket-pulse 0.32s var(--ease-out);
+}
+@keyframes miro-bracket-pulse {
+  0% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* lint 雪佛龙下划线：出现时淡入（lintGutter 注入的 marker） */
+.cm-host :deep(.cm-lintRange-error),
+.cm-host :deep(.cm-lintRange-warning) {
+  animation: miro-lint-in 0.4s var(--ease-out) both;
+}
+@keyframes miro-lint-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ghost text：出现时 0.2s 淡入 */
+.cm-host :deep(.cm-ghost-text) {
+  opacity: 0.4;
+  font-style: italic;
+  white-space: pre-wrap;
+  color: var(--text-muted);
+  animation: miro-ghost-in 0.22s var(--ease-out) both;
+}
+.cm-host :deep(.cm-ghost-text.just-accepted) {
+  animation: miro-ghost-accepted 0.28s var(--ease-out) both;
+}
+.cm-host :deep(.cm-ghost-text.just-dismissed) {
+  animation: miro-ghost-dismissed 0.22s var(--ease-out) both;
+}
+@keyframes miro-ghost-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.4;
+  }
+}
+@keyframes miro-ghost-accepted {
+  0% {
+    opacity: 0.4;
+  }
+  40% {
+    opacity: 0.85;
+    color: var(--accent);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes miro-ghost-dismissed {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 0;
+  }
 }
 </style>

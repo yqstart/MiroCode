@@ -96,21 +96,42 @@ const suggestionField = StateField.define<SuggestionState>({
 
 // ==================== Widget：渲染 ghost text ====================
 
+/** 临时给 widget 挂的过渡态 class（接受/取消时短暂特效） */
+const setGhostTransitionEffect = StateEffect.define<
+  "accepted" | "dismissed" | null
+>();
+
+/** 临时过渡态字段——只用于 widget toDOM 读取，不参与业务逻辑 */
+const ghostTransitionField = StateField.define<"accepted" | "dismissed" | null>({
+  create: () => null,
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (e.is(setGhostTransitionEffect)) return e.value;
+    }
+    return value;
+  },
+});
+
 class GhostTextWidget extends WidgetType {
-  constructor(readonly text: string) {
+  constructor(
+    readonly text: string,
+    readonly transition: "accepted" | "dismissed" | null = null,
+  ) {
     super();
   }
 
   toDOM(): HTMLElement {
     const span = document.createElement("span");
     span.className = "cm-ghost-text";
+    if (this.transition === "accepted") span.classList.add("just-accepted");
+    if (this.transition === "dismissed") span.classList.add("just-dismissed");
     span.textContent = this.text;
     return span;
   }
 
   /** 避免每次 update 都重建 DOM */
   eq(other: GhostTextWidget): boolean {
-    return this.text === other.text;
+    return this.text === other.text && this.transition === other.transition;
   }
 
   /** widget 不消费事件，让编辑器正常处理 */
@@ -128,6 +149,21 @@ const renderPlugin = EditorView.decorations.from(
     const widget = Decoration.widget({
       widget: new GhostTextWidget(suggestion.text),
       side: 1, // 放在光标位置之后
+    });
+    return Decoration.set([widget.range(suggestion.pos)]);
+  },
+);
+
+/** 接受/取消过渡态的 widget 装饰——同一个 set 渲染但 widget 带 transition class */
+const transitionRenderPlugin = EditorView.decorations.compute(
+  [suggestionField, ghostTransitionField],
+  (state) => {
+    const suggestion = state.field(suggestionField);
+    const transition = state.field(ghostTransitionField);
+    if (!suggestion.text || !transition) return Decoration.none;
+    const widget = Decoration.widget({
+      widget: new GhostTextWidget(suggestion.text, transition),
+      side: 1,
     });
     return Decoration.set([widget.range(suggestion.pos)]);
   },
@@ -300,16 +336,24 @@ function acceptSuggestion(view: EditorView): boolean {
   // ★ 断环：标记外部更新，避免 CM -> store -> prop -> CM 回环
   editorStore.markExternalUpdate(filePath);
 
-  // 插入建议文本
+  // 接受动画：先挂 accepted class（让 widget 跑 0.28s accepted keyframe），
+  // 再插入文本 + 清空 ghost。
+  // 用调度器（microtask）确保 widget 先用 accepted 装饰渲染一帧再被清除。
   view.dispatch({
-    changes: { from: pos, to: pos, insert: text },
-    selection: { anchor: pos + text.length },
-    userEvent: "input.complete",
-    effects: clearSuggestionEffect.of(undefined),
+    effects: setGhostTransitionEffect.of("accepted"),
   });
-
-  // 同步到 store
-  editorStore.setContent(filePath, view.state.doc.toString());
+  Promise.resolve().then(() => {
+    view.dispatch({
+      changes: { from: pos, to: pos, insert: text },
+      selection: { anchor: pos + text.length },
+      userEvent: "input.complete",
+      effects: [
+        clearSuggestionEffect.of(undefined),
+        setGhostTransitionEffect.of(null),
+      ],
+    });
+    editorStore.setContent(filePath, view.state.doc.toString());
+  });
 
   return true;
 }
@@ -318,7 +362,18 @@ function acceptSuggestion(view: EditorView): boolean {
 function dismissSuggestion(view: EditorView): boolean {
   const suggestion = view.state.field(suggestionField, false);
   if (!suggestion?.text) return false;
-  view.dispatch({ effects: clearSuggestionEffect.of(undefined) });
+  // 先挂 dismissed class 让 widget 跑 0.22s fade-out，再清空
+  view.dispatch({
+    effects: setGhostTransitionEffect.of("dismissed"),
+  });
+  setTimeout(() => {
+    view.dispatch({
+      effects: [
+        clearSuggestionEffect.of(undefined),
+        setGhostTransitionEffect.of(null),
+      ],
+    });
+  }, 220);
   return true;
 }
 
@@ -344,8 +399,10 @@ export function createAiGhostTextExtension(filePath: string): Extension {
   return [
     filePathField.init(() => filePath),
     suggestionField,
+    ghostTransitionField,
     createFetchPlugin(filePath),
     renderPlugin,
+    transitionRenderPlugin,
     Prec.highest(
       keymap.of([
         { key: "Tab", run: acceptSuggestion },
