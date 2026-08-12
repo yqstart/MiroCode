@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Columns2, Eye, FileCode, GitCommitHorizontal, Pin, Server, TerminalSquare, X } from "lucide-vue-next";
-import { marked } from "marked";
+import { Columns2, Eye, FileCode, GitCommitHorizontal, PenLine, Pin, Server, TerminalSquare, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import CodeMirrorEditor from "@/features/editor/CodeMirrorEditor.vue";
 import ImagePreview from "@/features/editor/ImagePreview.vue";
+import { renderMarkdown } from "@/features/editor/markdown/preview";
 import CompareView from "@/features/git/CompareView.vue";
 import GitLogPanel from "@/features/git/GitLogPanel.vue";
 import SessionsView from "@/features/sessions/SessionsView.vue";
@@ -67,8 +67,12 @@ const {
   tabId: gitLogTabId,
 } = storeToRefs(gitLog);
 
-/** Markdown 首次打开默认预览；点「编辑」可切回源码 */
-const markdownPreview = ref(true);
+/** Markdown 模式：按文件路径从 store 读取上次选择，store 内部走 localStorage 持久化。
+ *  首次打开（无记录）默认 'preview'，与改造前一致。SVG 保留旧的本地 ref 行为（无持久化）。 */
+type MdMode = "preview" | "edit";
+const markdownPreviewMode = ref<MdMode>(editor.getMdMode(activePath.value ?? ""));
+/** 兼容旧布尔读取位（true = 当前是预览态） */
+const markdownPreview = computed(() => markdownPreviewMode.value === "preview");
 const svgPreview = ref(true);
 
 const isMarkdown = computed(() => {
@@ -146,7 +150,7 @@ const previewHtml = computed(() => {
   ) {
     return "";
   }
-  return marked.parse(activeTab.value.content, { async: false }) as string;
+  return renderMarkdown(activeTab.value.content);
 });
 
 const hasAnyTab = computed(
@@ -175,21 +179,32 @@ function fileTabTitle(path: string): string {
 
 watch(
   () => activeTab.value?.path,
-  () => {
-    markdownPreview.value = true;
+  (next) => {
+    // Markdown：从 store 读上次选择（按路径持久化），无记录默认 preview
+    markdownPreviewMode.value = editor.getMdMode(next ?? "");
+    // SVG：保持旧行为（每次切文件重置为预览）
     svgPreview.value = true;
   },
 );
 
 function togglePreview() {
   if (!canTogglePreview.value) return;
-  if (isMarkdown.value) {
-    markdownPreview.value = !markdownPreview.value;
+  if (isMarkdown.value && activeTab.value) {
+    const next: MdMode =
+      markdownPreviewMode.value === "preview" ? "edit" : "preview";
+    setMdModeUi(next);
     return;
   }
   if (isSvg.value) {
     svgPreview.value = !svgPreview.value;
   }
+}
+
+/** Segmented Control 点击：直接切到指定 mode 并持久化（无当前 tab 时静默） */
+function setMdModeUi(mode: MdMode) {
+  if (!isMarkdown.value || !activeTab.value) return;
+  markdownPreviewMode.value = mode;
+  editor.setMdMode(activeTab.value.path, mode);
 }
 
 function activateFile(path: string) {
@@ -628,8 +643,9 @@ onBeforeUnmount(() =>
           </span>
         </button>
 
+        <!-- SVG 预览切换仍走标签栏：MD 切到预览区右上角浮动控件（Cursor 风格） -->
         <button
-          v-if="canTogglePreview"
+          v-if="canTogglePreview && isSvg"
           type="button"
           class="preview-toggle"
           :title="previewToggleTitle"
@@ -685,9 +701,40 @@ onBeforeUnmount(() =>
             v-else-if="markdownPreview && isMarkdown"
             :key="`md-${activeTab.path}`"
             class="md-preview"
-            v-html="previewHtml"
             @contextmenu="onEditorContextMenu"
-          />
+          >
+            <!-- 右上角 Segmented Control：预览/编辑（Cursor 风格，浮动于内容之上） -->
+            <div
+              v-if="isMarkdown"
+              class="md-mode-toggle"
+              :title="t('editor.mdSwitchHint')"
+              role="tablist"
+            >
+              <button
+                type="button"
+                class="md-mode-btn"
+                :class="{ active: markdownPreviewMode === 'preview' }"
+                :title="t('editor.preview')"
+                role="tab"
+                :aria-selected="markdownPreviewMode === 'preview'"
+                @click="setMdModeUi('preview')"
+              >
+                <Eye :size="13" />
+              </button>
+              <button
+                type="button"
+                class="md-mode-btn"
+                :class="{ active: markdownPreviewMode === 'edit' }"
+                :title="t('editor.edit')"
+                role="tab"
+                :aria-selected="markdownPreviewMode === 'edit'"
+                @click="setMdModeUi('edit')"
+              >
+                <PenLine :size="13" />
+              </button>
+            </div>
+            <div class="md-preview-content" v-html="previewHtml" />
+          </div>
         </template>
         <div
           v-else-if="!sessionsFocused && !sshFocused && !compareFocused && !gitLogFocused && !activeTab"
@@ -1118,38 +1165,229 @@ onBeforeUnmount(() =>
   color: var(--accent);
 }
 
+/* ==================== Markdown 预览（Cursor 风格） ====================
+   容器负责滚动与右上角 Segmented Control 定位；内容由 .md-preview-content 渲染。
+   全部用 var(--*)，4 主题一次到位；正文 --text-primary 不再降到 secondary。 */
 .md-preview {
+  position: relative;
   height: 100%;
   overflow: auto;
-  padding: 24px 32px 40vh;
   color: var(--text-primary);
-  line-height: 1.7;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-md);   /* 13px，紧凑 */
+  line-height: 1.65;               /* 段落 1.65，从原 1.7 微降 */
+}
+.md-preview-content {
+  /* 顶部多 48px 留给浮动 Segmented Control；左右宽松；底部留 40vh 滚动余量 */
+  padding: 48px 64px 40vh;
+  max-width: 920px;
+  margin: 0 auto;
 }
 
-.md-preview :deep(h1),
-.md-preview :deep(h2),
-.md-preview :deep(h3) {
-  margin: 1.2em 0 0.6em;
+/* 标题：分级 + 上下边距 */
+.md-preview-content :deep(h1) {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
 }
-
-.md-preview :deep(p),
-.md-preview :deep(li) {
+.md-preview-content :deep(h2) {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 32px 0 12px;
+  color: var(--text-primary);
+  letter-spacing: -0.005em;
+}
+.md-preview-content :deep(h3) {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 24px 0 8px;
+  color: var(--text-primary);
+}
+.md-preview-content :deep(h4) {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 20px 0 8px;
+  color: var(--text-primary);
+}
+.md-preview-content :deep(h5),
+.md-preview-content :deep(h6) {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 16px 0 8px;
   color: var(--text-secondary);
 }
 
-.md-preview :deep(code) {
+/* 段落：正文不再降级为 secondary */
+.md-preview-content :deep(p) {
+  margin: 0 0 12px;
+  color: var(--text-primary);
+}
+
+/* 列表：黑点 / 数字 + 紧凑 */
+.md-preview-content :deep(ul),
+.md-preview-content :deep(ol) {
+  padding-left: 1.6em;
+  margin: 0 0 12px;
+  color: var(--text-primary);
+}
+.md-preview-content :deep(ul) { list-style: disc; }
+.md-preview-content :deep(ul ul) { list-style: circle; margin: 4px 0; }
+.md-preview-content :deep(ul ul ul) { list-style: square; }
+.md-preview-content :deep(ol) { list-style: decimal; }
+.md-preview-content :deep(li) {
+  margin: 4px 0;
+  color: var(--text-primary);
+}
+.md-preview-content :deep(li > p) { margin: 4px 0; }
+
+/* 任务列表（GFM）：方框标记 */
+.md-preview-content :deep(input[type="checkbox"]) {
+  margin-right: 6px;
+  accent-color: var(--accent);
+}
+
+/* 引用：左边线 + 灰文本 */
+.md-preview-content :deep(blockquote) {
+  margin: 0 0 12px;
+  padding: 4px 0 4px 14px;
+  border-left: 3px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+.md-preview-content :deep(blockquote > :last-child) { margin-bottom: 0; }
+
+/* 行内代码：accent 软色 + accent 字色 */
+.md-preview-content :deep(code) {
   font-family: var(--font-mono);
+  font-size: 0.92em;
   background: var(--accent-soft);
-  padding: 2px 6px;
+  color: var(--accent);
+  padding: 1px 5px;
   border-radius: 4px;
 }
 
-.md-preview :deep(pre) {
+/* 代码块：深底 + 圆角 + 横向溢出 */
+.md-preview-content :deep(pre) {
   background: var(--bg-panel);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  padding: 12px;
+  padding: 12px 14px;
+  margin: 0 0 12px;
   overflow: auto;
+  line-height: 1.5;
+  font-size: 12.5px;
+}
+.md-preview-content :deep(pre code) {
+  background: none;
+  color: var(--text-primary);
+  padding: 0;
+  font-size: inherit;
+  border-radius: 0;
+}
+
+/* 链接：accent 色 + 半透下划线，hover 实化 */
+.md-preview-content :deep(a) {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.md-preview-content :deep(a:hover) {
+  border-bottom-color: var(--accent);
+}
+
+/* 表格 */
+.md-preview-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 12px;
+  font-size: 12.5px;
+}
+.md-preview-content :deep(th),
+.md-preview-content :deep(td) {
+  padding: 6px 12px;
+  border: 1px solid var(--border-subtle);
+  text-align: left;
+  color: var(--text-primary);
+}
+.md-preview-content :deep(th) {
+  background: var(--bg-panel);
+  font-weight: 600;
+}
+
+/* 分割线 */
+.md-preview-content :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 24px 0;
+}
+
+/* 图片 */
+.md-preview-content :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+/* 强调（粗体 / 斜体 / 删除线） */
+.md-preview-content :deep(strong) { font-weight: 600; color: var(--text-primary); }
+.md-preview-content :deep(em) { font-style: italic; }
+.md-preview-content :deep(del) { color: var(--text-muted); }
+
+/* ==================== 代码块高亮（自研 5 类 token） ==================== */
+.md-preview-content :deep(.tk-keyword) { color: #c586c0; }
+.md-preview-content :deep(.tk-string)  { color: #ce9178; }
+.md-preview-content :deep(.tk-comment) { color: #6a9955; font-style: italic; }
+.md-preview-content :deep(.tk-number)  { color: #b5cea8; }
+.md-preview-content :deep(.tk-type)    { color: #4ec9b0; }
+
+/* 浅色主题（dawn）调亮 token 色，遵循 --accent 调性 */
+[data-theme="dawn"] .md-preview-content :deep(.tk-keyword) { color: #af00db; }
+[data-theme="dawn"] .md-preview-content :deep(.tk-string)  { color: #a31515; }
+[data-theme="dawn"] .md-preview-content :deep(.tk-comment) { color: #008000; }
+[data-theme="dawn"] .md-preview-content :deep(.tk-number)  { color: #098658; }
+[data-theme="dawn"] .md-preview-content :deep(.tk-type)    { color: #267f99; }
+
+/* ==================== MD 预览右上角 Segmented Control ==================== */
+.md-mode-toggle {
+  position: sticky;
+  top: 12px;
+  float: right;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 12px 16px 0 0;
+  padding: 2px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-popover);
+  z-index: 2;
+}
+.md-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
+}
+.md-mode-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.md-mode-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .welcome {

@@ -57,6 +57,7 @@ export const enUS = {
     preview: "Preview",
     editMode: "Edit mode",
     previewMode: "Preview mode",
+    mdSwitchHint: "Toggle preview / edit",
     source: "Source",
     previewSvg: "Preview SVG",
     editSvg: "Edit SVG source",

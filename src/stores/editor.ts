@@ -658,6 +658,31 @@ export const useEditorStore = defineStore("editor", () => {
     openAt.value = null;
   }
 
+  // ==================== Markdown 预览/编辑模式（按文件路径持久化） ====================
+  // 切换模式不存到 EditorTab，避免序列化与 watcher 关注列表膨胀；
+  // 直接走 localStorage（按完整路径 key），切回同一文件自动恢复上次选择。
+  // 默认 'preview'，与首次打开行为一致。
+  const MD_MODE_KEY = (path: string) => `mirocode.md-mode:${path}`;
+
+  /** 读取某路径上次的 MD 模式；非 MD 路径或无记录返回 'preview' */
+  function getMdMode(path: string): "preview" | "edit" {
+    try {
+      const v = localStorage.getItem(MD_MODE_KEY(path));
+      return v === "edit" ? "edit" : "preview";
+    } catch {
+      return "preview";
+    }
+  }
+
+  /** 显式设置 MD 模式（写 localStorage）；不存在的 tab 不创建 */
+  function setMdMode(path: string, mode: "preview" | "edit") {
+    try {
+      localStorage.setItem(MD_MODE_KEY(path), mode);
+    } catch {
+      // localStorage 满 / 隐私模式：静默忽略，不阻断 UI 切换
+    }
+  }
+
   return {
     tabs,
     activePath,
@@ -697,5 +722,7 @@ export const useEditorStore = defineStore("editor", () => {
     closeTabsUnder,
     confirmDiscardForWorkspaceSwitch,
     clearForWorkspaceSwitch,
+    getMdMode,
+    setMdMode,
   };
 });

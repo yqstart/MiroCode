@@ -57,6 +57,7 @@ export const zhCN = {
     preview: "预览",
     editMode: "编辑模式",
     previewMode: "预览模式",
+    mdSwitchHint: "切换预览/编辑",
     source: "源码",
     previewSvg: "预览 SVG",
     editSvg: "编辑 SVG 源码",
