@@ -14,6 +14,7 @@
 
 - **SFTP 功能**：Miro Code 定位回到「面向智能体的代码查看器」，移除 SFTP 子面板、双击远程文件编辑、`miro-sftp://` 虚拟路径、12 个 `sftp_*` 后端命令、SFTP 复用 Shell 共享 Session 的 `pause` 同步机制（`ShellSession.session` 字段与 `wait_shell_io_ready` / `with_sftp_io`）一并下线。SSH 终端（主机列表 / 远程 Shell / 凭据 / known_hosts）保持完全可用
 - **本地终端顶栏 Package 快捷芯片**：终端顶栏不再渲染「Scripts [npm] + serve/dev/test/...」横排 chips，纯净多标签布局；`package.json scripts` 仍可通过活动栏 Package 入口启动
+- **活动栏终端入口 + subtab 关闭按钮**：移除 ActivityBar 的 TerminalSquare 入口（终端入口统一为 `⌘/Ctrl+J` / 资源树右键「在终端中打开」 / 欢迎页 CTA），移除 subtab 标签的 `×` 关闭按钮（每个 subtab 不再可独立关闭，编辑区「终端」标签的 × 仍可整体关闭终端视图）
 
 ## [0.12.0] - 2026-08-11
 

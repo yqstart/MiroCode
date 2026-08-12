@@ -6,14 +6,12 @@ import {
   History,
   Package,
   Settings,
-  TerminalSquare,
 } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import PackageScriptsMenu from "@/features/sessions/PackageScriptsMenu.vue";
 import { useGitLogStore } from "@/stores/gitLog";
 import { useGitStore } from "@/stores/git";
 import { usePackageScriptsStore } from "@/stores/packageScripts";
-import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -23,13 +21,11 @@ import { useI18n } from "@/i18n";
 const { t } = useI18n();
 const settings = useSettingsStore();
 const ui = useUiStore();
-const sessions = useSessionsStore();
 const workspace = useWorkspaceStore();
 const git = useGitStore();
 const gitLog = useGitLogStore();
 const pkg = usePackageScriptsStore();
 const { layout } = storeToRefs(settings);
-const { isFocused } = storeToRefs(sessions);
 const { isFocused: logFocused } = storeToRefs(gitLog);
 const { changedFileCount } = storeToRefs(git);
 const { available } = storeToRefs(pkg);
@@ -70,11 +66,6 @@ function toggleLog() {
     void git.refresh();
     void git.loadLog(100);
   }
-}
-
-function openTerminal() {
-  scriptsOpen.value = false;
-  sessions.openSessions(workspace.rootPath);
 }
 
 function placePop() {
@@ -176,15 +167,6 @@ onBeforeUnmount(() => {
       >
         <Package :size="18" :stroke-width="1.75" />
         <span v-if="available && !scriptsOpen" class="dot" />
-      </button>
-      <button
-        class="item"
-        type="button"
-        :title="t('activity.terminal')"
-        :class="{ active: isFocused }"
-        @click="openTerminal"
-      >
-        <TerminalSquare :size="18" :stroke-width="1.75" />
       </button>
       <button
         class="item"

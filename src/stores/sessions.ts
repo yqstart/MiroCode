@@ -10,7 +10,7 @@ export interface LocalTerminalSession {
 const SESSIONS_TAB_ID = "miro://sessions";
 
 /**
- * 本地终端会话：作为编辑区标签打开（⌘J / 活动栏「终端」按钮）。
+ * 本地终端会话：作为编辑区标签打开（⌘J / 资源树右键「在终端中打开」 / 欢迎页 CTA）。
  * SSH 远程会话已拆分为独立标签（见 ssh store），与本 store 解耦。
  */
 export const useSessionsStore = defineStore("sessions", () => {

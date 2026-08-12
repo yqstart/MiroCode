@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Plus, TerminalSquare, X } from "lucide-vue-next";
+import { Plus, TerminalSquare } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import LocalTerminal from "@/features/sessions/LocalTerminal.vue";
 import { useSessionsStore } from "@/stores/sessions";
@@ -29,13 +29,6 @@ function onAddLocal() {
         @click="sessions.activateLocal(term.id)"
       >
         <span>{{ term.title }}</span>
-        <span
-          class="close"
-          :title="t('sessions.closeTerminal')"
-          @click.stop="sessions.closeLocalTerminal(term.id)"
-        >
-          <X :size="12" />
-        </span>
       </button>
       <button
         type="button"

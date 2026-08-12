@@ -148,7 +148,7 @@ MiroCode/
 
 | 区域 | 职责 |
 |---|---|
-| ActivityBar | Project / Commit；底区 GitLog / 终端 / 设置 |
+| ActivityBar | Project / Commit；底区 GitLog / Package / 设置 |
 | SideBar | Project（资源树）与 Commit（暂存 / 更改）切换 |
 | EditorArea | 多标签；终端 / SSH / GitLog / Compare 等非文件标签固定钉在右侧 |
 | StatusBar | 左侧：SSH 入口 / 根目录 / 分支（含 ↑↓ 同步标记）/ 语言 / 编码 / 冲突数 / LSP 指示器 / AI 指示器；右侧：Ln/Col / 缩进 / 主题 / Ready |
