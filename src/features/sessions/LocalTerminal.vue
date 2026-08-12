@@ -204,6 +204,15 @@ watch(
   height: 100%;
 }
 
+/* xterm.css 默认 .xterm 与 .xterm-viewport 都是 background: #000，
+   亮色主题下透出一行黑条（出现在终端最底部一行未铺满 canvas 的位置）。
+   强制让 xterm 自身走主题色，避开黑底。 */
+.terminal-fit :deep(.xterm),
+.terminal-fit :deep(.xterm-viewport),
+.terminal-fit :deep(.xterm-screen) {
+  background-color: var(--bg-terminal, var(--bg-app)) !important;
+}
+
 /* 勿覆盖 viewport overflow：会破坏 Vim 等 TUI 的 alternate buffer */
 
 /* 组字预览对齐主题，避免黑底白字叠在深色终端上难辨 */
