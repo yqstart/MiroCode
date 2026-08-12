@@ -160,3 +160,24 @@ jobs:
           # 生成 latest.json，供应用内 updater 拉取
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
+
+  # 全部平台包上传完成后，改写 latest.json 的资产 url 为国内加速镜像直链。
+  # 原因：tauri-action 生成的是 api.github.com 资产端点，匿名访问受限流/风控（403），
+  # 中国大陆网络下应用内更新必失败；镜像直链经 ghfast.top 加速，可稳定下载。
+  finalize:
+    name: Rewrite updater URLs
+    needs: publish
+    runs-on: ubuntu-latest
+    if: always() && needs.publish.result == 'success'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Rewrite latest.json asset URLs to mirror
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/rewrite-updater-urls.mjs "v$(node -p "require('./package.json').version")"
