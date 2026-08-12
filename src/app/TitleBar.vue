@@ -30,8 +30,34 @@ const terminalTip = computed(() =>
   t("editor.openTerminal") + " · " + formatShortcut("mod", "J"),
 );
 
-function openTerminal() {
-  sessions.openSessions(workspace.rootPath);
+async function openTerminal() {
+  // 未打开项目时 PTY 不能传 cwd=null（会继承 App bundle 的 /，shell 启动即错），
+  // 退回到 home 目录，提供「先开终端再选项目」的快速路径
+  let cwd = workspace.rootPath;
+  if (!cwd) {
+    cwd = homeDir.value;
+    if (!cwd) {
+      cwd = await loadHomeDirFallback();
+    }
+  }
+  sessions.openSessions(cwd);
+}
+
+/** 缓存一次 home 目录；未打开项目时终端 cwd 用它兜底 */
+const homeDir = ref<string | null>(null);
+async function loadHomeDir() {
+  try {
+    const { homeDir: get } = await import("@tauri-apps/api/path");
+    homeDir.value = await get();
+  } catch {
+    homeDir.value = null;
+  }
+}
+
+/** 用户点按钮时若 home 还没取到，再 await 一次 */
+async function loadHomeDirFallback(): Promise<string | null> {
+  await loadHomeDir();
+  return homeDir.value;
 }
 
 /** 全屏时原生红绿灯隐藏，折叠按钮应贴左 */
@@ -104,6 +130,9 @@ onMounted(() => {
       // 非桌面壳
     }
   })();
+
+  // 预取 home 目录，未打开项目时开终端用
+  void loadHomeDir();
 });
 
 onUnmounted(() => {
@@ -159,7 +188,7 @@ onUnmounted(() => {
       class="terminal-btn"
       :title="terminalTip"
       :aria-label="terminalTip"
-      :disabled="!rootPath"
+      :disabled="!rootPath && !homeDir"
       @click="openTerminal"
     >
       <TerminalSquare :size="15" :stroke-width="1.75" />
