@@ -1,6 +1,6 @@
 [package]
 name = "mirocode"
-version = "0.13.1"
+version = "0.13.2"
 description = "Miro Code — 轻量化桌面代码编辑器"
 authors = ["MiroCode"]
 edition = "2021"

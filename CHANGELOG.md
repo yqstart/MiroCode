@@ -2,6 +2,34 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.13.2] - 2026-08-12
+
+### 新增
+
+- **未打开项目时也能开本地终端**：TitleBar 右上角终端按钮不再因 `!rootPath` 被禁用，点击时 cwd 自动回退到 `~`（`@tauri-apps/api/path.homeDir()` 预取缓存），提供「先开终端再选项目」的快速路径
+- **macOS 系统集成四件套**（TitleBar 全局项目标题 + 启动拉前 + 窗口状态恢复 + Dock 菜单 + security-scoped bookmark）
+  - TitleBar 中央展示「项目名（粗体 ≤24 字自动截断）+ 完整路径（淡灰 ellipsis）」，点击复制路径
+  - 应用启动后把 App 拉到最前（解决自动更新后需手动点 dock 才能前置）
+  - 接入 `tauri-plugin-window-state`，多窗口位置/大小/最大化状态自动持久化与恢复
+  - 接入 `tauri-plugin-pty` 之外的 macOS Dock 菜单（最近项目 + 当前文件预览），`set_dock_menu_macos` 走 `MainThreadMarker` 守卫非主线程提前 return
+  - 首次授权工作区后写 security-scoped bookmark 到 `localStorage`；下次启动 `restoreLastFolder` 先 `resolve_security_scoped_bookmarks` 激活访问权，自动更新后不被 TCC 弹问
+
+### 修复
+
+- **启动 panic 根因**：「`panic in a function that cannot unwind` / `thread caused non-unwinding panic. aborting.`」
+  - 根因：之前 `setup` 闭包内 `force_activate_macos()` 调 `NSApp.setActivationPolicy()`，与 tao 0.35 的 `did_finish_launching → AppState::launched → apply_activation_policy` 二次设置时序冲突，触发 `MainThreadMarker::new().unwrap()` 跨 `extern "C"` 边界 panic
+  - 修：彻底删 `force_activate_macos` 路径；拉前改由前端 `AppShell.onMounted` 调 `getCurrentWindow().setFocus() + unminimize()`，避免与 tao 内部状态机抢时序
+- **打开项目后 `openFolder` 半残状态**（用户反馈「打开项目又崩溃」）：原实现先 `stopWatch + 改 rootPath + 清空 childrenMap` 再 `await loadChildren`，若 `list_dir` 抛错（目录失效 / 权限不足 / 软链断了），外层 catch 能接住但 rootPath 已切到坏路径、childrenMap 空、showNotice 跳过、所有 reset 全跳过——半残状态
+  - 改为**提交语义**：先 `list_dir` 拿 entries，失败就 toast + return false 不污染任何状态；再一次性 commit `rootPath / childrenMap / expanded / filter / clipboard / recentFolders`；切换工作区时的 `resetLocalForWorkspace / resetForWorkspace / refresh` 统一过 `safeCall` 包装，单个失败只 `console.warn` 不影响主流程
+- **项目下拉菜单被 SideBar 裁切**（用户截图「此处选择项目有遮挡」）：`.panel` 的 `overflow:hidden` 把 `position:absolute` 的 `.project-menu` 左右边线切掉
+  - 改 `<Teleport to="body">` 渲染 + `getBoundingClientRect()` 算视口坐标 + `position:fixed`，`onDocMouseDown` 仍以 `.project-menu` 为白名单避免点内部误关
+- **编辑器代码文字再调亮**（用户反馈「亮度还是不够」）：dawn 主题 `fg` 从 `#1c1c1e → #0a0a0a`，`lightHighlight.variableName → #000000`；4 主题 `lightHighlight` 全部上提到 Tailwind 400 系列，与全局 `--text-primary` 对齐
+
+### 优化
+
+- **终端入口加左侧留白与红绿灯对称**（用户反馈「终端入口贴右侧太近」）：`.terminal-btn` 加 `margin-left: var(--space-3)`，与红绿灯到折叠按钮的距离对齐
+- **项目下拉首项图标基线对齐**：`.project-item.primary` 覆写 `align-items: center`（默认是 `flex-start` 适配多行 name+path layout，但 primary 是单行 lucide 图标 + 文本，flex-start 让 14px SVG 顶到容器顶端、中文相对下沉）
+
 ## [0.13.1] - 2026-08-12
 
 ### 新增
@@ -568,7 +596,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
-[Unreleased]: https://github.com/yqstart/MiroCode/compare/v0.13.1...HEAD
+[0.13.2]: https://github.com/yqstart/MiroCode/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/yqstart/MiroCode/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/yqstart/MiroCode/compare/v0.12.0...v0.13.0
 [0.11.1]: https://github.com/yqstart/MiroCode/compare/v0.11.0...v0.11.1
