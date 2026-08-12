@@ -15,7 +15,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const pkg = usePackageScriptsStore();
-const { scripts, manager, packageName, loading, hasPackageJson } =
+const { scripts, pinned, pinnedScripts, manager, packageName, loading, hasPackageJson } =
   storeToRefs(pkg);
 
 async function onRun(name: string) {
@@ -52,7 +52,7 @@ async function onRefresh() {
     <div v-else-if="!scripts.length" class="hint">{{ t("packageScripts.noScripts") }}</div>
     <div v-else class="list">
       <button
-        v-for="item in scripts"
+        v-for="item in props.variant === 'compact' ? pinnedScripts : scripts"
         :key="item.name"
         type="button"
         class="row"
@@ -60,6 +60,16 @@ async function onRefresh() {
         @click="onRun(item.name)"
       >
         <Play :size="12" class="play" />
+        <input
+          v-if="props.variant !== 'compact'"
+          type="checkbox"
+          class="pin-check"
+          :checked="pinned.includes(item.name)"
+          :title="t('packageScripts.pinToTerminal')"
+          :aria-label="t('packageScripts.pinToTerminal')"
+          @click.stop
+          @change="pkg.togglePinned(item.name)"
+        />
         <span class="name">{{ item.name }}</span>
         <span class="cmd">{{ item.script }}</span>
       </button>
@@ -161,7 +171,7 @@ async function onRefresh() {
 .row {
   width: 100%;
   display: grid;
-  grid-template-columns: 16px minmax(72px, auto) 1fr;
+  grid-template-columns: 16px 16px minmax(72px, auto) 1fr;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
@@ -177,6 +187,15 @@ async function onRefresh() {
 .play {
   color: var(--accent);
   flex-shrink: 0;
+}
+
+/* 勾选「展示到终端顶栏」 */
+.pin-check {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .name {

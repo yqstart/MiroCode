@@ -620,6 +620,7 @@ export const enUS = {
     loading: "Reading scripts…",
     noPackageJson: "No package.json in this project",
     noScripts: "No scripts in package.json",
+    pinToTerminal: "Check to pin as a quick run chip on the terminal toolbar",
   },
   update: {
     badge: "Update",

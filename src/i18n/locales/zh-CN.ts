@@ -611,6 +611,7 @@ export const zhCN = {
     loading: "读取 scripts…",
     noPackageJson: "当前项目无 package.json",
     noScripts: "package.json 中没有 scripts",
+    pinToTerminal: "勾选后显示到终端顶栏快捷执行",
   },
   update: {
     badge: "更新",
