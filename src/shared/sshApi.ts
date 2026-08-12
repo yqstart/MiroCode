@@ -31,21 +31,6 @@ export function parseHostKeyUnknown(
   return { fingerprint, endpoint };
 }
 
-export interface SftpEntry {
-  name: string;
-  path: string;
-  isDir: boolean;
-  size: number;
-}
-
-/** SFTP 上传进度事件负载（事件名 `sftp://progress/{sessionId}`） */
-export interface SftpUploadProgress {
-  localPath: string;
-  remotePath: string;
-  written: number;
-  total: number;
-}
-
 export async function sshShellOpen(
   id: string,
   config: SshConnectConfig,
@@ -69,76 +54,4 @@ export async function sshShellResize(
 
 export async function sshShellClose(id: string): Promise<void> {
   return invoke("ssh_shell_close", { id });
-}
-
-export async function sftpOpen(id: string, config: SshConnectConfig): Promise<void> {
-  return invoke("sftp_open", { id, config });
-}
-
-export async function sftpList(id: string, path: string): Promise<SftpEntry[]> {
-  return invoke("sftp_list", { id, path });
-}
-
-export async function sftpPwd(id: string): Promise<string> {
-  return invoke("sftp_pwd", { id });
-}
-
-export async function sftpUpload(
-  id: string,
-  localPath: string,
-  remotePath: string,
-): Promise<void> {
-  return invoke("sftp_upload", { id, localPath, remotePath });
-}
-
-export async function sftpDownload(
-  id: string,
-  remotePath: string,
-  localPath: string,
-): Promise<void> {
-  return invoke("sftp_download", { id, remotePath, localPath });
-}
-
-export async function sftpRead(
-  id: string,
-  remotePath: string,
-  maxBytes?: number,
-): Promise<string> {
-  return invoke("sftp_read", {
-    id,
-    path: remotePath,
-    maxBytes: maxBytes ?? null,
-  });
-}
-
-export async function sftpWrite(
-  id: string,
-  remotePath: string,
-  content: string,
-): Promise<void> {
-  return invoke("sftp_write", { id, remotePath, content });
-}
-
-export async function sftpMkdir(id: string, path: string): Promise<void> {
-  return invoke("sftp_mkdir", { id, path });
-}
-
-export async function sftpCreateFile(id: string, path: string): Promise<void> {
-  return invoke("sftp_create_file", { id, path });
-}
-
-export async function sftpRename(
-  id: string,
-  from: string,
-  to: string,
-): Promise<void> {
-  return invoke("sftp_rename", { id, from, to });
-}
-
-export async function sftpRemove(id: string, path: string): Promise<void> {
-  return invoke("sftp_remove", { id, path });
-}
-
-export async function sftpClose(id: string): Promise<void> {
-  return invoke("sftp_close", { id });
 }
