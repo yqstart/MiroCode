@@ -57,6 +57,7 @@ import {
   type GitStatusSnapshot,
 } from "@/shared/gitApi";
 import { t } from "@/i18n";
+import { relativeToRoot } from "@/shared/fs";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const EMPTY: GitStatusSnapshot = {
@@ -1228,14 +1229,68 @@ export const useGitStore = defineStore("git", () => {
     }
   }
 
+  /**
+   * 把绝对或相对路径归一为 statusMap 可查询的 key
+   * - statusMap 的 key 是 libgit2 输出的「相对仓库根 / 正斜杠」路径
+   * - 调用方传绝对路径时这里做 relativeToRoot 转换
+   * - 优先 relative fallback to norm，吸收 Windows 反斜杠与大小写差异
+   */
+  function lookupStatusEntry(path: string): GitStatusEntry | null {
+    if (!path) return null;
+    const norm = path.replace(/\\/g, "/");
+    const rootPath = useWorkspaceStore().rootPath;
+    const rel = rootPath ? relativeToRoot(rootPath, norm) || norm : norm;
+    return statusMap.value.get(rel) ?? statusMap.value.get(norm) ?? null;
+  }
+
+  /** 查 GitStatusEntry；供 ExplorerPanel / EditorArea 等需要原始 entry 的场景 */
+  function statusEntry(path: string) {
+    return lookupStatusEntry(path);
+  }
+
   function statusColor(path: string): string | null {
-    const entry = statusMap.value.get(path);
+    const entry = lookupStatusEntry(path);
     if (!entry) return null;
     if (entry.conflicted) return "var(--danger)";
     if (entry.status === "untracked") return "var(--success)";
     if (entry.staged) return "var(--success)";
     if (entry.unstaged) return "var(--warning)";
     return null;
+  }
+
+  /** 状态字母 badge：M / U / D / R / C（与 CommitPanel / Explorer 共享） */
+  function statusLabel(status: string): string {
+    const map: Record<string, string> = {
+      modified: "M",
+      untracked: "U",
+      deleted: "D",
+      renamed: "R",
+      conflict: "C",
+      changed: "M",
+    };
+    return map[status] ?? status.slice(0, 1).toUpperCase();
+  }
+
+  /** 状态中文 title（hover tooltip） */
+  function statusTitle(status: string): string {
+    const map: Record<string, string> = {
+      modified: t("git.statusModified"),
+      untracked: t("git.statusUntracked"),
+      deleted: t("git.statusDeleted"),
+      renamed: t("git.statusRenamed"),
+      conflict: t("git.statusConflict"),
+      changed: t("git.statusChanged"),
+    };
+    return map[status] ?? status;
+  }
+
+  /** 状态 CSS class（与 CommitPanel .st-* 同款） */
+  function statusClass(status: string): string {
+    if (status === "untracked") return "st-untracked";
+    if (status === "deleted") return "st-deleted";
+    if (status === "conflict") return "st-conflict";
+    if (status === "renamed") return "st-renamed";
+    return "st-modified";
   }
 
   return {
@@ -1317,6 +1372,10 @@ export const useGitStore = defineStore("git", () => {
     blameFile,
     resolveConflict,
     resolveAllConflicts,
+    statusEntry,
     statusColor,
+    statusLabel,
+    statusTitle,
+    statusClass,
   };
 });
