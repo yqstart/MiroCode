@@ -200,6 +200,10 @@ fn set_dock_menu_macos(state: DockStatePayload, app: &AppHandle) {
 
     unsafe {
         let nsmenu_class = AnyClass::get(c"NSMenu").expect("NSMenu class");
+        // NSMenuItem 单独拿一次 class —— 之前几处 bug 把 NSMenu 当 NSMenuItem
+        // alloc，导致调 initWithTitle:action:keyEquivalent: 时抛
+        // `unrecognized selector sent to NSMenu instance` 把 App 整崩。
+        let nsmenuitem_class = AnyClass::get(c"NSMenuItem").expect("NSMenuItem class");
         let menu: *mut AnyObject = msg_send![nsmenu_class, alloc];
         let menu: *mut AnyObject = msg_send![menu, init];
 
@@ -209,15 +213,14 @@ fn set_dock_menu_macos(state: DockStatePayload, app: &AppHandle) {
 
         // --- 最近项目子菜单 ---
         let label_recent = NSString::from_str("最近项目");
-        let item_recent: *mut AnyObject = msg_send![nsmenu_class, alloc];
+        let item_recent: *mut AnyObject = msg_send![nsmenuitem_class, alloc];
         let item_recent: *mut AnyObject = msg_send![item_recent, initWithTitle: &*label_recent, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
-        let submenu_class = AnyClass::get(c"NSMenu").expect("NSMenu class");
-        let sub: *mut AnyObject = msg_send![submenu_class, alloc];
+        let sub: *mut AnyObject = msg_send![nsmenu_class, alloc];
         let sub: *mut AnyObject = msg_send![sub, initWithTitle: &*label_recent];
 
         if state.recent.is_empty() {
             let empty_label = NSString::from_str("（无）");
-            let empty_item: *mut AnyObject = msg_send![nsmenu_class, alloc];
+            let empty_item: *mut AnyObject = msg_send![nsmenuitem_class, alloc];
             let empty_item: *mut AnyObject = msg_send![empty_item, initWithTitle: &*empty_label, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
             let _: () = msg_send![empty_item, setEnabled: false];
             let _: () = msg_send![sub, addItem: empty_item];
@@ -233,7 +236,7 @@ fn set_dock_menu_macos(state: DockStatePayload, app: &AppHandle) {
                     format!("{}  {}", basename, path)
                 };
                 let label = NSString::from_str(&display);
-                let item: *mut AnyObject = msg_send![nsmenu_class, alloc];
+                let item: *mut AnyObject = msg_send![nsmenuitem_class, alloc];
                 let item: *mut AnyObject = msg_send![item, initWithTitle: &*label, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
                 // 用 representedObject 携带 path 字符串（点击拦截暂未实现，先用 tag 标识）
                 let repr = NSString::from_str(path);
@@ -248,9 +251,8 @@ fn set_dock_menu_macos(state: DockStatePayload, app: &AppHandle) {
         let _: () = msg_send![menu, addItem: item_recent];
 
         // --- 分隔线 ---
-        let sep_class = AnyClass::get(c"NSMenuItem").expect("NSMenuItem class");
         // NSMenuItem.separatorItem 静态方法
-        let sep: *mut AnyObject = msg_send![sep_class, separatorItem];
+        let sep: *mut AnyObject = msg_send![nsmenuitem_class, separatorItem];
         let _: () = msg_send![menu, addItem: sep];
 
         // --- 当前文件 ---
@@ -265,7 +267,7 @@ fn set_dock_menu_macos(state: DockStatePayload, app: &AppHandle) {
                 format!("当前：{}", basename)
             };
             let label = NSString::from_str(&display);
-            let item: *mut AnyObject = msg_send![nsmenu_class, alloc];
+            let item: *mut AnyObject = msg_send![nsmenuitem_class, alloc];
             let item: *mut AnyObject = msg_send![item, initWithTitle: &*label, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
             let _: () = msg_send![item, setEnabled: false]; // 仅显示，不可点
             let _: () = msg_send![menu, addItem: item];
@@ -288,9 +290,22 @@ fn set_dock_menu_macos(state: DockStatePayload, app: &AppHandle) {
 fn set_dock_menu_macos(_state: DockStatePayload, _app: &AppHandle) {}
 
 /// Tauri command：前端 emit 当前 recent + currentFile，Rust 重建 Dock 菜单。
+/// catch_unwind 防 NSMenu/NSMenuItem 调用链上的 objc 异常（已被 NSException
+/// 接住前先拦下 Rust 边界 panic），避免 release profile 的 panic = "abort"
+/// 路径把整个 App 干掉。
 #[tauri::command]
 fn set_dock_menu(app: AppHandle, state: DockStatePayload) -> Result<(), String> {
-    set_dock_menu_macos(state, &app);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        set_dock_menu_macos(state, &app);
+    }));
+    if let Err(e) = result {
+        let msg = e
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_else(|| "未知 panic".to_string());
+        eprintln!("[set_dock_menu] panic 已被吞掉: {msg}");
+    }
     Ok(())
 }
 
