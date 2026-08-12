@@ -89,8 +89,10 @@ onUnmounted(() => {
       :aria-pressed="!collapsed"
       @click="settings.toggleSidebar()"
     >
-      <PanelLeftClose v-if="!collapsed" :size="15" :stroke-width="1.75" />
-      <PanelLeft v-else :size="15" :stroke-width="1.75" />
+      <Transition name="icon" mode="out-in">
+        <PanelLeftClose v-if="!collapsed" :key="'open'" :size="15" :stroke-width="1.75" />
+        <PanelLeft v-else :key="'closed'" :size="15" :stroke-width="1.75" />
+      </Transition>
     </button>
     <div class="drag-fill" data-tauri-drag-region />
     <UpdateBadge />
@@ -135,6 +137,21 @@ onUnmounted(() => {
 .sidebar-btn:hover {
   color: var(--text-primary);
   background: var(--accent-soft);
+}
+
+/* icon crossfade：sidebar 折叠按钮切换 */
+.icon-enter-active,
+.icon-leave-active {
+  transition: opacity var(--transition-fast) var(--ease-out),
+    transform var(--transition-medium) var(--ease-out);
+}
+.icon-enter-from {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.85);
+}
+.icon-leave-to {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.85);
 }
 
 .drag-fill {

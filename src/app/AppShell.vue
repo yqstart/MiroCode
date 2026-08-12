@@ -274,7 +274,9 @@ onUnmounted(() => {
     <PushDialog />
     <UpdateProjectDialog />
     <InteractiveRebaseDialog />
-    <SettingsModal v-if="settingsOpen" />
+    <Transition name="dialog">
+      <SettingsModal v-if="settingsOpen" />
+    </Transition>
     <ToastHost />
   </div>
 </template>
@@ -314,5 +316,15 @@ onUnmounted(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* dialog：SettingsModal 父级统一 leave 动画；其它 modal 仍走组件内 animation */
+.dialog-enter-active,
+.dialog-leave-active {
+  transition: opacity var(--transition-medium) var(--ease-out);
+}
+.dialog-enter-from,
+.dialog-leave-to {
+  opacity: 0;
 }
 </style>

@@ -198,16 +198,18 @@ onBeforeUnmount(() => {
   </aside>
 
   <Teleport to="body">
-    <div
-      v-if="scriptsOpen"
-      id="miro-scripts-pop"
-      class="scripts-pop"
-      :style="popStyle"
-      role="dialog"
-      aria-label="package.json scripts"
-    >
-      <PackageScriptsMenu variant="panel" @ran="scriptsOpen = false" />
-    </div>
+    <Transition name="popover">
+      <div
+        v-if="scriptsOpen"
+        id="miro-scripts-pop"
+        class="scripts-pop"
+        :style="popStyle"
+        role="dialog"
+        aria-label="package.json scripts"
+      >
+        <PackageScriptsMenu variant="panel" @ran="scriptsOpen = false" />
+      </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -300,5 +302,31 @@ onBeforeUnmount(() => {
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-modal);
+  transform-origin: top left;
+}
+
+/* popover：scripts-pop 等浮层 */
+.popover-enter-active {
+  transition: opacity var(--transition-medium) var(--ease-out),
+    transform var(--transition-medium) var(--ease-out);
+}
+.popover-leave-active {
+  transition: opacity var(--transition-fast) var(--ease-out),
+    transform var(--transition-fast) var(--ease-out);
+}
+.popover-enter-from,
+.popover-leave-to {
+  opacity: 0;
+  transform: scale(0.96) translateY(-4px);
+}
+
+/* dot：脚本可用点脉动（已在 :root 挂 miro-status-pulse） */
+.dot {
+  animation: miro-status-pulse 2.4s ease-in-out infinite;
+}
+
+/* badge：数字徽标入场（roving / 一致 pop） */
+.badge {
+  animation: miro-dot-pop 0.32s var(--ease-out) both;
 }
 </style>

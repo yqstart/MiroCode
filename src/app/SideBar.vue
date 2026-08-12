@@ -37,20 +37,24 @@ function onResizeStart(event: MouseEvent) {
 </script>
 
 <template>
-  <aside
-    v-show="!layout.sidebarCollapsed"
-    class="sidebar"
-    :style="{ width: `${layout.sidebarWidth}px` }"
-    :aria-label="t('app.sidebar')"
-  >
-    <ExplorerPanel v-show="layout.activePanel === 'explorer'" />
-    <CommitPanel v-show="layout.activePanel === 'commit'" />
-    <div
-      class="resizer"
-      :title="t('app.resizeSidebar')"
-      @mousedown="onResizeStart"
-    />
-  </aside>
+  <Transition name="sidebar">
+    <aside
+      v-if="!layout.sidebarCollapsed"
+      class="sidebar"
+      :style="{ width: `${layout.sidebarWidth}px` }"
+      :aria-label="t('app.sidebar')"
+    >
+      <Transition name="panel-fade" mode="out-in">
+        <ExplorerPanel v-if="layout.activePanel === 'explorer'" key="explorer" />
+        <CommitPanel v-else-if="layout.activePanel === 'commit'" key="commit" />
+      </Transition>
+      <div
+        class="resizer"
+        :title="t('app.resizeSidebar')"
+        @mousedown="onResizeStart"
+      />
+    </aside>
+  </Transition>
 </template>
 
 <style scoped>
@@ -62,6 +66,13 @@ function onResizeStart(event: MouseEvent) {
   border-right: 1px solid var(--border-subtle);
   min-width: 200px;
   max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar > :deep(*) {
+  flex-shrink: 0;
 }
 
 .resizer {
@@ -72,5 +83,30 @@ function onResizeStart(event: MouseEvent) {
   height: 100%;
   cursor: col-resize;
   z-index: 2;
+}
+
+/* sidebar：展开/收起：宽度 + 透明度 */
+.sidebar-enter-active {
+  transition: width var(--transition-medium) var(--ease-out),
+    opacity var(--transition-medium) var(--ease-out);
+}
+.sidebar-leave-active {
+  transition: width var(--transition-fast) var(--ease-out),
+    opacity var(--transition-fast) var(--ease-out);
+}
+.sidebar-enter-from,
+.sidebar-leave-to {
+  width: 0 !important;
+  opacity: 0;
+}
+
+/* panel-fade：explorer ↔ commit 切换淡入 */
+.panel-fade-enter-active,
+.panel-fade-leave-active {
+  transition: opacity var(--transition-fast) var(--ease-out);
+}
+.panel-fade-enter-from,
+.panel-fade-leave-to {
+  opacity: 0;
 }
 </style>

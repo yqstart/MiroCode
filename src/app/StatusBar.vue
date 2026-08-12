@@ -220,6 +220,7 @@ onBeforeUnmount(() => {
         type="button"
         class="lsp-status"
         :class="lspStatusClass"
+        :data-state="lspStatus"
         :title="lspStatusLabel + ' · ' + t('lsp.statusClickHint')"
         @click="openLsPanel"
       >{{ lspStatusLabel }}</button>
@@ -227,6 +228,7 @@ onBeforeUnmount(() => {
         v-if="aiStatusLabel"
         class="ai-status"
         :class="aiStatusClass"
+        :data-state="aiStatus"
         :title="aiStatusLabel"
       >{{ aiStatusLabel }}</span>
     </div>
@@ -245,19 +247,21 @@ onBeforeUnmount(() => {
         >
           {{ themeLabel }}
         </button>
-        <div v-if="themeMenuOpen" class="theme-menu" role="menu">
-          <button
-            v-for="item in themeOptions"
-            :key="item.id"
-            type="button"
-            class="theme-item"
-            :class="{ active: theme === item.id }"
-            role="menuitem"
-            @click="selectTheme(item.id)"
-          >
-            {{ item.label }}
-          </button>
-        </div>
+        <Transition name="popover">
+          <div v-if="themeMenuOpen" class="theme-menu" role="menu">
+            <button
+              v-for="item in themeOptions"
+              :key="item.id"
+              type="button"
+              class="theme-item"
+              :class="{ active: theme === item.id }"
+              role="menuitem"
+              @click="selectTheme(item.id)"
+            >
+              {{ item.label }}
+            </button>
+          </div>
+        </Transition>
       </div>
       <span class="sep">·</span>
       <span class="ok">{{ t("status.ready") }}</span>
@@ -455,6 +459,8 @@ onBeforeUnmount(() => {
   padding: 2px 6px;
   border-radius: 4px;
   color: var(--text-secondary);
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
 }
 
 .theme-btn:hover {
@@ -475,6 +481,7 @@ onBeforeUnmount(() => {
   z-index: 30;
   display: flex;
   flex-direction: column;
+  transform-origin: bottom right;
 }
 
 .theme-item {
@@ -483,12 +490,43 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   color: var(--text-primary);
   font-size: 12px;
+  transition: background var(--transition-fast) var(--ease-out),
+    color var(--transition-fast) var(--ease-out);
 }
 
 .theme-item:hover,
 .theme-item.active {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* popover：theme menu 等浮层（与 ActivityBar/scripts-pop 共用） */
+.popover-enter-active {
+  transition: opacity var(--transition-medium) var(--ease-out),
+    transform var(--transition-medium) var(--ease-out);
+}
+.popover-leave-active {
+  transition: opacity var(--transition-fast) var(--ease-out),
+    transform var(--transition-fast) var(--ease-out);
+}
+.popover-enter-from,
+.popover-leave-to {
+  opacity: 0;
+  transform: scale(0.96) translateY(4px);
+}
+
+/* AI / LSP 状态点：颜色态切换平滑 + 启动中脉动 */
+.ai-status,
+.lsp-status {
+  transition: color var(--transition-medium) var(--ease-out),
+    background var(--transition-fast) var(--ease-out);
+}
+
+/* 启动/请求中：短脉动（lsp-warn 的 2s 慢脉动太慢，starting/streaming 给 1.6s 快脉动） */
+.lsp-status[data-state="starting"],
+.ai-status[data-state="requesting"],
+.ai-status[data-state="streaming"] {
+  animation: miro-status-pulse 1.6s ease-in-out infinite;
 }
 
 .ok {

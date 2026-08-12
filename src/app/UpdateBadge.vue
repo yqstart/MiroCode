@@ -30,27 +30,29 @@ async function onInstall() {
 </script>
 
 <template>
-  <div v-if="hasUpdate" class="update-cluster">
-    <button
-      type="button"
-      class="notes-btn"
-      :disabled="downloading"
-      :title="t('update.viewNotesTitle', { version: availableVersion ?? '' })"
-      @click="onViewNotes"
-    >
-      {{ t("update.viewNotesShort") }}
-    </button>
-    <button
-      type="button"
-      class="update-badge"
-      :disabled="downloading"
-      :title="t('update.badgeTitle', { version: availableVersion ?? '' })"
-      :aria-label="t('update.badgeTitle', { version: availableVersion ?? '' })"
-      @click="onInstall"
-    >
-      {{ t("update.badge") }}
-    </button>
-  </div>
+  <Transition name="badge">
+    <div v-if="hasUpdate" class="update-cluster">
+      <button
+        type="button"
+        class="notes-btn"
+        :disabled="downloading"
+        :title="t('update.viewNotesTitle', { version: availableVersion ?? '' })"
+        @click="onViewNotes"
+      >
+        {{ t("update.viewNotesShort") }}
+      </button>
+      <button
+        type="button"
+        class="update-badge"
+        :disabled="downloading"
+        :title="t('update.badgeTitle', { version: availableVersion ?? '' })"
+        :aria-label="t('update.badgeTitle', { version: availableVersion ?? '' })"
+        @click="onInstall"
+      >
+        {{ t("update.badge") }}
+      </button>
+    </div>
+  </Transition>
 </template>
 
 <style scoped>
@@ -107,5 +109,23 @@ async function onInstall() {
 .update-badge:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* badge：update-cluster 出现/隐藏 */
+.badge-enter-active {
+  transition: opacity var(--transition-medium) var(--ease-out),
+    transform var(--transition-medium) var(--ease-out);
+}
+.badge-leave-active {
+  transition: opacity var(--transition-fast) var(--ease-out),
+    transform var(--transition-fast) var(--ease-out);
+}
+.badge-enter-from {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.9);
+}
+.badge-leave-to {
+  opacity: 0;
+  transform: translateY(-2px) scale(0.96);
 }
 </style>
