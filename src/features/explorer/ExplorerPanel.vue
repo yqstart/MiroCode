@@ -69,6 +69,16 @@ const pendingOpenPath = ref<string | null>(null);
 const openingMode = ref(false);
 
 const dirtySet = computed(() => editor.dirtyPaths);
+/** git 状态按绝对路径索引，供 row 模板 O(1) 取用 */
+const gitStatusByPath = computed(() => {
+  const map = new Map<string, ReturnType<typeof git.statusEntry>>();
+  for (const node of flatTree.value) {
+    if (node.isDir) continue;
+    const entry = git.statusEntry(node.path);
+    if (entry) map.set(node.path, entry);
+  }
+  return map;
+});
 const canLocate = computed(() => Boolean(rootPath.value && activePath.value));
 const isRootTarget = computed(() => Boolean(menu.value?.isRoot));
 const isFileTarget = computed(() => Boolean(menu.value) && !menu.value!.isDir && !menu.value!.isRoot);
@@ -822,11 +832,13 @@ defineExpose({ locateActiveFile });
               :size="14"
             />
             <span class="label">{{ node.name }}</span>
-            <span
-              v-if="!node.isDir && git.statusColor(node.path)"
-              class="git-dot"
-              :style="{ background: git.statusColor(node.path) ?? undefined }"
-            />
+            <template v-if="!node.isDir && gitStatusByPath.get(node.path)">
+              <span
+                class="git-badge"
+                :class="git.statusClass(gitStatusByPath.get(node.path)!.status)"
+                :title="git.statusTitle(gitStatusByPath.get(node.path)!.status)"
+              >{{ git.statusLabel(gitStatusByPath.get(node.path)!.status) }}</span>
+            </template>
             <span v-if="dirtySet.has(node.path)" class="dirty-dot" />
           </button>
         </div>
@@ -1400,14 +1412,28 @@ defineExpose({ locateActiveFile });
   font-size: 12.5px;
 }
 
-.git-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
+.git-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
   margin-left: auto;
+  border-radius: 3px;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1;
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
   animation: miro-dot-pop 0.32s var(--ease-out) both;
 }
+.git-badge.st-modified { background: var(--warning); color: var(--bg-app); }
+.git-badge.st-untracked { background: var(--success); color: var(--bg-app); }
+.git-badge.st-deleted  { background: var(--danger);  color: var(--accent-fg); }
+.git-badge.st-renamed  { background: var(--accent);  color: var(--accent-fg); }
+.git-badge.st-conflict { background: var(--danger);  color: var(--accent-fg); }
 
 .dirty-dot {
   margin-left: 4px;
