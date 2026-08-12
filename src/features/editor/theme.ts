@@ -222,6 +222,11 @@ function uiTheme(palette: ThemePalette): Extension {
         border: "none",
         borderRight: "1px solid var(--border-subtle)",
       },
+      /* 折叠箭头默认紧贴 gutter 左缘（@codemirror/language 只给 span 1px padding），
+         加左内边距让箭头略向右移，与行号视觉对齐 */
+      ".cm-foldGutter .cm-gutterElement": {
+        paddingLeft: "6px",
+      },
       ".cm-activeLine": {
         backgroundColor: palette.activeLine,
       },
