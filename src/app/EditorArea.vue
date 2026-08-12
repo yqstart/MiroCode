@@ -703,36 +703,6 @@ onBeforeUnmount(() =>
             class="md-preview"
             @contextmenu="onEditorContextMenu"
           >
-            <!-- 右上角 Segmented Control：预览/编辑（Cursor 风格，浮动于内容之上） -->
-            <div
-              v-if="isMarkdown"
-              class="md-mode-toggle"
-              :title="t('editor.mdSwitchHint')"
-              role="tablist"
-            >
-              <button
-                type="button"
-                class="md-mode-btn"
-                :class="{ active: markdownPreviewMode === 'preview' }"
-                :title="t('editor.preview')"
-                role="tab"
-                :aria-selected="markdownPreviewMode === 'preview'"
-                @click="setMdModeUi('preview')"
-              >
-                <Eye :size="13" />
-              </button>
-              <button
-                type="button"
-                class="md-mode-btn"
-                :class="{ active: markdownPreviewMode === 'edit' }"
-                :title="t('editor.edit')"
-                role="tab"
-                :aria-selected="markdownPreviewMode === 'edit'"
-                @click="setMdModeUi('edit')"
-              >
-                <PenLine :size="13" />
-              </button>
-            </div>
             <div class="md-preview-content" v-html="previewHtml" />
           </div>
         </template>
@@ -833,6 +803,37 @@ onBeforeUnmount(() =>
         </div>
       </Transition>
     </Teleport>
+
+    <!-- MD 预览/编辑右上角 Segmented Control（独立于 md-preview 容器，edit 模式也可见） -->
+    <div
+      v-if="isMarkdown && showFileEditor"
+      class="md-mode-toggle"
+      :title="t('editor.mdSwitchHint')"
+      role="tablist"
+    >
+      <button
+        type="button"
+        class="md-mode-btn"
+        :class="{ active: markdownPreviewMode === 'preview' }"
+        :title="t('editor.preview')"
+        role="tab"
+        :aria-selected="markdownPreviewMode === 'preview'"
+        @click="setMdModeUi('preview')"
+      >
+        <Eye :size="13" />
+      </button>
+      <button
+        type="button"
+        class="md-mode-btn"
+        :class="{ active: markdownPreviewMode === 'edit' }"
+        :title="t('editor.edit')"
+        role="tab"
+        :aria-selected="markdownPreviewMode === 'edit'"
+        @click="setMdModeUi('edit')"
+      >
+        <PenLine :size="13" />
+      </button>
+    </div>
   </section>
 </template>
 
@@ -844,6 +845,8 @@ onBeforeUnmount(() =>
   display: flex;
   flex-direction: column;
   background: var(--bg-app);
+  /* 锚点：md-mode-toggle 用 absolute 定位到右上角 */
+  position: relative;
 }
 
 .tabs {
@@ -1350,21 +1353,21 @@ onBeforeUnmount(() =>
 [data-theme="dawn"] .md-preview-content :deep(.tk-number)  { color: #098658; }
 [data-theme="dawn"] .md-preview-content :deep(.tk-type)    { color: #267f99; }
 
-/* ==================== MD 预览右上角 Segmented Control ==================== */
+/* ==================== MD 预览/编辑右上角 Segmented Control ====================
+   absolute 锚定到 .editor-area 右上角（不依赖 .md-preview 容器，edit 模式 CM 上方也可见） */
 .md-mode-toggle {
-  position: sticky;
+  position: absolute;
   top: 12px;
-  float: right;
+  right: 16px;
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin: 12px 16px 0 0;
   padding: 2px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-popover);
-  z-index: 2;
+  z-index: 5;
 }
 .md-mode-btn {
   display: inline-flex;
