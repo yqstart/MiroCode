@@ -45,11 +45,20 @@ export const useSearchStore = defineStore("search", () => {
     }
     loading.value = true;
     try {
-      fileResults.value = await searchFiles(workspace.rootPath, q, {
-        maxResults: 50,
-        extraIgnores: workspace.extraIgnores,
-        extensions: parseExtensions(),
-      });
+      const result = await Promise.race([
+        searchFiles(workspace.rootPath, q, {
+          maxResults: 50,
+          extraIgnores: workspace.extraIgnores,
+          extensions: parseExtensions(),
+        }),
+        new Promise<never>((_, reject) =>
+          window.setTimeout(
+            () => reject(new Error("搜索超时（15s），请缩小范围或重试")),
+            15_000,
+          ),
+        ),
+      ]);
+      fileResults.value = result;
     } catch (error) {
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
@@ -71,13 +80,23 @@ export const useSearchStore = defineStore("search", () => {
     const seq = ++contentSearchSeq;
     loading.value = true;
     try {
-      const result = await searchContent(workspace.rootPath, q, {
-        maxResults: 200,
-        caseSensitive: caseSensitive.value,
-        extraIgnores: workspace.extraIgnores,
-        extensions: parseExtensions(),
-        contextLines: 0,
-      });
+      // 前端 30s 超时兜底：即使后端 IPC 卡死（线程毒化 / walk 无响应），
+      // 也能恢复 loading 状态，避免「搜索中」永远转圈
+      const result = await Promise.race([
+        searchContent(workspace.rootPath, q, {
+          maxResults: 200,
+          caseSensitive: caseSensitive.value,
+          extraIgnores: workspace.extraIgnores,
+          extensions: parseExtensions(),
+          contextLines: 0,
+        }),
+        new Promise<never>((_, reject) =>
+          window.setTimeout(
+            () => reject(new Error("搜索超时（30s），请缩小范围或重试")),
+            30_000,
+          ),
+        ),
+      ]);
       // 若期间发起了新的搜索或已关闭，丢弃本次过期结果
       if (seq !== contentSearchSeq) return;
       contentResults.value = result;
@@ -166,14 +185,21 @@ export const useSearchStore = defineStore("search", () => {
 
   function openFindInFiles() {
     quickOpenVisible.value = false;
+    // 每次打开都重置状态，避免上次卡住的 loading / 残留结果影响体验
+    contentSearchSeq += 1;
+    loading.value = false;
+    contentResults.value = [];
+    replacePreview.value = null;
     findInFilesVisible.value = true;
   }
 
   function closeFindInFiles() {
     findInFilesVisible.value = false;
-    // 使进行中的搜索结果失效
+    // 使进行中的搜索结果失效 + 重置 loading
     contentSearchSeq += 1;
     loading.value = false;
+    contentResults.value = [];
+    replacePreview.value = null;
   }
 
   function clearResults() {
