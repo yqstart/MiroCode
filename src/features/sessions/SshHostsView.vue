@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   Eye,
   EyeOff,
@@ -87,7 +87,24 @@ function refreshProfiles() {
 
 onMounted(() => {
   refreshProfiles();
+  window.addEventListener("keydown", onKeydown);
 });
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKeydown);
+});
+
+/** Escape 关闭两个 sheet（与 .overlay @mousedown.self 一致） */
+function onKeydown(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  if (showEditor.value) {
+    event.preventDefault();
+    closeEditor();
+  } else if (unlocking.value) {
+    event.preventDefault();
+    cancelUnlock();
+  }
+}
 
 function openAdd() {
   editingId.value = null;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RefreshCw, Search } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
@@ -142,8 +142,21 @@ async function ensureLog() {
 }
 
 onMounted(() => {
+  document.addEventListener("mousedown", onDocMouseDown, true);
   if (logOpen.value) void ensureLog();
 });
+
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onDocMouseDown, true);
+});
+
+/** 弹层全局关闭：点 data-gitlog-ctx 内部不关；其它位置关 */
+function onDocMouseDown(event: MouseEvent) {
+  if (!ctx.value) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("[data-gitlog-ctx]")) return;
+  ctx.value = null;
+}
 
 watch(logOpen, (open) => {
   if (open) void ensureLog();
@@ -535,6 +548,7 @@ function detailFiles(row: GraphRow | null): string[] {
       <div
         v-if="ctx"
         class="ctx"
+        data-gitlog-ctx
         :style="{ left: `${ctx.x}px`, top: `${ctx.y}px` }"
         @click.stop
       >

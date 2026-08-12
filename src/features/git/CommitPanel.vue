@@ -71,8 +71,9 @@ onBeforeUnmount(() => {
 /** 点击面板外部任意处关闭右键菜单（菜单本身经 Teleport 到 body，故用全局监听） */
 function onDocMouseDown(event: MouseEvent) {
   const el = event.target as HTMLElement | null;
-  if (el && el.closest(".ctx")) return;
+  if (el && (el.closest(".ctx") || el.closest(".commit-dropdown"))) return;
   contextMenu.value = null;
+  commitMenuOpen.value = false;
 }
 
 function dirOf(path: string) {

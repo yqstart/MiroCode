@@ -304,11 +304,32 @@ onBeforeUnmount(() => {
   clearPointerDragListeners();
   pointerDrag = null;
   resetDragChrome();
+  document.removeEventListener("mousedown", onDocMouseDown, true);
+});
+
+/** 弹层全局关闭：点 .menu（文件树右键菜单）或 .project-menu 内部不关；其它位置关。
+ *  capture 阶段：早于其他监听器，避免 stopPropagation 抢走。 */
+function onDocMouseDown(event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  if (target.closest(".menu, .project-menu")) return;
+  if (menu.value || projectMenuOpen.value) {
+    menu.value = null;
+    projectMenuOpen.value = false;
+  }
+}
+
+onMounted(async () => {
+  document.addEventListener("mousedown", onDocMouseDown, true);
+  if (rootPath.value) void git.refresh();
+  if (revealTarget.value) {
+    await nextTick();
+    scrollRowIntoView(revealTarget.value);
+  }
 });
 
 /** 工具栏新建：优先落在选中目录，否则落在选中文件的父目录 / 根目录 */
 function resolveCreateParent(): string | null {
-  if (!rootPath.value) return null;
   const selected = selectedPath.value;
   if (!selected || selected === rootPath.value) return rootPath.value;
 
