@@ -65,6 +65,9 @@ const menu = ref<{
 const menuRef = ref<HTMLElement | null>(null);
 const treeBodyRef = ref<HTMLElement | null>(null);
 const projectMenuOpen = ref(false);
+/** Teleport 到 body 后的浮层位置（由 toggleProjectMenu 在 button 真实坐标计算） */
+const projectMenuPos = ref<{ top: number; left: number } | null>(null);
+const titleBtnRef = ref<HTMLElement | null>(null);
 const pendingOpenPath = ref<string | null>(null);
 const openingMode = ref(false);
 
@@ -348,10 +351,22 @@ async function createFromToolbar(isDir: boolean) {
 
 function closeProjectMenu() {
   projectMenuOpen.value = false;
+  projectMenuPos.value = null;
 }
 
 function toggleProjectMenu() {
-  projectMenuOpen.value = !projectMenuOpen.value;
+  if (projectMenuOpen.value) {
+    closeProjectMenu();
+    return;
+  }
+  // 浮层在父级 overflow:hidden 容器内会被裁切，所以用 Teleport 到 body 渲染
+  // 位置取 button 在视口中的真实坐标
+  const btn = titleBtnRef.value;
+  if (btn) {
+    const r = btn.getBoundingClientRect();
+    projectMenuPos.value = { top: r.bottom + 4, left: r.left };
+  }
+  projectMenuOpen.value = true;
   menu.value = null;
 }
 
@@ -615,64 +630,20 @@ defineExpose({ locateActiveFile });
 </script>
 
 <template>
-  <div class="panel" @click="closeMenu">
-    <header class="header">
-      <div class="title-wrap">
-        <button
-          type="button"
-          class="title-btn"
-          :title="rootPath ?? t('explorer.selectOrSwitch')"
-          @click.stop="toggleProjectMenu"
-        >
-          <span class="title">{{ panelTitle }}</span>
-          <ChevronDown :size="14" class="title-caret" />
-        </button>
-        <Transition name="ctx">
-          <div v-if="projectMenuOpen" class="project-menu" @click.stop>
-            <button type="button" class="project-item primary" @click="onOpenNewProject">
-              <FolderInput :size="14" />
-              <span>{{ t("explorer.openNewProject") }}</span>
-            </button>
-          <template v-if="switchCandidates.length">
-            <div class="project-sep" />
-            <div class="project-label-row">
-              <p class="project-label">{{ t("explorer.recentProjects") }}</p>
-              <button
-                type="button"
-                class="project-clear"
-                :title="t('explorer.clearRecentProjects')"
-                @click="clearAllRecent"
-              >
-                {{ t("explorer.clearRecentProjects") }}
-              </button>
-            </div>
-            <div
-              v-for="item in switchCandidates"
-              :key="item"
-              class="project-item-wrap"
-            >
-              <button
-                type="button"
-                class="project-item"
-                :title="item"
-                @click="requestOpenPath(item)"
-              >
-                <span class="project-name">{{ basename(item) }}</span>
-                <span class="project-path">{{ item }}</span>
-              </button>
-              <button
-                type="button"
-                class="project-remove"
-                :title="t('explorer.removeRecentProject')"
-                @click="removeRecent(item, $event)"
-              >
-                <X :size="12" />
-              </button>
-            </div>
-          </template>
-          </div>
-        </Transition>
-      </div>
+    <div class="panel" @click="closeMenu">
+      <header class="header">
+        <div class="title-wrap">
+          <button
+            ref="titleBtnRef"
+            type="button"
+            class="title-btn"
+            :title="rootPath ?? t('explorer.selectOrSwitch')"
+            @click.stop="toggleProjectMenu"
+          >
+            <span class="title">{{ panelTitle }}</span>
+            <ChevronDown :size="14" class="title-caret" />
+          </button>
+        </div>
       <div v-if="rootPath" class="header-actions">
         <button
           type="button"
@@ -941,6 +912,60 @@ defineExpose({ locateActiveFile });
         </button>
       </div>
     </Transition>
+
+    <!-- 项目下拉浮层：Teleport 到 body 避免被 SideBar overflow:hidden 裁切 -->
+    <Teleport to="body">
+      <Transition name="ctx">
+        <div
+          v-if="projectMenuOpen && projectMenuPos"
+          class="project-menu"
+          :style="{ top: `${projectMenuPos.top}px`, left: `${projectMenuPos.left}px` }"
+          @click.stop
+        >
+          <button type="button" class="project-item primary" @click="onOpenNewProject">
+            <FolderInput :size="14" />
+            <span>{{ t("explorer.openNewProject") }}</span>
+          </button>
+          <template v-if="switchCandidates.length">
+            <div class="project-sep" />
+            <div class="project-label-row">
+              <p class="project-label">{{ t("explorer.recentProjects") }}</p>
+              <button
+                type="button"
+                class="project-clear"
+                :title="t('explorer.clearRecentProjects')"
+                @click="clearAllRecent"
+              >
+                {{ t("explorer.clearRecentProjects") }}
+              </button>
+            </div>
+            <div
+              v-for="item in switchCandidates"
+              :key="item"
+              class="project-item-wrap"
+            >
+              <button
+                type="button"
+                class="project-item"
+                :title="item"
+                @click="requestOpenPath(item)"
+              >
+                <span class="project-name">{{ basename(item) }}</span>
+                <span class="project-path">{{ item }}</span>
+              </button>
+              <button
+                type="button"
+                class="project-remove"
+                :title="t('explorer.removeRecentProject')"
+                @click="removeRecent(item, $event)"
+              >
+                <X :size="12" />
+              </button>
+            </div>
+          </template>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -1003,9 +1028,7 @@ defineExpose({ locateActiveFile });
 }
 
 .project-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
+  position: fixed;
   z-index: 30;
   min-width: 220px;
   max-width: min(320px, 70vw);
