@@ -44,9 +44,13 @@
   --line-height-relaxed: 1.7; /* 段落 / Markdown 预览 */
 
   /* ================ 动效 ================
-     现代紧凑：140/180ms，统一用 --ease-out。 */
+     现代紧凑：140/200/280ms 三档；统一用 --ease-out。
+     fast   = hover/feedback（按钮、tab、文字色）
+     medium = 弹层/弹窗（dialog、tooltip、popover）
+     slow   = 画布切换（文件切换、welcome） */
   --transition-fast: 140ms;
-  --transition-normal: 180ms;
+  --transition-medium: 200ms;
+  --transition-slow: 280ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* ================ 阴影（4 级，作为默认） ================

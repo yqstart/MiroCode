@@ -287,3 +287,90 @@ button {
     transform: translateY(0) scale(1);
   }
 }
+
+/* 画布主区切换：用于 EditorArea 画布 + welcome（mode="out-in"） */
+@keyframes miro-canvas-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* CodeMirror 弹层（completions / hover / signature）——CM6 不提供 leave 钩子，仅 enter */
+@keyframes miro-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Popover / 浮层（find panel / context menu / dropdown）——enter 缩放+淡入 */
+@keyframes miro-popover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* StatusBar AI/LSP 启动中、ActivityBar 脚本可用点 — 状态点脉动 */
+@keyframes miro-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* bracket match / accepted hint 一次性高亮 */
+@keyframes miro-blink {
+  0% {
+    background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  100% {
+    background-color: color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+
+/* dirty / 新增 dot 一次性脉动 */
+@keyframes miro-dot-pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ==================== Reduced motion 兑底 ====================
+   尊重系统「减少动态效果」偏好；所有 animation/transition 降到 0.01ms。
+   必须放最后一条规则，确保覆盖前面所有 transition/animation 声明。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
