@@ -148,7 +148,6 @@ export const enUS = {
     aboutTitle: "About Miro Code",
     aboutDesc: "Miro Code — a lightweight, polished desktop code editor",
     aboutVersion: "Version {version} · Tauri + Vue 3 + CodeMirror 6",
-    aboutFocus: "Local editing only — no AI Agent or model setup.",
     updates: "Updates",
     version: "Version",
     checkUpdate: "Check for Updates",

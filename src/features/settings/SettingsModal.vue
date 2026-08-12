@@ -977,7 +977,6 @@ function onOverlayClick(event: MouseEvent) {
               <p class="desc">
                 {{ t("settings.aboutVersion", { version: appVersion }) }}
               </p>
-              <p class="desc muted">{{ t("settings.aboutFocus") }}</p>
             </div>
             <div class="ui-card section">
               <h3>{{ t("settings.updates") }}</h3>

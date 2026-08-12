@@ -145,7 +145,6 @@ export const zhCN = {
     aboutTitle: "关于 Miro Code",
     aboutDesc: "米罗编辑器 · 轻量、丝滑、美观的桌面代码编辑器",
     aboutVersion: "版本 {version} · Tauri + Vue 3 + CodeMirror 6",
-    aboutFocus: "专注本地编辑体验，不含 AI Agent / 模型配置。",
     updates: "软件更新",
     version: "版本",
     checkUpdate: "检查更新",
