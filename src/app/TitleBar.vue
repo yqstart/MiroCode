@@ -206,6 +206,9 @@ onUnmounted(() => {
   flex-shrink: 0;
   display: flex;
   align-items: center;
+  /* 与左侧红绿灯 trafficLightPosition.x:14 对称的右侧留白，
+     让右上角终端按钮离窗口右边缘 14pt（红绿灯离左也是 14pt） */
+  padding-right: 14px;
   background: var(--bg-header);
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -233,11 +236,7 @@ onUnmounted(() => {
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-/* 终端入口：与红绿灯那侧对称的右留白
-   （红绿灯侧 trafficLightPosition.x:14 逻辑点 + .traffic-spacer 78pt 间距） */
-.terminal-btn {
-  margin-left: var(--space-5);
-}
+/* 终端入口：与红绿灯对称的右留白由 .titlebar padding-right:14px 统一管 */
 
 .sidebar-btn:hover {
   color: var(--text-primary);
