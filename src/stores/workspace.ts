@@ -16,6 +16,7 @@ import {
   type DirEntryInfo,
 } from "@/shared/fs";
 import { validateMoveTarget } from "@/shared/importReferences";
+import { saveBookmark } from "@/shared/securityScoped";
 import {
   clearRecentFolders as clearRecentFoldersStorage,
   loadRecentFolders,
@@ -355,6 +356,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       void startWatch(selected);
       // 启动 LSP 语言服务（用户开启且运行时可用时）
       void startLsp(selected);
+      // 同步 macOS Dock 菜单（最近项目 + 当前文件）。切换工作区后编辑器当前文件已清，传 null。
+      void syncDockMenu(null);
+      // macOS：把刚授权的工作区路径写为 security-scoped bookmark，
+      // 下次自动更新后启动可走书签激活，不被 TCC 再问一次。
+      void saveBookmark(selected);
       return true;
     } catch (error) {
       if (!options?.quiet) {
@@ -368,14 +374,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   async function restoreLastFolder() {
     if (rootPath.value) return;
     for (const path of recentFolders.value) {
+      // macOS：先 resolve security-scoped bookmark 激活访问权（避免 TCC 弹问）
+      // 失败（路径失效）继续尝试下一个；resolve 失败时 helper 会自动清掉旧 bookmark
+      const { resolveBookmark } = await import("@/shared/securityScoped");
+      const ok = await resolveBookmark(path);
+      if (!ok) continue;
       try {
         const exists = await pathExists(path, path);
         if (!exists) continue;
       } catch {
         continue;
       }
-      const ok = await openFolder(path, { quiet: true });
-      if (ok) return;
+      const opened = await openFolder(path, { quiet: true });
+      if (opened) return;
     }
   }
 
@@ -711,6 +722,30 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     recentFolders.value = clearRecentFoldersStorage();
   }
 
+  // ==================== macOS Dock 菜单同步 ====================
+
+  /**
+   * 同步最新状态给 macOS Dock 菜单。
+   * - `recent` 来自 localStorage，最多 8 条
+   * - `currentFile` 是 main 窗口当前活动 tab 的路径
+   *
+   * 调用方：openFolder / editor activePath 变化 / restoreLastFolder。
+   * 非 macOS 平台 Rust 端是 no-op，调用零成本。
+   */
+  async function syncDockMenu(currentFile: string | null) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("set_dock_menu", {
+        state: {
+          recent: recentFolders.value.slice(0, 8),
+          currentFile,
+        },
+      });
+    } catch {
+      // 非桌面壳（vite 预览）静默忽略
+    }
+  }
+
   return {
     rootPath,
     rootName,
@@ -755,5 +790,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     collapseAll,
     removeRecentFolder,
     clearRecentFolders,
+    syncDockMenu,
   };
 });

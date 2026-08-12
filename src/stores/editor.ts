@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { defineStore } from "pinia";
 import {
   basename,
@@ -682,6 +682,12 @@ export const useEditorStore = defineStore("editor", () => {
       // localStorage 满 / 隐私模式：静默忽略，不阻断 UI 切换
     }
   }
+
+  // ==================== macOS Dock 菜单：当前文件同步 ====================
+  // 切 tab / 关 tab / 切换工作区都会改 activePath，watch 统一同步到 Dock 菜单
+  watch(activePath, (path) => {
+    void useWorkspaceStore().syncDockMenu(path);
+  });
 
   return {
     tabs,

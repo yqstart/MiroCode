@@ -34,6 +34,8 @@ export const zhCN = {
   title: {
     expandSidebar: "展开侧边栏（{shortcut}）",
     collapseSidebar: "折叠侧边栏（{shortcut}）",
+    noFolder: "未打开项目",
+    copyPath: "点击复制完整路径",
   },
   status: {
     synced: "已同步",

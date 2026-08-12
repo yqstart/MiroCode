@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, computed, ref } from "vue";
-import { PanelLeft, PanelLeftClose, TerminalSquare } from "lucide-vue-next";
+import { PanelLeft, PanelLeftClose, TerminalSquare, Copy, Check } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import UpdateBadge from "@/app/UpdateBadge.vue";
 import { formatShortcut, isMacOS } from "@/shared/platform";
@@ -55,6 +55,32 @@ async function refreshFullscreen() {
   }
 }
 
+/** 全局项目标题：项目名（粗体 ≤24 字符自动截断）+ 完整路径（淡灰，ellipsis） */
+const MAX_NAME = 24;
+const projectTitle = computed(() => {
+  if (!rootPath.value) return t("title.noFolder");
+  const name = rootPath.value.split("/").filter(Boolean).pop() ?? t("title.noFolder");
+  return name.length > MAX_NAME ? `${name.slice(0, MAX_NAME - 1)}…` : name;
+});
+const projectPath = computed(() => rootPath.value ?? "");
+
+/** 点击标题复制完整路径到剪贴板（带视觉反馈） */
+const copied = ref(false);
+let copiedTimer: number | null = null;
+async function copyProjectPath() {
+  if (!rootPath.value) return;
+  try {
+    await navigator.clipboard.writeText(rootPath.value);
+    copied.value = true;
+    if (copiedTimer != null) window.clearTimeout(copiedTimer);
+    copiedTimer = window.setTimeout(() => {
+      copied.value = false;
+    }, 1200);
+  } catch {
+    // 剪贴板被拒权，忽略
+  }
+}
+
 let unlistenResize: (() => void) | undefined;
 const timers: number[] = [];
 
@@ -83,6 +109,7 @@ onMounted(() => {
 onUnmounted(() => {
   unlistenResize?.();
   for (const id of timers) window.clearTimeout(id);
+  if (copiedTimer != null) window.clearTimeout(copiedTimer);
 });
 </script>
 
@@ -105,6 +132,24 @@ onUnmounted(() => {
       <Transition name="icon" mode="out-in">
         <PanelLeftClose v-if="!collapsed" :key="'open'" :size="15" :stroke-width="1.75" />
         <PanelLeft v-else :key="'closed'" :size="15" :stroke-width="1.75" />
+      </Transition>
+    </button>
+    <!-- 全局项目标题：项目名（粗）+ 路径（淡灰），点击复制完整路径 -->
+    <button
+      type="button"
+      class="project-title"
+      :disabled="!rootPath"
+      :title="rootPath ? t('title.copyPath') : ''"
+      :aria-label="projectPath"
+      data-tauri-drag-region="false"
+      @click="copyProjectPath"
+    >
+      <span class="project-name" data-tauri-drag-region>{{ projectTitle }}</span>
+      <span v-if="rootPath" class="project-sep" data-tauri-drag-region>·</span>
+      <span v-if="rootPath" class="project-path" data-tauri-drag-region>{{ projectPath }}</span>
+      <Transition name="copied">
+        <Check v-if="copied" :size="12" class="copy-check" />
+        <Copy v-else-if="rootPath" :size="12" class="copy-icon" />
       </Transition>
     </button>
     <div class="drag-fill" data-tauri-drag-region />
@@ -174,6 +219,63 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
+/* 全局项目标题：可点击整行复制路径；内部文字继续走 data-tauri-drag-region 让标题栏可拖 */
+.project-title {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 50%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  background: transparent;
+  border: none;
+  cursor: default;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  /* 标题区域默认吃掉点击作为拖拽，但 button 本身可点；按钮禁用时不响应事件 */
+  -webkit-app-region: no-drag;
+}
+.project-title:not(:disabled):hover {
+  color: var(--text-primary);
+  background: var(--accent-soft);
+}
+.project-name {
+  font-weight: 600;
+  white-space: nowrap;
+  -webkit-app-region: drag;
+}
+.project-sep {
+  color: var(--text-muted);
+  -webkit-app-region: drag;
+}
+.project-path {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-app-region: drag;
+}
+.copy-icon,
+.copy-check {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  -webkit-app-region: no-drag;
+}
+.project-title:hover .copy-icon {
+  opacity: 0.7;
+}
+.copy-check {
+  color: #34d399;
+  opacity: 1;
+}
+
 /* icon crossfade：sidebar 折叠按钮切换 */
 .icon-enter-active,
 .icon-leave-active {
@@ -187,6 +289,18 @@ onUnmounted(() => {
 .icon-leave-to {
   opacity: 0;
   transform: rotate(90deg) scale(0.85);
+}
+
+/* 复制成功 tick 淡入淡出 */
+.copied-enter-active,
+.copied-leave-active {
+  transition: opacity var(--transition-fast) var(--ease-out),
+    transform var(--transition-fast) var(--ease-out);
+}
+.copied-enter-from,
+.copied-leave-to {
+  opacity: 0;
+  transform: scale(0.6);
 }
 
 .drag-fill {

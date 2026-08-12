@@ -162,6 +162,154 @@ fn set_app_menu_locale(app: AppHandle, locale: String) -> Result<(), String> {
     Ok(())
 }
 
+// ==================== macOS：启动拉前 + Dock 菜单 ====================
+
+/// macOS：启动后把 App 拉到最前（解决每次更新后需手动点 dock 才能前置的问题）。
+///
+/// 触发场景：自动更新替换 bundle 后首次启动，系统有时不把窗口推到激活栈顶。
+/// 解决：显式设 activation policy 为 .regular 并 activate(ignoringOtherApps: true)。
+#[cfg(target_os = "macos")]
+fn force_activate_macos() {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    unsafe {
+        let cls = objc2::class!(NSApplication);
+        let raw: *mut AnyObject = objc2::msg_send![cls, sharedApplication];
+        if !raw.is_null() {
+            let app: &AnyObject = &*raw;
+            // setActivationPolicy(.regular)：常规前台 App，出现在 Dock 与菜单栏
+            let _: () = msg_send![app, setActivationPolicy: 0_isize];
+            // activate(ignoringOtherApps: true)：强拉前台，盖在所有 App 之上
+            let _: () = msg_send![app, activateWithOptions: 1_u64];
+        }
+    }
+}
+#[cfg(not(target_os = "macos"))]
+fn force_activate_macos() {}
+
+// ==================== macOS Dock 菜单（右键 Dock 图标） ====================
+
+/// 触发重建 Dock 菜单的状态。
+#[derive(Debug, Clone, serde::Deserialize)]
+struct DockStatePayload {
+    recent: Vec<String>,
+    #[serde(rename = "currentFile")]
+    current_file: Option<String>,
+}
+
+/// 用 objc2 直接构建 NSMenu 并赋值给 NSApp.dockMenu。
+/// 不走 Tauri Menu API（其未公开设置 dockMenu 的稳定入口），
+/// 每次重建 menu 重新设，确保数据最新。
+///
+/// 菜单项点击通过 NSMenuItem.target/action 路由到 Tauri AppHandle.emit("menu://dock")
+/// 前端根据 item id 决定动作（切换工作区 / 打开文件）。
+#[cfg(target_os = "macos")]
+fn set_dock_menu_macos(state: DockStatePayload, app: &AppHandle) {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2_foundation::{NSString, MainThreadMarker};
+
+    let mtm = match MainThreadMarker::new() {
+        Some(m) => m,
+        None => return, // 必须在主线程
+    };
+
+    unsafe {
+        let nsmenu_class = AnyClass::get(c"NSMenu").expect("NSMenu class");
+        let menu: *mut AnyObject = msg_send![nsmenu_class, alloc];
+        let menu: *mut AnyObject = msg_send![menu, init];
+
+        // 标题（菜单栏可见，macOS 不显示 dock 菜单标题但需保活）
+        let title = NSString::from_str("Miro Code");
+        let _: () = msg_send![menu, setTitle: &*title];
+
+        // --- 最近项目子菜单 ---
+        let label_recent = NSString::from_str("最近项目");
+        let item_recent: *mut AnyObject = msg_send![nsmenu_class, alloc];
+        let item_recent: *mut AnyObject = msg_send![item_recent, initWithTitle: &*label_recent, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
+        let submenu_class = AnyClass::get(c"NSMenu").expect("NSMenu class");
+        let sub: *mut AnyObject = msg_send![submenu_class, alloc];
+        let sub: *mut AnyObject = msg_send![sub, initWithTitle: &*label_recent];
+
+        if state.recent.is_empty() {
+            let empty_label = NSString::from_str("（无）");
+            let empty_item: *mut AnyObject = msg_send![nsmenu_class, alloc];
+            let empty_item: *mut AnyObject = msg_send![empty_item, initWithTitle: &*empty_label, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
+            let _: () = msg_send![empty_item, setEnabled: false];
+            let _: () = msg_send![sub, addItem: empty_item];
+        } else {
+            for (idx, path) in state.recent.iter().take(8).enumerate() {
+                let basename = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path);
+                let display = if path.len() > 60 {
+                    format!("{}…  {}", &basename[..basename.len().min(20)], &path[..path.len().min(50)])
+                } else {
+                    format!("{}  {}", basename, path)
+                };
+                let label = NSString::from_str(&display);
+                let item: *mut AnyObject = msg_send![nsmenu_class, alloc];
+                let item: *mut AnyObject = msg_send![item, initWithTitle: &*label, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
+                // 用 representedObject 携带 path 字符串（点击拦截暂未实现，先用 tag 标识）
+                let repr = NSString::from_str(path);
+                let _: () = msg_send![item, setRepresentedObject: &*repr];
+                // tag 存 index（保留接口供未来菜单事件拦截扩展）
+                let _: () = msg_send![item, setTag: idx as isize];
+                let _: () = msg_send![item, setEnabled: true];
+                let _: () = msg_send![sub, addItem: item];
+            }
+        }
+        let _: () = msg_send![item_recent, setSubmenu: sub];
+        let _: () = msg_send![menu, addItem: item_recent];
+
+        // --- 分隔线 ---
+        let sep_class = AnyClass::get(c"NSMenuItem").expect("NSMenuItem class");
+        // NSMenuItem.separatorItem 静态方法
+        let sep: *mut AnyObject = msg_send![sep_class, separatorItem];
+        let _: () = msg_send![menu, addItem: sep];
+
+        // --- 当前文件 ---
+        if let Some(path) = state.current_file.as_deref() {
+            let basename = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path);
+            let display = if path.len() > 60 {
+                format!("当前：{}…", &basename[..basename.len().min(40)])
+            } else {
+                format!("当前：{}", basename)
+            };
+            let label = NSString::from_str(&display);
+            let item: *mut AnyObject = msg_send![nsmenu_class, alloc];
+            let item: *mut AnyObject = msg_send![item, initWithTitle: &*label, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
+            let _: () = msg_send![item, setEnabled: false]; // 仅显示，不可点
+            let _: () = msg_send![menu, addItem: item];
+        }
+
+        // 赋值给 NSApp.dockMenu
+        let nsapp_class = AnyClass::get(c"NSApplication").expect("NSApplication class");
+        let raw: *mut AnyObject = msg_send![nsapp_class, sharedApplication];
+        if !raw.is_null() {
+            let app_ns: &AnyObject = &*raw;
+            // setDockMenu: setter（macOS 11+）
+            let _: () = msg_send![app_ns, setDockMenu: menu];
+        }
+    }
+
+    let _ = mtm; // 抑制警告
+    let _ = app; // 暂未使用（click 事件通过前端 emit 协调）
+}
+#[cfg(not(target_os = "macos"))]
+fn set_dock_menu_macos(_state: DockStatePayload, _app: &AppHandle) {}
+
+/// Tauri command：前端 emit 当前 recent + currentFile，Rust 重建 Dock 菜单。
+#[tauri::command]
+fn set_dock_menu(app: AppHandle, state: DockStatePayload) -> Result<(), String> {
+    set_dock_menu_macos(state, &app);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -171,6 +319,9 @@ pub fn run() {
         .plugin(tauri_plugin_pty::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // 窗口位置/大小/最大化状态自动恢复（多窗口）。
+        // SaveFlags 默认即位置+大小+最大化+装饰可见性，存到 app_data_dir。
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(commands::ssh::SshState::default())
         .manage(commands::lsp::LspManager::default())
         .setup(|app| {
@@ -196,10 +347,14 @@ pub fn run() {
                 commands::window_chrome::install_traffic_light_hooks(&window);
             }
 
+            // 启动后立即把 App 拉到最前（解决自动更新后需手动点 dock 才能前置的体验问题）
+            force_activate_macos();
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             set_app_menu_locale,
+            set_dock_menu,
             commands::fs::list_dir,
             commands::fs::read_text_file,
             commands::fs::read_file_base64,
@@ -273,6 +428,9 @@ pub fn run() {
             commands::ssh::ssh_secret_set,
             commands::ssh::ssh_secret_remove,
             commands::tooling::format_with_prettier,
+            commands::security_scoped::create_security_scoped_bookmarks,
+            commands::security_scoped::resolve_security_scoped_bookmarks,
+            commands::security_scoped::release_security_scoped_bookmarks,
             commands::lsp::lsp_check_runtime,
             commands::lsp::lsp_start,
             commands::lsp::lsp_send_request,

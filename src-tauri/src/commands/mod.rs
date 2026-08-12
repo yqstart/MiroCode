@@ -5,6 +5,7 @@ pub mod language_services;
 pub mod lsp;
 pub mod path_util;
 pub mod search;
+pub mod security_scoped;
 pub mod ssh;
 pub mod tooling;
 pub mod window_chrome;

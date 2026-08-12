@@ -34,6 +34,8 @@ export const enUS = {
   title: {
     expandSidebar: "Expand Sidebar ({shortcut})",
     collapseSidebar: "Collapse Sidebar ({shortcut})",
+    noFolder: "No Folder Opened",
+    copyPath: "Click to copy full path",
   },
   status: {
     synced: "Synced",
