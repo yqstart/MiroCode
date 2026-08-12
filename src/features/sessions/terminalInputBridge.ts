@@ -136,6 +136,16 @@ export function attachTerminalInputBridge(
     }
     ime.lastWriteData = data;
     ime.lastWriteAt = now;
+    // 提交文本残留清理：xterm 经 triggerDataEvent 派发（如 IME 组合提交）后，
+    // textarea.value 里的提交文本仍残留。不清掉的话，打包环境（WKWebView
+    // preventDefault 失效）按 Backspace 时，IME 会把残留字符替换为等长空格，
+    // 再经 xterm _inputEvent 二次派发泄漏（「删除键变空格」根因）。这里在
+    // 派发完成后同步清空，与 xterm 的 setTimeout 读取（compositionend 路径）
+    // 无竞争——onData 是同步回调，先于任何宏任务。
+    const tv = textarea?.value;
+    if (tv && data === tv) {
+      textarea!.value = "";
+    }
     write(data);
   }
 
@@ -152,9 +162,14 @@ export function attachTerminalInputBridge(
     }
     const now = performance.now();
     // 删除/Tab 后的误插空白兜底（主防线在 beforeinput，此处为副防线）
+    // 追加场景：打包环境 Backspace 的 keydown 会被 IME 层吞掉（lastDeleteAt 不更新），
+    // 残留的提交文本被 IME 替换为等长空格后经 xterm _inputEvent 派发——
+    // 特征是无 keydown 对应（keyDownSeen=false）且发生在最近一次组合提交后。
     if (
       isWhitespaceOnly(data) &&
-      (now - ime.lastCompositionEndAt < 300 || now - ime.lastDeleteAt < 300)
+      (now - ime.lastCompositionEndAt < 300 ||
+        now - ime.lastDeleteAt < 300 ||
+        (!ime.keyDownSeen && now - ime.lastCompositionEndAt < 1500))
     ) {
       return;
     }
@@ -219,7 +234,13 @@ export function attachTerminalInputBridge(
         textarea.value = "";
         return;
       }
-      if (!/[^\x00-\x7f]/.test(ie.data)) return;
+      // ASCII 输入残留：字符已由 keydown 派发，此处只需清掉浏览器写入 textarea
+      // 的残留（打包环境 preventDefault 失效）。不清的话，后续 Backspace 会被
+      // IME 替换为等长空格泄漏。组合态（isComposing）已在入口排除，清空安全。
+      if (!/[^\x00-\x7f]/.test(ie.data)) {
+        textarea.value = "";
+        return;
+      }
       ime.lastNonAsciiCommitAt = performance.now();
       if (term.options.screenReaderMode) return;
       if (performance.now() - ime.last229At < 50) return;
@@ -330,6 +351,10 @@ export function attachTerminalInputBridge(
     if (e.isComposing || ime.composing) {
       return false;
     }
+
+    // 非组合态 Backspace：主动清掉 textarea 残留（见 safeWrite 注释的「删除键变
+    // 空格」根因）。keydown 到达时先清空，IME/浏览器就没有可替换为空格的内容。
+    textarea.value = "";
 
     // 带修饰键（⌘/⌥/⌃/⇧）的删除（如 shell 的整词删除）交给 xterm 原样处理
     if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) {
