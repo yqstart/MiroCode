@@ -207,7 +207,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  /* 与左侧红绿灯 trafficLightPosition.x:14 对称的右侧留白，
+  /* 与左侧红绿灯 x:14（window_chrome.rs TRAFFIC_LIGHT_X）对称的右侧留白，
      让右上角终端按钮离窗口右边缘 14pt（红绿灯离左也是 14pt） */
   padding-right: 14px;
   background: var(--bg-header);

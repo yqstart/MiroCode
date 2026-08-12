@@ -73,6 +73,12 @@ pub fn apply_titlebar_background(
 /// 之后再用 setFrameOrigin 摆按钮，按钮 origin_y 用**相对容器底**算：
 /// `origin_y = (TITLEBAR_HEIGHT - button_h) / 2`。
 ///
+/// ⚠️ 绝不能配置 tauri.conf.json / WebviewWindow 的 `trafficLightPosition`：
+/// tao 0.35 的 `view.rs draw_rect` 每次窗口重绘都会调 `inset_traffic_lights`，
+/// 把容器高度重置为 `button_h + traffic_light_inset.y`（≈24pt）并重设容器 origin，
+/// 本函数设的按钮 origin_y=12 在 24pt 容器下变成中心距顶 6pt → 红绿灯贴顶被裁。
+/// 删除该配置后 tao 不再插手，位置完全由本函数（setup 一次 + 窗口事件钩子）接管。
+///
 /// 全屏时跳过，避免与系统全屏过渡动画抢布局。
 #[cfg(target_os = "macos")]
 pub fn apply_traffic_lights(window: &WebviewWindow) -> Result<(), String> {

@@ -1,5 +1,4 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { basename } from "@/shared/fs";
 
 /** 从启动 URL 读取新窗口要打开的文件夹 */
@@ -27,7 +26,6 @@ export async function openFolderInNewWindow(folder: string): Promise<void> {
     focus: true,
     titleBarStyle: "overlay",
     hiddenTitle: true,
-    trafficLightPosition: new LogicalPosition(14, 12),
   });
 
   await new Promise<void>((resolve, reject) => {
