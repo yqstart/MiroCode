@@ -318,9 +318,21 @@ pub fn run() {
         .plugin(tauri_plugin_pty::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        // 窗口位置/大小/最大化状态自动恢复（多窗口）。
-        // SaveFlags 默认即位置+大小+最大化+装饰可见性，存到 app_data_dir。
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 窗口位置/最大化/全屏/可见性/装饰状态自动恢复（多窗口）。
+        // 故意不记 SIZE：宽高始终走 tauri.conf.json 的默认值
+        // （旧版误把窗口拖小后 .window-state.json 会记住，下次启动仍然是窄窗口；
+        //  与 Cursor/VSCode 行为一致——它们也不持久化用户拖的窗口大小）
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED
+                        | tauri_plugin_window_state::StateFlags::VISIBLE
+                        | tauri_plugin_window_state::StateFlags::DECORATIONS
+                        | tauri_plugin_window_state::StateFlags::FULLSCREEN,
+                )
+                .build(),
+        )
         .manage(commands::ssh::SshState::default())
         .manage(commands::lsp::LspManager::default())
         .setup(|app| {
