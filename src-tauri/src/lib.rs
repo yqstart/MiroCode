@@ -164,28 +164,12 @@ fn set_app_menu_locale(app: AppHandle, locale: String) -> Result<(), String> {
 
 // ==================== macOS：启动拉前 + Dock 菜单 ====================
 
-/// macOS：启动后把 App 拉到最前（解决每次更新后需手动点 dock 才能前置的问题）。
-///
-/// 触发场景：自动更新替换 bundle 后首次启动，系统有时不把窗口推到激活栈顶。
-/// 解决：显式设 activation policy 为 .regular 并 activate(ignoringOtherApps: true)。
-#[cfg(target_os = "macos")]
-fn force_activate_macos() {
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
-    unsafe {
-        let cls = objc2::class!(NSApplication);
-        let raw: *mut AnyObject = objc2::msg_send![cls, sharedApplication];
-        if !raw.is_null() {
-            let app: &AnyObject = &*raw;
-            // setActivationPolicy(.regular)：常规前台 App，出现在 Dock 与菜单栏
-            let _: () = msg_send![app, setActivationPolicy: 0_isize];
-            // activate(ignoringOtherApps: true)：强拉前台，盖在所有 App 之上
-            let _: () = msg_send![app, activateWithOptions: 1_u64];
-        }
-    }
-}
-#[cfg(not(target_os = "macos"))]
-fn force_activate_macos() {}
+// ==================== macOS 启动拉前 ====================
+// 之前尝试在 setup 闭包里直接调 NSApp.setActivationPolicy()，
+// 会跟 tao 0.35 的 did_finish_launching 内部 AppState::launched 第二次设
+// activation policy 时序冲突，触发 MainThreadMarker::new().unwrap() 跨
+// extern "C" 边界 panic，被 abort 转成 "panic in a function that cannot unwind"。
+// 拉前动作改由前端 AppShell mount 时调 getCurrentWindow().setFocus() 实现。
 
 // ==================== macOS Dock 菜单（右键 Dock 图标） ====================
 
@@ -347,8 +331,17 @@ pub fn run() {
                 commands::window_chrome::install_traffic_light_hooks(&window);
             }
 
-            // 启动后立即把 App 拉到最前（解决自动更新后需手动点 dock 才能前置的体验问题）
-            force_activate_macos();
+            // 启动后立即把 App 拉到最前（解决自动更新后需手动点 dock 才能前置的体验问题）。
+            // 注意：不能在 setup 闭包里调 NSApp.setActivationPolicy() —— tao 0.35 的
+            // did_finish_launching -> AppState::launched 内部还有 apply_activation_policy()
+            // 会再设一次，setup 阶段手动 set 跟 tao 内部第二次设的时序会触发
+            // `MainThreadMarker::new().unwrap()` 跨 extern "C" 边界 panic，
+            // 被 abort 转成 "panic in a function that cannot unwind"。
+            // 拉前动作改由前端 AppShell mount 时调 getCurrentWindow().setFocus() 实现。
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
 
             Ok(())
         })

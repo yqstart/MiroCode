@@ -213,6 +213,19 @@ onMounted(async () => {
   window.addEventListener("keydown", onKeydown);
   window.addEventListener("focus", onWindowFocus);
   teardownAutoSave = setupAutoSave();
+  // macOS：启动后立即把主窗口拉前（解决自动更新后需手动点 dock 才能前置的问题）。
+  // 不能在 Rust setup 闭包里调 NSApp.setActivationPolicy()，会跟 tao 0.35
+  // did_finish_launching 内部的 AppState::launched 时序冲突，触发
+  // "panic in a function that cannot unwind"。前端 mount 时调
+  // setFocus + unminimize 即可达成同样效果。
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    await win.unminimize();
+    await win.setFocus();
+  } catch {
+    // 纯 Vite 预览时无 Tauri runtime
+  }
   try {
     unlistenMenu = await listen<string>("menu://action", (event) => {
       handleMenuAction(event.payload);
