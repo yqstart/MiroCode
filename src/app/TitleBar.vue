@@ -163,6 +163,7 @@ onUnmounted(() => {
         <PanelLeft v-else :key="'closed'" :size="15" :stroke-width="1.75" />
       </Transition>
     </button>
+    <div class="drag-fill" data-tauri-drag-region />
     <!-- 全局项目标题：项目名（粗）+ 路径（淡灰），点击复制完整路径 -->
     <button
       type="button"
@@ -255,7 +256,7 @@ onUnmounted(() => {
 
 /* 全局项目标题：可点击整行复制路径；内部文字继续走 data-tauri-drag-region 让标题栏可拖 */
 .project-title {
-  flex-shrink: 1;
+  flex-shrink: 0;
   min-width: 0;
   max-width: 50%;
   display: flex;
