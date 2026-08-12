@@ -2,6 +2,21 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.13.5] - 2026-08-12
+
+### 修复
+
+- **终端删除键变空格（第二版，组合态路径）**：第一版修复覆盖了非组合态（残留替换拦截有效），
+  但漏了 IME 组合态路径——中文输入法下输入拼音（组合态）后按 Backspace，IME 把拼音替换为
+  等长空格占位，触发 `isComposing=true` 的 `insertText` input 事件，原代码对组合态 input
+  直接放行，经 xterm `_inputEvent`（组合态 keydown 被 IME 吞掉时 `keyDownSeen=false` 条件成立）
+  把空格当输入派发到 shell
+  - 修（`terminalInputBridge.ts` 双层）：① 组合态 `insertText` 纯空白 input 一律
+    `stopPropagation`（组合态空格只有泄漏这一个来源，选字/上屏不产生空格 input）；② onData
+    空白拦截加 `ime.composing` 条件（无时间窗依赖，组合态空白直接拦）
+  - 验证：dev 自测（日志落盘 + 自动模拟按键序列）确认组合态空格被拦截、非组合态残留替换
+    全部拦截、Backspace 正常发送 `\x7f`
+
 ## [0.13.4] - 2026-08-12
 
 ### 修复
@@ -636,6 +651,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
+[0.13.5]: https://github.com/yqstart/MiroCode/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/yqstart/MiroCode/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/yqstart/MiroCode/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/yqstart/MiroCode/compare/v0.13.1...v0.13.2
