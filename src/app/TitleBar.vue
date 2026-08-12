@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, computed, ref } from "vue";
-import { PanelLeft, PanelLeftClose } from "lucide-vue-next";
+import { PanelLeft, PanelLeftClose, TerminalSquare } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import UpdateBadge from "@/app/UpdateBadge.vue";
 import { formatShortcut, isMacOS } from "@/shared/platform";
+import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
+import { useWorkspaceStore } from "@/stores/workspace";
 import { useI18n } from "@/i18n";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
+const sessions = useSessionsStore();
+const workspace = useWorkspaceStore();
 const { layout } = storeToRefs(settings);
+const { rootPath } = storeToRefs(workspace);
 
 /** 仅 macOS Overlay 标题栏需要与红绿灯同排的控件 */
 const visible = isMacOS();
@@ -20,6 +25,14 @@ const tip = computed(() =>
     shortcut: formatShortcut("mod", "B"),
   }),
 );
+
+const terminalTip = computed(() =>
+  t("editor.openTerminal") + " · " + formatShortcut("mod", "J"),
+);
+
+function openTerminal() {
+  sessions.openSessions(workspace.rootPath);
+}
 
 /** 全屏时原生红绿灯隐藏，折叠按钮应贴左 */
 const isFullscreen = ref(false);
@@ -95,6 +108,17 @@ onUnmounted(() => {
       </Transition>
     </button>
     <div class="drag-fill" data-tauri-drag-region />
+    <!-- 右上角：终端开启按钮（与红绿灯同排，UpdateBadge 之前） -->
+    <button
+      type="button"
+      class="terminal-btn"
+      :title="terminalTip"
+      :aria-label="terminalTip"
+      :disabled="!rootPath"
+      @click="openTerminal"
+    >
+      <TerminalSquare :size="15" :stroke-width="1.75" />
+    </button>
     <UpdateBadge />
   </header>
 </template>
@@ -123,7 +147,8 @@ onUnmounted(() => {
   width: var(--space-2);
 }
 
-.sidebar-btn {
+.sidebar-btn,
+.terminal-btn {
   width: 28px;
   height: 28px;
   flex-shrink: 0;
@@ -137,6 +162,16 @@ onUnmounted(() => {
 .sidebar-btn:hover {
   color: var(--text-primary);
   background: var(--accent-soft);
+}
+
+.terminal-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--accent-soft);
+}
+
+.terminal-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 /* icon crossfade：sidebar 折叠按钮切换 */
