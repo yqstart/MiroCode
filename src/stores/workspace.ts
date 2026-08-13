@@ -797,11 +797,17 @@ export const useWorkspaceStore = defineStore("workspace", () => {
    *  Overlay 标题栏隐藏 native title，但系统层仍读取：Mission Control / ⌘Tab /
    *  窗口菜单 / 系统 Tab 合并浮层。不更新则多窗口时名称恒为默认 "Miro Code"。 */
   async function syncWindowTitle(root: string) {
+    const state = { root, at: new Date().toISOString() };
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().setTitle(`Miro Code — ${basename(root)}`);
-    } catch {
-      // 非桌面壳（vite 预览）静默忽略
+      Object.assign(state, { ok: true });
+    } catch (e) {
+      Object.assign(state, { ok: false, error: String(e) });
+    }
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__titleSync = state;
+      console.log("[syncWindowTitle]", state);
     }
   }
 
