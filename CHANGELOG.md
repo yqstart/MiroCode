@@ -2,6 +2,38 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.13.8] - 2026-08-13
+
+### 修复
+
+- **Git 操作不再冻结 UI（系统性）**：Tauri 2 同步命令默认在主线程执行（wry IPC handler 内联），`git_status` 的未跟踪目录递归、`git_log` 逐 commit 全树 diff、系统 git rebase、删除远程分支（网络 push）等耗时操作会整窗卡死。全部改为 async + `spawn_blocking` + 超时兜底（`git_status`/`git_log`/`git_diff`/`git_blame`/rebase 系列/`git_delete_remote_branch`）；SSH 连接全流程（最长 ~75s）与 Prettier npx 启动同样异步化
+- **merge 自动提交只有单亲，重复 merge 出冲突**：`repo.merge()` 不写 MERGE_HEAD，自动提交的父链只含 HEAD——被合并分支 tip 不是新提交祖先，再次 merge/pull 同一分支会把已应用变更重复应用、凭空产生冲突。三处合并点（merge 分支 / pull / 更新项目）补上第二父提交
+- **交互 Rebase 冲突解决后 Continue 卡死**：cherry-pick 冲突时 step 保留在队列首位（正确），但 Continue 已把该提交完成后 replay 又对同一 commit 再次 cherry-pick——报 "previous cherry-pick is now empty"，只能 Abort。Continue 成功后先移除队列首位再重放；`--continue` 失败不再吞错
+- **AI 补全中文乱码**：SSE 流式逐 chunk `from_utf8_lossy` 解码，多字节字符落在 chunk 边界时损坏为 U+FFFD 永久丢失。改字节缓冲按行解码 + 处理末尾无换行的最后一行
+- **SSH 终端输出中文乱码**：读循环每 8KB chunk 独立 lossy 解码同样截断 UTF-8。改增量解码（`valid_up_to` + `error_len` 保留不完整尾字节）
+- **AI ghost text 按 Esc 后复活**：dismiss 只清建议不清在途流，流式 delta 到达（Esc 不改文档，防竞态比对恒成立）后刚取消的补全重新渲染。dismiss 时标记丢弃 + 取消 Rust 侧在途流
+- **AI 请求竞态 + 事件监听泄漏**：请求停在 `getAiApiKey` await 时被新请求取代，旧请求继续执行会覆盖新请求状态且其 3 个事件监听从不 unlisten（每次泄漏）。加请求序号（epoch），await 后校验过期即作废
+- **LSP 文档同步失效**：`didChange` 增量分支恒发空 `contentChanges`（LSP 规范=无变更），tsserver 端文本停留在 didOpen 快照，hover/补全/诊断全部基于过期内容。空 changes 降级为 `{ range: null }` 全量替换
+- **LSP rename 后保存覆盖回旧内容**：`applyWorkspaceEdit` 写盘但不更新已打开标签的内存态，Cmd+S 把 rename 结果整体还原。写盘后同步编辑器缓冲区 + 补发 didChange；CRLF 文件保留原换行风格
+- **LSP server 崩溃后僵尸条目 + zombie 进程**：stdout 读循环异常退出只发 exit 事件，不清理服务器状态。退出时自动移除条目并 kill + wait 子进程
+- **Markdown 预览 XSS**：marked 默认把 raw HTML 原样透传进 `v-html`，恶意 `.md` 可在 WebView 上下文（含 Tauri IPC）执行脚本。raw HTML 一律转义 + 拦截 `javascript:`/`data:` 危险协议链接
+- **F2 重命名不可用**：`window.prompt` 在 Tauri WKWebView 静默返回 null。改用应用内 PromptDialog，预填光标处符号名
+- **重命名/剪切移动目录后已打开标签不更新**：只更新单文件路径，目录内已打开文件保存时写回旧路径。目录场景改前缀级标签更新（与拖拽移动一致）
+- **新建文件搜不到**：文件列表缓存无失效机制，同一工作区永久复用首次遍历结果。缓存加 3s TTL
+- **替换文件时特殊 Unicode 字符触发 panic**：大小写不敏感分支用 `to_lowercase` 的偏移切片原字符串，Unicode 折叠改变字节长度（İ/ẞ）时非字符边界切片。改 ASCII 折叠（`to_ascii_lowercase`，字节长度不变）
+- **watch 刷新竞态丢事件**：刷新进行中（`refreshing=true`）时 `refreshFromDisk` 直接 return，该批变更路径永久丢失。加 `refreshAgain` 补刷（与 git store 一致）
+- **Dock 菜单中文路径 panic**：菜单标题按字节切片（`&s[..n]`）落在 UTF-8 字符中间直接 panic，中文路径每次调用都触发。改字符级截断
+- **凭据文件瞬时 0644 权限窗口**：git/ai/ssh 凭据先 `fs::write`（0644）再 chmod 0600，写入瞬间同机其他用户可读。改 `OpenOptions` + `mode(0o600)` 新建即私有
+- **打开超大文本文件内存爆炸**：`read_text_file` 无大小上限。加 20MB 上限，超限返回明确错误
+- **SSH 远程 shell 退出后会话不回收**：读循环 EOF 只发 exit 事件，同 id 无法重连、写入已关闭通道。退出时自动回收（stop + 关通道）
+- **AI 300ms 首字提示失效**：`StreamFilter.start()` 从未调用，`startTime` 恒 0 导致每 token 立即 flush。创建后启动计时
+- **查询框回车双触发搜索**：input 与 overlay 两个 Enter handler 都调 `onSearch`，一次回车发两次 IPC。overlay 分支在查询框聚焦时不再重复触发
+- **终端脚本 / LSP 降级 / 格式化错误提示**：脚本首次加载与重复执行、LSP 捆绑包降级判断、格式化失败提示若干修正
+
+### 优化
+
+- 资源树挂载时去掉重复的 `git.refresh()` 与滚动定位（onMounted 重复注册）
+
 ## [0.13.7] - 2026-08-13
 
 ### 修复
@@ -681,6 +713,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
 [0.13.7]: https://github.com/yqstart/MiroCode/compare/v0.13.6...v0.13.7
+[0.13.8]: https://github.com/yqstart/MiroCode/compare/v0.13.7...v0.13.8
 [0.13.6]: https://github.com/yqstart/MiroCode/compare/v0.13.5...v0.13.6
 [0.13.5]: https://github.com/yqstart/MiroCode/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/yqstart/MiroCode/compare/v0.13.3...v0.13.4
