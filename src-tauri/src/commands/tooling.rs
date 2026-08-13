@@ -20,17 +20,34 @@ fn npx_cmd() -> Command {
 
 /// 用项目 Prettier 格式化文件内容；失败时返回错误信息
 #[tauri::command]
-pub fn format_with_prettier(
+pub async fn format_with_prettier(
     root: String,
     rel_path: String,
     content: String,
+) -> Result<String, String> {
+    // npx --no-install 首次启动可能联网探测/较慢，wait_with_output 无超时，
+    // 放 spawn_blocking + 超时兜底，避免主线程冻结
+    let handle = tokio::task::spawn_blocking(move || {
+        format_with_prettier_blocking(&root, &rel_path, &content)
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("Prettier 任务失败: {join}")),
+        Err(_) => Err("Prettier 执行超时（30s），已回退内置格式化引擎".into()),
+    }
+}
+
+fn format_with_prettier_blocking(
+    root: &str,
+    rel_path: &str,
+    content: &str,
 ) -> Result<String, String> {
     if !Path::new(&root).is_dir() {
         return Err("工作区无效".into());
     }
     let mut child = npx_cmd()
-        .args(["--no-install", "prettier", "--stdin-filepath", &rel_path])
-        .current_dir(&root)
+        .args(["--no-install", "prettier", "--stdin-filepath", rel_path])
+        .current_dir(root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
