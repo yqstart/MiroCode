@@ -17,7 +17,7 @@ use base64::engine::general_purpose::STANDARD_NO_PAD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use ssh2::{CheckResult, HashType, KnownHostFileKind, KnownHostKeyFormat, Session};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 type CmdResult<T> = Result<T, String>;
 
@@ -597,6 +597,24 @@ pub async fn ssh_shell_open(
         if let Some(msg) = last_error {
             if !stop.load(Ordering::SeqCst) {
                 let _ = app.emit(&event_error, msg);
+            }
+        }
+        // 读循环退出（EOF/错误/stop）：若会话仍在表中则回收（stop + 关通道）。
+        // 用户主动 ssh_shell_close 时条目已被移除，这里 remove 返回 None 不会重复关闭；
+        // 远程 exit / 断连路径在此回收，避免会话泄漏导致同 id 无法重连
+        let removed: Option<ShellSession> = {
+            let state = app.try_state::<SshState>();
+            match state {
+                Some(s) => s.shells.lock().ok().and_then(|mut m| m.remove(&reader_id)),
+                None => None,
+            }
+        };
+        if let Some(shell) = removed {
+            shell.stop.store(true, Ordering::SeqCst);
+            if let Ok(mut ch) = shell.channel.lock() {
+                let _ = ch.send_eof();
+                let _ = ch.close();
+                let _ = ch.wait_close();
             }
         }
         let _ = app.emit(&event_exit, ());
