@@ -430,14 +430,6 @@ function scrollRowIntoView(path: string) {
   }
 }
 
-onMounted(async () => {
-  if (rootPath.value) void git.refresh();
-  if (revealTarget.value) {
-    await nextTick();
-    scrollRowIntoView(revealTarget.value);
-  }
-});
-
 watch([revealToken, revealTarget], async ([, path]) => {
   if (!path) return;
   await nextTick();
