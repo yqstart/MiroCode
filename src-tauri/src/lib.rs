@@ -164,6 +164,11 @@ fn set_app_menu_locale(app: AppHandle, locale: String) -> Result<(), String> {
 
 // ==================== macOS：启动拉前 + Dock 菜单 ====================
 
+/// 按字符数截断字符串（多字节安全；字节切片会落在 UTF-8 字符中间 panic）
+fn truncate_chars(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
 // ==================== macOS 启动拉前 ====================
 // 之前尝试在 setup 闭包里直接调 NSApp.setActivationPolicy()，
 // 会跟 tao 0.35 的 did_finish_launching 内部 AppState::launched 第二次设
@@ -231,7 +236,11 @@ fn set_dock_menu_macos(state: DockStatePayload, app: &AppHandle) {
                     .and_then(|n| n.to_str())
                     .unwrap_or(path);
                 let display = if path.len() > 60 {
-                    format!("{}…  {}", &basename[..basename.len().min(20)], &path[..path.len().min(50)])
+                    format!(
+                        "{}…  {}",
+                        truncate_chars(basename, 20),
+                        truncate_chars(path, 50)
+                    )
                 } else {
                     format!("{}  {}", basename, path)
                 };
@@ -262,7 +271,7 @@ fn set_dock_menu_macos(state: DockStatePayload, app: &AppHandle) {
                 .and_then(|n| n.to_str())
                 .unwrap_or(path);
             let display = if path.len() > 60 {
-                format!("当前：{}…", &basename[..basename.len().min(40)])
+                format!("当前：{}…", truncate_chars(basename, 40))
             } else {
                 format!("当前：{}", basename)
             };
