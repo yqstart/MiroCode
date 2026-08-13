@@ -2,6 +2,20 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.13.7] - 2026-08-13
+
+### 修复
+
+- **终端删除键变空格（最终根因，组合态修饰键路径）**：xterm 的 `CompositionHelper` 会把
+  「除 Shift/Ctrl/Alt/CapsLock/229 之外的任意 keydown」当作组合提交信号，
+  `_finalizeComposition(false)` 直接把当前拼音缓冲派发进 shell。macOS 输入法在 Backspace
+  编辑拼音后会合成 `Meta` keydown（WeType/系统拼音均存在），此前该 keydown 触发 xterm
+  提前 finalize，把拼音（或被 IME 替换为等长空格的占位内容）漏进终端——「删除键变空格」
+  的最终根因
+  - 修（`terminalInputBridge.ts`）：组合态下纯修饰键 keydown 一律交回 IME（`return false`），
+    阻止 xterm 提前 finalize 组合缓冲
+  - 验证：dev + 打包 app 录屏实测——拼音编辑中按 Backspace 不再泄漏空格，删除键正常发送 `\x7f`
+
 ## [0.13.6] - 2026-08-12
 
 ### 修复
@@ -666,6 +680,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
+[0.13.7]: https://github.com/yqstart/MiroCode/compare/v0.13.6...v0.13.7
 [0.13.6]: https://github.com/yqstart/MiroCode/compare/v0.13.5...v0.13.6
 [0.13.5]: https://github.com/yqstart/MiroCode/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/yqstart/MiroCode/compare/v0.13.3...v0.13.4

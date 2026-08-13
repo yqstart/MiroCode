@@ -317,6 +317,29 @@ export function attachTerminalInputBridge(
 
     if (e.type !== "keydown") return true;
 
+    // 组合态下 xterm 的 CompositionHelper 会把「除 Shift/Ctrl/Alt/CapsLock/229
+    // 之外的任意 keydown」当作提交信号并 _finalizeComposition(false)，把当前
+    // 拼音缓冲直接派发进 shell。macOS 输入法在 Backspace 编辑拼音后会合成
+    // Meta keydown（WeType/系统拼音均存在），若不拦截，拼音（或被 IME 替换为
+    // 等长空格的占位内容）就会漏进终端——「删除键变空格」的最终根因。
+    // 组合态下把纯修饰键全部交回 IME，阻止 xterm 提前 finalize 组合缓冲。
+    const isModifierOnly =
+      e.key === "Meta" ||
+      e.key === "Control" ||
+      e.key === "Shift" ||
+      e.key === "Alt" ||
+      e.key === "CapsLock" ||
+      e.keyCode === 91 ||
+      e.keyCode === 92 ||
+      e.keyCode === 93 ||
+      e.keyCode === 16 ||
+      e.keyCode === 17 ||
+      e.keyCode === 18 ||
+      e.keyCode === 20;
+    if (ime.composing && isModifierOnly) {
+      return false;
+    }
+
     const isArrow =
       e.code === "ArrowLeft" ||
       e.code === "ArrowRight" ||
