@@ -402,6 +402,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       void startWatch(selected);
       // 启动 LSP 语言服务（用户开启且运行时可用时）
       void startLsp(selected);
+      // 同步 macOS 窗口原生标题：Overlay 自绘标题栏隐藏了 native title，
+      // 但系统层（Mission Control / ⌘Tab / 窗口菜单 / 系统 Tab 合并浮层）仍读取它。
+      // 主窗口此前恒为 tauri.conf.json 默认 "Miro Code"，多窗口切换时名称不对，
+      // 必须随项目更新（格式与 openFolderInNewWindow 一致）。
+      void syncWindowTitle(selected);
       // 同步 macOS Dock 菜单（最近项目 + 当前文件）。切换工作区后编辑器当前文件已清，传 null。
       void syncDockMenu(null);
       // macOS：把刚授权的工作区路径写为 security-scoped bookmark，
@@ -788,6 +793,18 @@ export const useWorkspaceStore = defineStore("workspace", () => {
           currentFile,
         },
       });
+    } catch {
+      // 非桌面壳（vite 预览）静默忽略
+    }
+  }
+
+  /** 同步窗口原生标题（`Miro Code — 项目名`，与 openFolderInNewWindow 格式一致）。
+   *  Overlay 标题栏隐藏 native title，但系统层仍读取：Mission Control / ⌘Tab /
+   *  窗口菜单 / 系统 Tab 合并浮层。不更新则多窗口时名称恒为默认 "Miro Code"。 */
+  async function syncWindowTitle(root: string) {
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().setTitle(`Miro Code — ${basename(root)}`);
     } catch {
       // 非桌面壳（vite 预览）静默忽略
     }
