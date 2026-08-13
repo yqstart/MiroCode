@@ -552,12 +552,16 @@ async function applyWorkspaceEdit(
 ): Promise<void> {
   // 动态导入避免循环依赖
   const { writeTextFile, readTextFile } = await import("@/shared/fs");
+  const { useEditorStore } = await import("@/stores/editor");
+  const editorStore = useEditorStore();
 
   for (const [uri, edits] of Object.entries(changes)) {
     const path = uriToPath(uri);
     try {
       const content = await readTextFile(workspaceRoot, path);
-      const lines = content.split("\n");
+      // 保留原换行风格（CRLF 文件不被改写成 LF）
+      const newline = content.includes("\r\n") ? "\r\n" : "\n";
+      const lines = content.split(/\r?\n/);
 
       // 按行倒序应用（避免偏移）
       const sorted = [...edits].sort((a, b) => {
@@ -583,7 +587,14 @@ async function applyWorkspaceEdit(
         }
       }
 
-      await writeTextFile(workspaceRoot, path, lines.join("\n"));
+      const newContent = lines.join(newline);
+      await writeTextFile(workspaceRoot, path, newContent);
+
+      // 同步已打开标签的内存态：不更新的话，用户下次保存会把
+      // rename 结果整体覆盖回旧内容（editor store 内存仍是旧文本）
+      editorStore.syncFromDisk(path, newContent);
+      // 补发 didChange，保持 LSP server 端文档与磁盘一致
+      void lspManager.didChange(path, [], newContent);
     } catch (err) {
       console.error("[lsp] 应用 rename 编辑失败:", path, err);
     }
