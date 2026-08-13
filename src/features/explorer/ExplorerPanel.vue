@@ -554,7 +554,13 @@ async function runMenu(action: string) {
       }
       const result = await workspace.renamePath(path);
       if (result) {
-        editor.renameTabPath(result.from, result.to);
+        // 目录重命名须连带更新其下已打开标签的路径：
+        // 只改单文件路径的话，目录内已打开文件保存时仍写回旧路径
+        if (menu.value?.isDir) {
+          editor.renameTabsUnderPrefix(result.from, result.to);
+        } else {
+          editor.renameTabPath(result.from, result.to);
+        }
       }
       return;
     }
@@ -582,7 +588,12 @@ async function runMenu(action: string) {
     if (action === "paste") {
       const result = await workspace.pasteInto(parent);
       if (result?.cut) {
-        editor.renameTabPath(result.from, result.to);
+        // 剪切移动目录时同样需要前缀级标签更新
+        if (result.isDir) {
+          editor.renameTabsUnderPrefix(result.from, result.to);
+        } else {
+          editor.renameTabPath(result.from, result.to);
+        }
       }
       return;
     }
