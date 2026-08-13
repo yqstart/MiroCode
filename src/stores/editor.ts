@@ -428,12 +428,11 @@ export const useEditorStore = defineStore("editor", () => {
         workspace.showNotice("无需格式化");
       }
     } catch (error) {
-      if (!options?.quiet) {
-        workspace.showNotice(
-          error instanceof Error ? error.message : String(error),
-          3200,
-        );
-      }
+      // quiet 仅隐藏成功提示；格式化失败必须告知用户具体原因。
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
     }
   }
 

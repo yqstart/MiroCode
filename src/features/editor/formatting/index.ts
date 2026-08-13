@@ -19,10 +19,11 @@ export async function formatDocumentContent(
   const rel = relativeToRoot(root, absPath);
 
   // 1. 项目本地 prettier（尊重项目依赖与完整配置）
+  let projectError = "";
   try {
     return await formatWithPrettier(root, rel, content);
-  } catch {
-    // 项目未安装 prettier / 无法启动 → 回退内置
+  } catch (error) {
+    projectError = error instanceof Error ? error.message : String(error);
   }
 
   // 2. 内置 standalone（零依赖、离线、任意项目可用）
@@ -32,7 +33,8 @@ export async function formatDocumentContent(
   } catch (error) {
     if (error instanceof UnsupportedLanguageError) throw error;
     const detail =
-      error instanceof Error && error.message ? `：${error.message}` : "";
-    throw new Error(`格式化失败${detail}`);
+      error instanceof Error && error.message ? error.message : String(error);
+    const projectDetail = projectError ? `；项目 Prettier：${projectError}` : "";
+    throw new Error(`格式化失败：${detail}${projectDetail}`);
   }
 }

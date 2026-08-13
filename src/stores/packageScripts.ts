@@ -19,6 +19,8 @@ export const usePackageScriptsStore = defineStore("packageScripts", () => {
   const hasPackageJson = ref(false);
   /** 当前项目勾选展示到终端顶栏的脚本名集合 */
   const pinned = ref<string[]>([]);
+  /** 防止同一脚本在刷新/打开终端期间被重复触发。 */
+  const running = new Set<string>();
 
   const available = computed(
     () => hasPackageJson.value && scripts.value.length > 0,
@@ -88,14 +90,21 @@ export const usePackageScriptsStore = defineStore("packageScripts", () => {
       workspace.showNotice("请先打开项目");
       return;
     }
-    await refresh();
-    const hit = scripts.value.find((s) => s.name === name);
-    if (!hit) {
-      workspace.showNotice(`未找到脚本 ${name}`);
-      return;
+    const key = `${workspace.rootPath}:${name}`;
+    if (running.has(key)) return;
+    running.add(key);
+    try {
+      await refresh();
+      const hit = scripts.value.find((s) => s.name === name);
+      if (!hit) {
+        workspace.showNotice(`未找到脚本 ${name}`);
+        return;
+      }
+      const command = formatRunCommand(manager.value, name);
+      useSessionsStore().runInLocalTerminal(command, workspace.rootPath);
+    } finally {
+      running.delete(key);
     }
-    const command = formatRunCommand(manager.value, name);
-    useSessionsStore().runInLocalTerminal(command, workspace.rootPath);
   }
 
   return {

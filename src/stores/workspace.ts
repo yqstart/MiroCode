@@ -373,8 +373,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         useGitStore().clearForWorkspaceSwitch();
         const { usePackageScriptsStore } = await import("@/stores/packageScripts");
         usePackageScriptsStore().clear();
-        void usePackageScriptsStore().refresh(true);
       }
+
+      // 首次恢复工作区时也要加载已勾选的脚本，供终端顶栏直接展示。
+      const { usePackageScriptsStore } = await import("@/stores/packageScripts");
+      void usePackageScriptsStore().refresh(true);
 
       if (sideErrors.length) {
         console.warn("[openFolder] side resets had errors:", sideErrors);

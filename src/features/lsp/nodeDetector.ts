@@ -56,11 +56,11 @@ export async function isNodeAvailable(): Promise<boolean> {
 /** TS language server 是否可用 */
 export async function isTsLsAvailable(): Promise<boolean> {
   const r = await detectRuntime();
-  return r.node && r.tsLs;
+  return r.tsLs;
 }
 
 /** Vue language server 是否可用 */
 export async function isVolarAvailable(): Promise<boolean> {
   const r = await detectRuntime();
-  return r.node && r.volar;
+  return r.volar;
 }

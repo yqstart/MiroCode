@@ -140,7 +140,8 @@ class LspManagerImpl {
 
     // 检测运行时（按语言独立：bundle 已装或宿主有对应 server）
     const runtime = await detectRuntime();
-    if (!runtime.node) {
+    // bundle 可自带 Node，宿主 Node 不存在时仍允许已安装的语言服务启动。
+    if (!runtime.tsLs && !runtime.volar) {
       this.setStatus("unavailable");
       return;
     }
