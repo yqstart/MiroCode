@@ -324,6 +324,20 @@ pub fn git_commit(
     paths: Option<Vec<String>>,
     amend: Option<bool>,
 ) -> Result<String, String> {
+    commit_internal(root, message, paths, amend, None)
+}
+
+/// 内部提交：可指定额外父提交。
+/// merge 自动提交必须带上被合并分支的 commit 作为第二父，否则合并拓扑丢失
+/// （产物线性，被合并分支 tip 不是新提交祖先），再次 merge 同一分支会被
+/// merge_analysis 判定需要真实合并 → 已应用的变更重复应用 → 凭空冲突
+fn commit_internal(
+    root: String,
+    message: String,
+    paths: Option<Vec<String>>,
+    amend: Option<bool>,
+    extra_parent: Option<git2::Oid>,
+) -> Result<String, String> {
     let repo = open_repo(&root)?;
     if message.trim().is_empty() {
         return Err("提交说明不能为空".into());
@@ -366,7 +380,11 @@ pub fn git_commit(
                 }
                 ps
             } else {
-                vec![head_commit]
+                let mut ps = vec![head_commit];
+                if let Some(oid) = extra_parent {
+                    ps.push(repo.find_commit(oid).map_err(|e| e.to_string())?);
+                }
+                ps
             }
         }
         Err(_) => {
@@ -1377,7 +1395,8 @@ fn git_pull_blocking(
         return Err("拉取后存在冲突，请在 Git 面板解决".into());
     }
     let msg = format!("Merge remote-tracking branch 'origin/{branch}'");
-    git_commit(root, msg, None, None)?;
+    // 双亲提交：远端 commit 必须进父链（否则拓扑丢失，重复 pull 出冲突）
+    commit_internal(root, msg, None, None, Some(fetch_commit.id()))?;
     Ok("合并拉取完成".into())
 }
 
@@ -1611,7 +1630,14 @@ pub fn git_merge_branch(root: String, name: String) -> Result<String, String> {
     if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
         return Err("合并产生冲突，请在冲突面板解决".into());
     }
-    git_commit(root, format!("Merge branch '{name}'"), None, None)?;
+    // 双亲提交：被合并分支 commit 必须进父链（否则拓扑丢失，重复 merge 出冲突）
+    commit_internal(
+        root,
+        format!("Merge branch '{name}'"),
+        None,
+        None,
+        Some(commit.id()),
+    )?;
     Ok("合并完成".into())
 }
 
@@ -1943,11 +1969,13 @@ fn git_update_project_blocking(
             if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
                 return Err("更新后存在冲突，请在 Commit 面板解决".into());
             }
-            git_commit(
+            // 双亲提交：远端 commit 必须进父链（否则拓扑丢失，重复 update 出冲突）
+            commit_internal(
                 root,
                 format!("Merge remote-tracking branch '{upstream_name}'"),
                 None,
                 None,
+                Some(annotated.id()),
             )?;
             Ok("合并更新完成".into())
         }
