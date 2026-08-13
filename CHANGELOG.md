@@ -2,6 +2,21 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.13.6] - 2026-08-12
+
+### 修复
+
+- **终端组合提交内容丢失**（中文/拼音输入法输入英文命令时的根因修复）
+  - 根因：`markCompositionEnd` 在 compositionend 时**同步清空** textarea.value，但 xterm 的
+    `_finalizeComposition` 用 `setTimeout(0)` 读 value 派发组合提交内容——同步清空导致
+    xterm 读到空串，拼音/中文提交内容全部丢失（录屏实测确认：提交后终端无字符）
+  - 连带影响：提交内容丢失后 textarea 残留未被清理（清空发生在浏览器写入提交内容之前），
+    按 Backspace 时 IME 把残留替换为等长空格泄漏到 shell——即「删除不了 + 追加空格」现象
+  - 修：compositionend 不再同步清空，残留清理由 `safeWrite` 派发后（`data === textarea.value`）
+    统一完成
+  - 验证：dev + 打包 app 录屏实测——中文拼音组合提交正常上屏、Backspace 正常发送 `\x7f`、
+    英文/中文态均无空格泄漏
+
 ## [0.13.5] - 2026-08-12
 
 ### 修复
@@ -651,6 +666,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
+[0.13.6]: https://github.com/yqstart/MiroCode/compare/v0.13.5...v0.13.6
 [0.13.5]: https://github.com/yqstart/MiroCode/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/yqstart/MiroCode/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/yqstart/MiroCode/compare/v0.13.2...v0.13.3
