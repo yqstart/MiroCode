@@ -108,8 +108,8 @@ function onKeydown(event: KeyboardEvent) {
   }
   if (event.key === "Enter" && !event.shiftKey) {
     if (document.activeElement === queryRef.value) {
-      event.preventDefault();
-      void onSearch();
+      // 查询框自身的 @keydown.enter 已触发 onSearch（含 preventDefault），
+      // 事件冒泡到这里不重复触发，否则一次回车发两次搜索 IPC
       return;
     }
     if (contentResults.value.length) {
