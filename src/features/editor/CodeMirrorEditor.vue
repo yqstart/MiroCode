@@ -101,8 +101,12 @@ const navHandlers = {
 function buildPrefs() {
   const exts = [
     EditorState.tabSize.of(editor.value.tabSize),
+    // 特异性必须高于 uiTheme 的 `& { fontSize: inherit }`（theme.ts:207）：
+    // 两者同为单类选择器时按注入顺序后者胜出，inherit 会覆盖这里的字号，
+    // 导致 fontSize 任何改动（滚轮/设置面板）在 DOM 上都不生效（恒为继承的 13px）。
+    // `&.cm-editor` 展开为 `.ͼN.cm-editor`（双类），特异性更高，必然胜出。
     EditorView.theme({
-      "&": { fontSize: `${editor.value.fontSize}px` },
+      "&.cm-editor": { fontSize: `${editor.value.fontSize}px` },
     }),
   ];
   if (editor.value.lineNumbers) {

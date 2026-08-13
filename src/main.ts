@@ -191,26 +191,29 @@ if (import.meta.env.DEV) {
         );
         await new Promise((r) => setTimeout(r, 120));
         const afterDown = store.editor.fontSize;
+        const domDown = getComputedStyle(content).fontSize;
         // 上推一格（deltaY=-100）→ 期望调小
         content.dispatchEvent(
           new WheelEvent("wheel", { deltaY: -100, deltaX: 0, metaKey: true, bubbles: true, cancelable: true }),
         );
         await new Promise((r) => setTimeout(r, 120));
         const afterUp = store.editor.fontSize;
+        const domUp = getComputedStyle(content).fontSize;
         // 无修饰键滚轮 → 不应调字号
         content.dispatchEvent(
           new WheelEvent("wheel", { deltaY: 100, deltaX: 0, metaKey: false, bubbles: true, cancelable: true }),
         );
         await new Promise((r) => setTimeout(r, 120));
         const afterPlain = store.editor.fontSize;
-        const domSize = getComputedStyle(content).fontSize;
-        const ok = afterDown === before + 1 && afterUp === before && afterPlain === before;
+        const domPlain = getComputedStyle(content).fontSize;
+        const ok =
+          afterDown === before + 1 && afterUp === before && afterPlain === before && domDown !== domUp;
         write(
           [
             ok ? "✅ 通过" : "❌ 失败",
-            `before=${before} afterDown=${afterDown}(期望 ${before + 1}) afterUp=${afterUp}(期望 ${before}) afterPlain=${afterPlain}(期望 ${before})`,
-            `DOM 字号: ${domSize}（期望 ${afterUp}px）`,
-            "方向: 下推调大 ✓ / 上推调小 ✓ / 无修饰键不变 ✓（若与期望不符见数值）",
+            `store: before=${before} afterDown=${afterDown}(期望 ${before + 1}) afterUp=${afterUp}(期望 ${before}) afterPlain=${afterPlain}(期望 ${before})`,
+            `DOM: 下推后=${domDown}(期望 ${afterDown}px) 上推后=${domUp}(期望 ${afterUp}px) 无修饰键=${domPlain}`,
+            "方向: 下推调大 / 上推调小 / 无修饰键不变",
           ].join("\n"),
         );
       } catch (err) {
