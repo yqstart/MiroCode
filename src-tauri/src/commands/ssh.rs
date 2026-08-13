@@ -440,23 +440,14 @@ pub fn ssh_secret_remove(profile_id: String) -> CmdResult<()> {
 
 // ==================== SSH Shell ====================
 
-#[tauri::command]
-pub fn ssh_shell_open(
-    app: AppHandle,
-    state: State<'_, SshState>,
-    id: String,
-    config: SshConnectConfig,
+/// 建立 SSH 会话 + PTY + shell（纯同步阻塞，最长 ~75s，须在 spawn_blocking 内执行）。
+/// 返回 stop 标志与通道，供插入会话表 + 启动读线程。
+fn ssh_connect_channel(
+    config: &SshConnectConfig,
     cols: u32,
     rows: u32,
-) -> CmdResult<()> {
-    {
-        let shells = state.shells.lock().map_err(|e| e.to_string())?;
-        if shells.contains_key(&id) {
-            return Err("该 SSH 会话已存在".into());
-        }
-    }
-
-    let sess = connect_session(&config)?;
+) -> CmdResult<(Arc<AtomicBool>, Arc<Mutex<ssh2::Channel>>)> {
+    let sess = connect_session(config)?;
     sess.set_timeout(30_000);
 
     let mut channel = sess
@@ -474,8 +465,38 @@ pub fn ssh_shell_open(
     sess.set_timeout(0);
     sess.set_blocking(false);
 
-    let stop = Arc::new(AtomicBool::new(false));
-    let channel = Arc::new(Mutex::new(channel));
+    Ok((Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(channel))))
+}
+
+#[tauri::command]
+pub async fn ssh_shell_open(
+    app: AppHandle,
+    state: State<'_, SshState>,
+    id: String,
+    config: SshConnectConfig,
+    cols: u32,
+    rows: u32,
+) -> CmdResult<()> {
+    {
+        let shells = state.shells.lock().map_err(|e| e.to_string())?;
+        if shells.contains_key(&id) {
+            return Err("该 SSH 会话已存在".into());
+        }
+    }
+
+    // 连接全流程（DNS 解析 + TCP + 握手 + 认证 + PTY + shell，最长 ~75s）
+    // 是纯同步阻塞，放 spawn_blocking 避免冻结主线程
+    let config_c = config.clone();
+    let connect = tokio::task::spawn_blocking(move || {
+        ssh_connect_channel(&config_c, cols, rows)
+    });
+    let (stop, channel) = match tokio::time::timeout(std::time::Duration::from_secs(90), connect)
+        .await
+    {
+        Ok(Ok(r)) => r?,
+        Ok(Err(join)) => return Err(format!("SSH 连接任务失败: {join}")),
+        Err(_) => return Err("SSH 连接超时（90s），请检查网络或主机可达性".into()),
+    };
 
     {
         let mut shells = state.shells.lock().map_err(|e| e.to_string())?;
