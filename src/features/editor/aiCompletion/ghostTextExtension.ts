@@ -294,6 +294,10 @@ function createFetchPlugin(filePath: string): Extension {
         renderStreamText,
         prefs.showWhateverMs,
       );
+      // 启动首字提示计时：不调用 start() 时 startTime 恒为 0，
+      // push 里 elapsed 恒大于阈值 → delay=0 → 每 token 立即 flush，
+      // 300ms 首字提示策略完全失效（ghost text 逐 token 闪现）
+      this.stream.start();
 
       aiManager.requestCompletion(
         { filePath, prefix: fullPrefix, suffix, language },
