@@ -62,6 +62,12 @@ class AiManagerImpl {
   private accumulatedText = "";
   /** 是否启用（用户设置） */
   private _enabled = false;
+  /**
+   * 请求序号：每次 requestCompletion 自增。getAiApiKey 等 await 期间若
+   * 新请求进入，旧请求的 epoch 已过期，继续执行只会覆盖新请求的状态/
+   * 监听（且旧监听从不 unlisten），必须在 await 后校验再继续。
+   */
+  private requestEpoch = 0;
 
   get status(): AiStatus {
     return this._status;
@@ -135,11 +141,17 @@ class AiManagerImpl {
     // 未启用或配置不完整，不发请求
     if (!this._enabled) return;
 
+    // 本请求序号：进入即自增，任何 await 之后校验；
+    // 期间被新请求取代则直接放弃（无 reqId 时 cancelInFlight 够不到它）
+    const epoch = ++this.requestEpoch;
+
     // 取消在途请求
     this.cancelInFlight();
 
     // 读取 API Key
     const apiKey = await getAiApiKey(prefs.provider);
+    // await 期间新请求已进入：本次作废，不注册监听、不覆盖新请求状态
+    if (epoch !== this.requestEpoch) return;
     if (!apiKey) {
       this.setStatus("error");
       callbacks.onError("API Key 未设置");

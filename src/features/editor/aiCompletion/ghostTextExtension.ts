@@ -171,6 +171,12 @@ const transitionRenderPlugin = EditorView.decorations.compute(
 
 // ==================== ViewPlugin(fetch)：防抖触发请求 ====================
 
+/**
+ * view -> FetchPlugin 实例注册表：供 Esc dismiss 时标记「已丢弃」并
+ * 取消在途 AI 流（模块级函数拿不到插件实例，经 WeakMap 取，view 销毁自动回收）
+ */
+const fetchPluginInstances = new WeakMap<EditorView, { markDismissed: () => void }>();
+
 /** 构造光标前后的 prefix/suffix */
 function buildPrefixSuffix(state: EditorState): { prefix: string; suffix: string } {
   const text = state.doc.toString();
@@ -192,6 +198,23 @@ function createFetchPlugin(filePath: string): Extension {
     private timer: ReturnType<typeof setTimeout> | null = null;
     /** 流式过滤管道（行级稳定更新 + 300ms 首字提示） */
     private stream: StreamFilter | null = null;
+    /** 已按 Esc 丢弃：后续 onDelta/onDone 一律不渲染（防止被 dismiss 的补全复活） */
+    private dismissed = false;
+
+    constructor(view: EditorView) {
+      fetchPluginInstances.set(view, {
+        markDismissed: () => this.markDismissed(),
+      });
+    }
+
+    /** Esc 丢弃：停止渲染 + 取消在途流，下一次输入重新触发请求 */
+    markDismissed(): void {
+      this.dismissed = true;
+      this.stream?.cancel();
+      this.stream = null;
+      // 取消 Rust 侧在途流（省 token）；无在途请求时无副作用
+      aiManager.cancelInFlight();
+    }
 
     update(u: ViewUpdate): void {
       // 仅文档变化或光标移动时触发
@@ -238,6 +261,9 @@ function createFetchPlugin(filePath: string): Extension {
       const { prefix, suffix } = buildPrefixSuffix(state);
       const language = languageFromPath(filePath);
 
+      // 新一轮输入 = 重置丢弃标记
+      this.dismissed = false;
+
       // Contextual filter：语句已闭合 / 纯注释行等场景跳过，避免劣质请求
       if (!shouldRequestCompletion(prefix)) return;
 
@@ -274,13 +300,13 @@ function createFetchPlugin(filePath: string): Extension {
         prefs,
         {
           onDelta: (text) => {
-            // 防竞态：文档已变则丢弃
-            if (view.state.doc !== docSnapshot) return;
+            // 防竞态：文档已变或已被 Esc 丢弃则丢弃
+            if (this.dismissed || view.state.doc !== docSnapshot) return;
             this.stream?.push(text);
           },
           onDone: (fullText) => {
-            // 防竞态：文档已变则丢弃
-            if (view.state.doc !== docSnapshot) return;
+            // 防竞态：文档已变或已被 Esc 丢弃则丢弃
+            if (this.dismissed || view.state.doc !== docSnapshot) return;
             // 结束流式，flush 剩余 buffer
             this.stream?.finish();
             // manager 已做后处理（剥围栏/括号截断/去重）；空串表示判定为劣质建议，清除
@@ -362,6 +388,9 @@ function acceptSuggestion(view: EditorView): boolean {
 function dismissSuggestion(view: EditorView): boolean {
   const suggestion = view.state.field(suggestionField, false);
   if (!suggestion?.text) return false;
+  // 标记已丢弃 + 取消在途 AI 流：否则流式 delta 到达时（Esc 不改文档，
+  // 防竞态 doc 比对恒成立）刚被 dismiss 的 ghost text 会重新渲染「复活」
+  fetchPluginInstances.get(view)?.markDismissed();
   // 先挂 dismissed class 让 widget 跑 0.22s fade-out，再清空
   view.dispatch({
     effects: setGhostTransitionEffect.of("dismissed"),
