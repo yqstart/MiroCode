@@ -1233,13 +1233,24 @@ fn save_miro_cred(url: &str, username: &str, password: &str) {
         },
     );
     if let Ok(raw) = serde_json::to_string_pretty(&map) {
-        let _ = std::fs::write(&path, raw);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
+        // 新建即 0600：消除「先 0644 写盘再 chmod」的瞬时权限窗口
+        let _ = write_private(&path, &raw);
     }
+}
+
+/// 以 0600 权限写入文本文件（Unix；Windows 无此语义，权限由目录 ACL 管控）。
+/// 相比 fs::write + set_permissions 两步，避免了凭据文件瞬时 0644 的暴露窗口。
+fn write_private(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(path)?;
+    f.write_all(content.as_bytes())
 }
 
 /// 写入系统 git credential（尽力而为）+ Miro Code 本地凭据（可靠记住）
