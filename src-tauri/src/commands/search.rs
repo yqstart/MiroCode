@@ -82,10 +82,14 @@ fn match_ext(path: &Path, extensions: &Option<Vec<String>>) -> bool {
 /// 文件列表缓存（root + 忽略规则 为 key），避免每次搜索重复全量遍历目录树。
 /// 搜索结果天然按最新磁盘状态返回，故不主动失效；工作区切换会改变 root，自动换 key。
 struct WalkCache {
-    map: HashMap<String, Vec<PathBuf>>,
+    /// key → (写入时间, 文件列表)；TTL 过期后视为未命中，重新遍历
+    map: HashMap<String, (std::time::Instant, Vec<PathBuf>)>,
     order: Vec<String>,
     max: usize,
 }
+
+/// 文件列表缓存有效期：新建/删除文件后最多 3s 内出现在搜索结果
+const WALK_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl WalkCache {
     fn new(max: usize) -> Self {
@@ -101,19 +105,22 @@ impl WalkCache {
     }
 
     fn get(&mut self, key: &str) -> Option<Vec<PathBuf>> {
-        if let Some(files) = self.map.get(key) {
-            // 命中即提升为最近使用
-            if let Some(pos) = self.order.iter().position(|k| k == key) {
-                self.order.remove(pos);
+        if let Some((written_at, files)) = self.map.get(key) {
+            if written_at.elapsed() < WALK_CACHE_TTL {
+                // 命中且未过期：提升为最近使用
+                if let Some(pos) = self.order.iter().position(|k| k == key) {
+                    self.order.remove(pos);
+                }
+                self.order.push(key.to_string());
+                return Some(files.clone());
             }
-            self.order.push(key.to_string());
-            return Some(files.clone());
+            // 过期：本次按未命中处理（下方 insert 会覆盖）
         }
         None
     }
 
     fn insert(&mut self, key: String, files: Vec<PathBuf>) {
-        self.map.insert(key.clone(), files);
+        self.map.insert(key.clone(), (std::time::Instant::now(), files));
         self.order.push(key);
         while self.order.len() > self.max {
             let lru = self.order.remove(0);
