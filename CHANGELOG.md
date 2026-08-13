@@ -2,6 +2,16 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.13.9] - 2026-08-13
+
+### 修复
+
+- **编辑器字号修改从未真正生效**：`uiTheme` 的 `font-size: inherit` 特异性高于主题字号规则，字号调整只换类名、解析值不变（恒为 body 的 13px）——字号设置改动从未真正应用到编辑器。双类特异性（`&.cm-editor`）修复
+- **⌘/Ctrl+滚轮调字号永不触发**：macOS 与 Windows 滚轮 deltaY 单位不同，节流判定恒不满足。改浮点累积
+- **⌘/Ctrl+滚轮调字号节流吞事件**：快速滚动时 throttle 丢弃中间事件、字号跳跃。改累积式对齐 VS Code 手感
+- **窗口原生标题不随项目更新**：多窗口切换时系统层（Mission Control / 窗口菜单）显示默认「Miro Code」；原 openFolder 内 fire-and-forget 只覆盖手动打开场景，启动恢复（restoreLastFolder）等路径不同步。标题同步改 `watch(rootPath)` 驱动统一入口，覆盖全部打开路径
+- **Dock 菜单点不开 + 显示残留窗口**：旧实现两处根因——`NSMenuItem` action 为 null（tao/muda 无 dockMenu 入口，菜单项点不开）+ `setDockMenu:` selector 在 macOS 15 SDK 不存在（msg_send 静默 no-op，菜单从未设上，macOS 退回渲染当前打开窗口列表）。改 `class_addMethod` 向 TaoAppDelegate 注入 `applicationDockMenu:` 实现 + `DockMenuTarget` 子类（ivar 持有 AppHandle，`representedObject` 携带 id+path），每次右键取最新菜单；前端 `syncDockMenu()` 统一入口 + AppShell 监听 `menu://dock` 路由打开项目
+
 ## [0.13.8] - 2026-08-13
 
 ### 修复
@@ -713,6 +723,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
 [0.13.7]: https://github.com/yqstart/MiroCode/compare/v0.13.6...v0.13.7
+[0.13.9]: https://github.com/yqstart/MiroCode/compare/v0.13.8...v0.13.9
 [0.13.8]: https://github.com/yqstart/MiroCode/compare/v0.13.7...v0.13.8
 [0.13.6]: https://github.com/yqstart/MiroCode/compare/v0.13.5...v0.13.6
 [0.13.5]: https://github.com/yqstart/MiroCode/compare/v0.13.4...v0.13.5
