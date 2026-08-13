@@ -14,6 +14,7 @@ function isImeApostrophe(data: string): boolean {
   return data === "'" || data === "\u2019" || data === "\u02bc";
 }
 
+
 /** Vim 等全屏 TUI 会切到 alternate buffer */
 function isTuiActive(term: Terminal): boolean {
   try {
@@ -192,7 +193,10 @@ export function attachTerminalInputBridge(
   const markCompositionEnd = () => {
     ime.composing = false;
     ime.lastCompositionEndAt = performance.now();
-    textarea.value = "";
+    // 不能在此同步清空 textarea.value：xterm 的 _finalizeComposition 在
+    // compositionend 后用 setTimeout(0) 读取 value 派发组合提交内容，
+    // 同步清空会让 xterm 读到空串 → 中文/拼音提交内容丢失（实测视频确认）。
+    // 残留清理改由 safeWrite 派发后（data === textarea.value）统一完成。
   };
   textarea.addEventListener("compositionstart", markCompositionStart, true);
   textarea.addEventListener("compositionend", markCompositionEnd, true);
