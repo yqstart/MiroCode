@@ -309,6 +309,7 @@ async fn write_lsp_message(stdin: &mut ChildStdin, message: &Value) -> Result<()
 /// 启动 stdout 读取循环，把消息通过 Tauri event 推给前端
 fn spawn_read_loop(
     app: AppHandle,
+    manager: LspManager,
     stdout: ChildStdout,
     server_id: u64,
     server_type: ServerType,
@@ -330,12 +331,31 @@ fn spawn_read_loop(
                         "[lsp:{:?} {}] 读取循环结束: {}",
                         server_type, server_id, e
                     );
+                    // 异常退出（server 崩溃 / 管道关闭）：清理服务器状态。
+                    // 主动 lsp_stop 已先 remove 条目，此时 remove 返回 None 不会重复清理；
+                    // 未主动 stop 的僵尸 server 在这里被回收（kill + wait 防 zombie）
+                    let killed = {
+                        let mut servers = manager.servers.lock().await;
+                        if let Some(mut server) = servers.remove(&server_id) {
+                            let mut did_kill = false;
+                            if let Some(mut child) = server.child.take() {
+                                let _ = child.kill().await;
+                                let _ = child.wait().await;
+                                did_kill = true;
+                            }
+                            drop(server);
+                            did_kill
+                        } else {
+                            false
+                        }
+                    };
                     let _ = app.emit(
                         LSP_EVENT_EXIT,
                         &serde_json::json!({
                             "serverId": server_id,
                             "serverType": server_type,
                             "root": root,
+                            "killed": killed,
                         }),
                     );
                     break;
@@ -462,7 +482,14 @@ pub async fn lsp_start(
         spawn_server(app.clone(), server_type, root.clone()).await?;
 
     // 启动 stdout 读取循环
-    spawn_read_loop(app, stdout, server_id, server_type, root.clone());
+    spawn_read_loop(
+        app,
+        state.inner().clone(),
+        stdout,
+        server_id,
+        server_type,
+        root.clone(),
+    );
 
     let server_state = LspServerState {
         child: Some(child),
