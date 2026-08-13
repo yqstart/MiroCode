@@ -124,7 +124,19 @@ fn status_label(status: git2::Status) -> String {
 }
 
 #[tauri::command]
-pub fn git_status(root: String) -> Result<GitStatusSnapshot, String> {
+pub async fn git_status(root: String) -> Result<GitStatusSnapshot, String> {
+    // 同步命令默认在主线程执行（Tauri 2 wry IPC handler 内联调用），
+    // recurse_untracked_dirs 在大仓库（未 ignore 的 node_modules 等）可达秒级，
+    // 放 spawn_blocking + 超时，避免冻结整个 UI
+    let handle = tokio::task::spawn_blocking(move || git_status_blocking(root));
+    match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("读取 Git 状态任务失败: {join}")),
+        Err(_) => Err("读取 Git 状态超时（30s）".into()),
+    }
+}
+
+fn git_status_blocking(root: String) -> Result<GitStatusSnapshot, String> {
     let path = PathBuf::from(&root);
     let repo = match Repository::discover(&path) {
         Ok(r) => r,
@@ -471,7 +483,17 @@ pub fn git_rename_branch(root: String, from: String, to: String) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>, String> {
+pub async fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>, String> {
+    // 每个 commit 都做全树 diff，大仓库耗时明显，须离开主线程
+    let handle = tokio::task::spawn_blocking(move || git_log_blocking(root, limit));
+    match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("读取提交历史任务失败: {join}")),
+        Err(_) => Err("读取提交历史超时（30s）".into()),
+    }
+}
+
+fn git_log_blocking(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>, String> {
     let repo = open_repo(&root)?;
     let mut revwalk = repo.revwalk().map_err(|e| e.to_string())?;
     revwalk.push_head().map_err(|e| e.to_string())?;
@@ -700,7 +722,21 @@ pub fn git_discard_paths(root: String, paths: Vec<String>) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn git_diff(
+pub async fn git_diff(
+    root: String,
+    path: Option<String>,
+    staged: Option<bool>,
+) -> Result<GitDiffResult, String> {
+    // 大文件 diff 可能较慢，离开主线程
+    let handle = tokio::task::spawn_blocking(move || git_diff_blocking(root, path, staged));
+    match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("生成差异任务失败: {join}")),
+        Err(_) => Err("生成差异超时（30s）".into()),
+    }
+}
+
+fn git_diff_blocking(
     root: String,
     path: Option<String>,
     staged: Option<bool>,
@@ -1581,7 +1617,7 @@ pub fn git_merge_branch(root: String, name: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn git_conflict_files(root: String) -> Result<Vec<String>, String> {
-    let snapshot = git_status(root)?;
+    let snapshot = git_status_blocking(root)?;
     Ok(snapshot
         .entries
         .into_iter()
@@ -1704,7 +1740,7 @@ fn git_unpushed_commits_blocking(
         .map_err(|e| e.to_string())?;
     let upstream = match branch.upstream() {
         Ok(u) => u,
-        Err(_) => return git_log(root, Some(max.min(20))),
+        Err(_) => return git_log_blocking(root, Some(max.min(20))),
     };
     let local_oid = head.peel_to_commit().map_err(|e| e.to_string())?.id();
     let remote_oid = upstream
@@ -1956,12 +1992,27 @@ fn git_rebase_onto(root: String, onto_name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn git_rebase_branch(root: String, onto: String) -> Result<String, String> {
-    git_rebase_onto(root, onto)
+pub async fn git_rebase_branch(root: String, onto: String) -> Result<String, String> {
+    // 系统 git rebase 无超时，放 spawn_blocking 防主线程冻结
+    let handle = tokio::task::spawn_blocking(move || git_rebase_onto(root, onto));
+    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("Rebase 任务失败: {join}")),
+        Err(_) => Err("Rebase 超时（120s），请检查冲突状态".into()),
+    }
 }
 
 #[tauri::command]
-pub fn git_cherry_pick(root: String, commit_id: String) -> Result<String, String> {
+pub async fn git_cherry_pick(root: String, commit_id: String) -> Result<String, String> {
+    let handle = tokio::task::spawn_blocking(move || git_cherry_pick_blocking(root, commit_id));
+    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("Cherry-pick 任务失败: {join}")),
+        Err(_) => Err("Cherry-pick 超时（120s），请检查冲突状态".into()),
+    }
+}
+
+fn git_cherry_pick_blocking(root: String, commit_id: String) -> Result<String, String> {
     let repo = open_repo(&root)?;
     let oid = resolve_commit_oid(&repo, &commit_id)?;
     let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
@@ -1995,7 +2046,17 @@ pub fn git_reset(root: String, commit_id: String, mode: String) -> Result<String
 }
 
 #[tauri::command]
-pub fn git_blame(root: String, path: String) -> Result<Vec<GitBlameLine>, String> {
+pub async fn git_blame(root: String, path: String) -> Result<Vec<GitBlameLine>, String> {
+    // blame 逐行 diff，大文件耗时明显，离开主线程
+    let handle = tokio::task::spawn_blocking(move || git_blame_blocking(root, path));
+    match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("生成注释信息任务失败: {join}")),
+        Err(_) => Err("生成注释信息超时（30s）".into()),
+    }
+}
+
+fn git_blame_blocking(root: String, path: String) -> Result<Vec<GitBlameLine>, String> {
     let repo = open_repo(&root)?;
     let blame = repo
         .blame_file(Path::new(&path), None)
@@ -2247,7 +2308,16 @@ pub fn git_rebase_status(root: String) -> Result<GitRebaseStatus, String> {
 }
 
 #[tauri::command]
-pub fn git_rebase_continue(root: String) -> Result<String, String> {
+pub async fn git_rebase_continue(root: String) -> Result<String, String> {
+    let handle = tokio::task::spawn_blocking(move || git_rebase_continue_blocking(root));
+    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("Continue 任务失败: {join}")),
+        Err(_) => Err("Continue 超时（120s）".into()),
+    }
+}
+
+fn git_rebase_continue_blocking(root: String) -> Result<String, String> {
     if is_miro_rebase_in_progress(&root) {
         // 先提交当前冲突解决结果（若仍有未暂存冲突则失败）
         let repo = open_repo(&root)?;
@@ -2284,7 +2354,16 @@ pub fn git_rebase_continue(root: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn git_rebase_abort(root: String) -> Result<String, String> {
+pub async fn git_rebase_abort(root: String) -> Result<String, String> {
+    let handle = tokio::task::spawn_blocking(move || git_rebase_abort_blocking(root));
+    match tokio::time::timeout(std::time::Duration::from_secs(60), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("Abort 任务失败: {join}")),
+        Err(_) => Err("Abort 超时（60s）".into()),
+    }
+}
+
+fn git_rebase_abort_blocking(root: String) -> Result<String, String> {
     if is_miro_rebase_in_progress(&root) {
         let state = load_miro_rebase(&root)?;
         let _ = run_git(&root, &["cherry-pick", "--abort"]);
@@ -2298,7 +2377,16 @@ pub fn git_rebase_abort(root: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn git_rebase_skip(root: String) -> Result<String, String> {
+pub async fn git_rebase_skip(root: String) -> Result<String, String> {
+    let handle = tokio::task::spawn_blocking(move || git_rebase_skip_blocking(root));
+    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("Skip 任务失败: {join}")),
+        Err(_) => Err("Skip 超时（120s）".into()),
+    }
+}
+
+fn git_rebase_skip_blocking(root: String) -> Result<String, String> {
     if is_miro_rebase_in_progress(&root) {
         let _ = run_git(&root, &["cherry-pick", "--abort"]);
         let mut state = load_miro_rebase(&root)?;
@@ -2471,7 +2559,22 @@ fn replay_miro_rebase(root: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn git_rebase_interactive(
+pub async fn git_rebase_interactive(
+    root: String,
+    onto: String,
+    steps: Vec<GitRebaseStep>,
+) -> Result<String, String> {
+    // 交互 Rebase 内部多次系统 git（rebase/cherry-pick/reset），无超时，须离主线程
+    let handle =
+        tokio::task::spawn_blocking(move || git_rebase_interactive_blocking(root, onto, steps));
+    match tokio::time::timeout(std::time::Duration::from_secs(180), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("交互 Rebase 任务失败: {join}")),
+        Err(_) => Err("交互 Rebase 超时（180s），请检查仓库状态".into()),
+    }
+}
+
+fn git_rebase_interactive_blocking(
     root: String,
     onto: String,
     steps: Vec<GitRebaseStep>,
@@ -2575,7 +2678,17 @@ pub fn git_checkout_commit(root: String, commit_id: String) -> Result<String, St
 }
 
 #[tauri::command]
-pub fn git_delete_remote_branch(root: String, remote_ref: String) -> Result<String, String> {
+pub async fn git_delete_remote_branch(root: String, remote_ref: String) -> Result<String, String> {
+    // 走网络 push，可能长时间挂起，必须离主线程
+    let handle = tokio::task::spawn_blocking(move || git_delete_remote_branch_blocking(root, remote_ref));
+    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("删除远程分支任务失败: {join}")),
+        Err(_) => Err("删除远程分支超时（120s），请检查网络".into()),
+    }
+}
+
+fn git_delete_remote_branch_blocking(root: String, remote_ref: String) -> Result<String, String> {
     // remote_ref 形如 origin/feature
     let (remote, branch) = remote_ref
         .split_once('/')
