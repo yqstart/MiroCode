@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+import { computed, ref, watch as watchState } from "vue";
 import { defineStore } from "pinia";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { watch as watchFs, type UnwatchFn, type WatchEvent } from "@tauri-apps/plugin-fs";
@@ -402,11 +402,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       void startWatch(selected);
       // 启动 LSP 语言服务（用户开启且运行时可用时）
       void startLsp(selected);
-      // 同步 macOS 窗口原生标题：Overlay 自绘标题栏隐藏了 native title，
-      // 但系统层（Mission Control / ⌘Tab / 窗口菜单 / 系统 Tab 合并浮层）仍读取它。
-      // 主窗口此前恒为 tauri.conf.json 默认 "Miro Code"，多窗口切换时名称不对，
-      // 必须随项目更新（格式与 openFolderInNewWindow 一致）。
-      void syncWindowTitle(selected);
       // 同步 macOS Dock 菜单（最近项目 + 当前文件）。切换工作区后编辑器当前文件已清，传 null。
       void syncDockMenu(null);
       // macOS：把刚授权的工作区路径写为 security-scoped bookmark，
@@ -809,6 +804,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       // 非桌面壳（vite 预览）静默忽略
     }
   }
+
+  // 窗口原生标题随 rootPath 同步：任何设置 rootPath 的路径（启动恢复 / 手动打开 /
+  // 新窗口 boot / Dock 菜单）都触发，比在 openFolder 内 fire-and-forget 更可靠。
+  watchState(
+    rootPath,
+    (root) => {
+      if (root) void syncWindowTitle(root);
+    },
+  );
 
   return {
     rootPath,
