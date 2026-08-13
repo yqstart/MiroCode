@@ -574,7 +574,7 @@ async function runMenu(action: string) {
       return;
     }
     if (action === "copy") {
-      workspace.setClipboard("copy", path);
+      workspace.setClipboard("copy", path, Boolean(menu.value?.isDir));
       return;
     }
     if (action === "cut") {
@@ -582,7 +582,7 @@ async function runMenu(action: string) {
         workspace.showNotice(t("explorer.cannotCutRoot"));
         return;
       }
-      workspace.setClipboard("cut", path);
+      workspace.setClipboard("cut", path, Boolean(menu.value?.isDir));
       return;
     }
     if (action === "paste") {

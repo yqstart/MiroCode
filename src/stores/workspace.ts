@@ -82,7 +82,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const childrenMap = ref<Record<string, DirEntryInfo[]>>({});
   const expanded = ref<Set<string>>(new Set());
   const recentFolders = ref<string[]>(loadRecentFolders());
-  const clipboard = ref<{ mode: "copy" | "cut"; path: string } | null>(null);
+  const clipboard = ref<{ mode: "copy" | "cut"; path: string; isDir: boolean } | null>(null);
   const extraIgnores = ref<string[]>([]);
   /** 触发资源树滚动到目标节点 */
   const revealToken = ref(0);
@@ -573,8 +573,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
   }
 
-  function setClipboard(mode: "copy" | "cut", path: string) {
-    clipboard.value = { mode, path };
+  function setClipboard(mode: "copy" | "cut", path: string, isDir: boolean) {
+    clipboard.value = { mode, path, isDir };
     showNotice(mode === "copy" ? "已复制" : "已剪切");
   }
 
@@ -582,6 +582,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (!rootPath.value || !clipboard.value) return;
     const source = clipboard.value.path;
     const mode = clipboard.value.mode;
+    const isDir = clipboard.value.isDir;
     const name = basename(source);
     let target = joinPath(parent, name);
     try {
@@ -609,7 +610,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       expanded.value = new Set([...expanded.value, parent]);
       selectedPath.value = target;
       showNotice("已粘贴");
-      return { from: source, to: target, cut: mode === "cut" };
+      return { from: source, to: target, cut: mode === "cut", isDir };
     } catch (error) {
       showNotice(error instanceof Error ? error.message : String(error), 3200);
     }
