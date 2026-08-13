@@ -171,10 +171,10 @@ export class LanguageClient {
     });
   }
 
-  /** 文档变更（增量同步） */
+  /** 文档变更（增量同步；changes 为空时自动降级为全量替换） */
   async didChange(
     uri: string,
-    changes: Array<{ range: { start: Position; end: Position }; text: string }>,
+    changes: Array<{ range?: { start: Position; end: Position } | null; text: string }>,
     newText: string,
   ): Promise<void> {
     if (!this.isReady()) return;
@@ -197,10 +197,13 @@ export class LanguageClient {
         contentChanges: [{ text: newText }],
       });
     } else {
-      // 增量同步
+      // 增量同步；changes 为空时降级为全量替换（LSP 规范 range: null = 全量），
+      // 避免空数组被 server 解读为「无变更」导致 server 端文档永不更新
+      const contentChanges =
+        changes.length > 0 ? changes : [{ range: null, text: newText }];
       await sendNotification(this.serverId, "textDocument/didChange", {
         textDocument: { uri, version },
-        contentChanges: changes,
+        contentChanges,
       });
     }
   }
