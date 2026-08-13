@@ -364,8 +364,13 @@ pub async fn replace_in_files(
                 }
                 (text.replace(&query, &replacement), count)
             } else {
-                let lower = text.to_lowercase();
-                let needle = query.to_lowercase();
+                // 大小写不敏感：仅按 ASCII 折叠。to_lowercase 对部分 Unicode
+                // 字符会改变字节长度（İ→i̇、ẞ→ß），lower 与 text 字节偏移错位，
+                // &text[last..start] 会在非字符边界切片 panic（整个替换失败）；
+                // to_ascii_lowercase 保持字节长度，偏移一一对应，切片安全
+                // （非 ASCII 字符不折叠，等价大小写敏感，中文场景无影响）
+                let lower: String = text.chars().map(|c| c.to_ascii_lowercase()).collect();
+                let needle: String = query.chars().map(|c| c.to_ascii_lowercase()).collect();
                 if !lower.contains(&needle) {
                     continue;
                 }
@@ -377,7 +382,8 @@ pub async fn replace_in_files(
                     let start = search_at + rel;
                     out.push_str(&text[last..start]);
                     out.push_str(&replacement);
-                    last = start + query.len();
+                    // ASCII 折叠不改变长度：needle.len() == query.len()
+                    last = start + needle.len();
                     search_at = last;
                     count += 1;
                 }
