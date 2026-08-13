@@ -96,6 +96,8 @@ export function attachTerminalInputBridge(
     lastWriteData: "",
     lastWriteAt: 0,
     lastTabAt: 0,
+    /** 用户真实按下空格键（Space）的时刻：onData 空白放行的唯一凭据 */
+    lastSpaceKeyDownAt: 0,
     /**
      * 删除/Tab 键 keydown 后置 true：在 beforeinput 源头吞掉浏览器对 textarea
      * 的误插（WKWebView 下 keydown 的 preventDefault 不可靠）。
@@ -162,17 +164,17 @@ export function attachTerminalInputBridge(
       rawWrite(data);
       return;
     }
-    // 删除/Tab 后的误插空白兜底（主防线在 beforeinput，此处为副防线）
-    // 组合态（ime.composing）中的空白数据只有「IME 退格把拼音替换为等长空格」
-    // 这一个来源（选字/上屏不产生空格字节），直接拦截；非组合态靠时间窗兜底。
-    if (
-      isWhitespaceOnly(data) &&
-      (ime.composing ||
-        now - ime.lastCompositionEndAt < 300 ||
-        now - ime.lastDeleteAt < 300 ||
-        (!ime.keyDownSeen && now - ime.lastCompositionEndAt < 1500))
-    ) {
-      return;
+    // 删除/Tab 后的误插空白兜底（主防线在 beforeinput，此处为副防线）。
+    // 纯空白数据只认「用户真实按过空格键」：IME 把 textarea 残留替换为等长空格
+    // 后经 CompositionHelper 的 _finalizeComposition / _handleAnyTextareaChanges
+    // 直接 triggerDataEvent 派发的空白，没有任何对应空格键 keydown——此前用
+    // 「删除键 keydown 时间窗」拦截，但删除键 keydown 恰恰被 IME 吞掉，时间窗
+    // 全部失效。改用空格键追踪后不依赖任何被吞的信号，彻底切断泄漏路径。
+    if (isWhitespaceOnly(data)) {
+      const realSpaceKey = now - ime.lastSpaceKeyDownAt < 400;
+      if (ime.composing || !realSpaceKey) {
+        return;
+      }
     }
     if (
       isImeApostrophe(data) &&
@@ -311,6 +313,10 @@ export function attachTerminalInputBridge(
     if (e.type === "keydown") {
       ime.keyDownSeen = true;
       if (e.keyCode === 229) ime.last229At = performance.now();
+      // 记录真实空格键按下：onData 空白放行的唯一凭据
+      if (e.code === "Space" || e.key === " " || e.keyCode === 32) {
+        ime.lastSpaceKeyDownAt = performance.now();
+      }
     } else if (e.type === "keyup") {
       ime.keyDownSeen = false;
     }
@@ -387,8 +393,7 @@ export function attachTerminalInputBridge(
       return false;
     }
 
-    // 非组合态 Backspace：主动清掉 textarea 残留（见 safeWrite 注释的「删除键变
-    // 空格」根因）。keydown 到达时先清空，IME/浏览器就没有可替换为空格的内容。
+    // 非组合态 Backspace/Delete：清掉 textarea 残留（「删除键变空格」的替换源头）
     textarea.value = "";
 
     // 带修饰键（⌘/⌥/⌃/⇧）的删除（如 shell 的整词删除）交给 xterm 原样处理
@@ -396,13 +401,19 @@ export function attachTerminalInputBridge(
       return true;
     }
 
-    // 返回 true 让 xterm 走完整 _keyDown 流程：
-    // 1. xterm 自己 triggerDataEvent('\x7f') 经 onData 派发正确控制字符
-    // 2. xterm 自己 cancel(event, true) 调 preventDefault（比 JS 手动调更可靠）
-    // 之前的方案返回 false + 手动 rawWrite + 手动 preventDefault，
-    // 导致 xterm 不调自身 preventDefault，WKWebView 下 textarea 被插入空格，
-    // 经 xterm _inputEvent 二次派发泄漏到 SSH（「删除变空格」根因）。
-    return true;
+    // 【根治】不再走 xterm 的 _keyDown → evaluateKeyboardEvent 派发路径。
+    // macOS 输入法活跃时 Backspace 的 keydown keyCode=229，xterm 的
+    // CompositionHelper.keydown() 对非组合态 229 一律走 _handleAnyTextareaChanges
+    // 并 return false——evaluateKeyboardEvent 永不执行，\x7f 发不出去
+    // （「删除键删除不了」的根因）。这里手动派发删除控制符 + preventDefault +
+    // return false（提前返回可同时跳过 CompositionHelper 的 229 吞键分支）。
+    // 浏览器误插兜底：suppressNextInsert + onImeCommitInput 的空白无条件拦截
+    // 不依赖 keydown 到达，WKWebView 下 preventDefault 失效也能兜住。
+    rawWrite(isBackspace ? "\x7f" : "\x1b[3~");
+    if (e.cancelable) {
+      e.preventDefault();
+    }
+    return false;
   });
 
   cleanups.push(() => syncTuiChrome(term, false));
