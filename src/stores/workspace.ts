@@ -91,6 +91,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const locateHits = ref<FileSearchHit[]>([]);
   const locateLoading = ref(false);
   const refreshing = ref(false);
+  /** 刷新进行中又收到变更：结束后补刷一轮（防丢 watch 事件，git store 同款） */
+  let refreshAgain = false;
   const watchActive = ref(false);
 
   let noticeSeq = 0;
@@ -261,14 +263,23 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     pendingWatchPaths = new Set();
     // 工作区文件变了也会刷新 git；取消排队中的纯 git 刷新，避免重复
     window.clearTimeout(gitRefreshTimer);
-    await refreshFromDisk(changed, { quiet: true });
+    // 刷新进行中（refreshing=true）时 refreshFromDisk 直接 return，
+    // 这批变更路径会永久丢失——用 refreshAgain 补刷（git store 同款模式）
+    do {
+      refreshAgain = false;
+      await refreshFromDisk(changed, { quiet: true });
+    } while (refreshAgain && rootPath.value);
   }
 
   async function refreshFromDisk(
     changedAbsPaths: string[] = [],
     options: { quiet?: boolean } = {},
   ) {
-    if (!rootPath.value || refreshing.value) return;
+    if (!rootPath.value) return;
+    if (refreshing.value) {
+      refreshAgain = true;
+      return;
+    }
     refreshing.value = true;
     try {
       // 仅重列受影响的父目录（文件变更局部刷新），避免大目录全量重列卡顿
@@ -347,6 +358,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       // 提交语义：先改 UI 状态（rootPath 等），再触发 reset/refresh。
       // 即使后续 reset 全部失败，UI 至少是「打开了」——比「半残状态」更可恢复。
       stopWatch();
+      refreshAgain = false;
       rootPath.value = selected;
       rootName.value = basename(selected);
       childrenMap.value = { [selected]: entries };
