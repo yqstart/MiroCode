@@ -684,8 +684,8 @@ export const useEditorStore = defineStore("editor", () => {
 
   // ==================== macOS Dock 菜单：当前文件同步 ====================
   // 切 tab / 关 tab / 切换工作区都会改 activePath，watch 统一同步到 Dock 菜单
-  watch(activePath, (path) => {
-    void useWorkspaceStore().syncDockMenu(path);
+  watch(activePath, () => {
+    void useWorkspaceStore().syncDockMenu();
   });
 
   return {

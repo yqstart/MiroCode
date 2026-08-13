@@ -162,150 +162,15 @@ fn set_app_menu_locale(app: AppHandle, locale: String) -> Result<(), String> {
     Ok(())
 }
 
-// ==================== macOS：启动拉前 + Dock 菜单 ====================
-
-/// 按字符数截断字符串（多字节安全；字节切片会落在 UTF-8 字符中间 panic）
-fn truncate_chars(s: &str, n: usize) -> String {
-    s.chars().take(n).collect()
-}
-
-// ==================== macOS 启动拉前 ====================
-// 之前尝试在 setup 闭包里直接调 NSApp.setActivationPolicy()，
-// 会跟 tao 0.35 的 did_finish_launching 内部 AppState::launched 第二次设
-// activation policy 时序冲突，触发 MainThreadMarker::new().unwrap() 跨
-// extern "C" 边界 panic，被 abort 转成 "panic in a function that cannot unwind"。
-// 拉前动作改由前端 AppShell mount 时调 getCurrentWindow().setFocus() 实现。
-
-// ==================== macOS Dock 菜单（右键 Dock 图标） ====================
-
-/// 触发重建 Dock 菜单的状态。
-#[derive(Debug, Clone, serde::Deserialize)]
-struct DockStatePayload {
-    recent: Vec<String>,
-    #[serde(rename = "currentFile")]
-    current_file: Option<String>,
-}
-
-/// 用 objc2 直接构建 NSMenu 并赋值给 NSApp.dockMenu。
-/// 不走 Tauri Menu API（其未公开设置 dockMenu 的稳定入口），
-/// 每次重建 menu 重新设，确保数据最新。
-///
-/// 菜单项点击通过 NSMenuItem.target/action 路由到 Tauri AppHandle.emit("menu://dock")
-/// 前端根据 item id 决定动作（切换工作区 / 打开文件）。
-#[cfg(target_os = "macos")]
-fn set_dock_menu_macos(state: DockStatePayload, app: &AppHandle) {
-    use objc2::msg_send;
-    use objc2::runtime::{AnyClass, AnyObject};
-    use objc2_foundation::{NSString, MainThreadMarker};
-
-    let mtm = match MainThreadMarker::new() {
-        Some(m) => m,
-        None => return, // 必须在主线程
-    };
-
-    unsafe {
-        let nsmenu_class = AnyClass::get(c"NSMenu").expect("NSMenu class");
-        // NSMenuItem 单独拿一次 class —— 之前几处 bug 把 NSMenu 当 NSMenuItem
-        // alloc，导致调 initWithTitle:action:keyEquivalent: 时抛
-        // `unrecognized selector sent to NSMenu instance` 把 App 整崩。
-        let nsmenuitem_class = AnyClass::get(c"NSMenuItem").expect("NSMenuItem class");
-        let menu: *mut AnyObject = msg_send![nsmenu_class, alloc];
-        let menu: *mut AnyObject = msg_send![menu, init];
-
-        // 标题（菜单栏可见，macOS 不显示 dock 菜单标题但需保活）
-        let title = NSString::from_str("Miro Code");
-        let _: () = msg_send![menu, setTitle: &*title];
-
-        // --- 最近项目子菜单 ---
-        let label_recent = NSString::from_str("最近项目");
-        let item_recent: *mut AnyObject = msg_send![nsmenuitem_class, alloc];
-        let item_recent: *mut AnyObject = msg_send![item_recent, initWithTitle: &*label_recent, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
-        let sub: *mut AnyObject = msg_send![nsmenu_class, alloc];
-        let sub: *mut AnyObject = msg_send![sub, initWithTitle: &*label_recent];
-
-        if state.recent.is_empty() {
-            let empty_label = NSString::from_str("（无）");
-            let empty_item: *mut AnyObject = msg_send![nsmenuitem_class, alloc];
-            let empty_item: *mut AnyObject = msg_send![empty_item, initWithTitle: &*empty_label, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
-            let _: () = msg_send![empty_item, setEnabled: false];
-            let _: () = msg_send![sub, addItem: empty_item];
-        } else {
-            for (idx, path) in state.recent.iter().take(8).enumerate() {
-                let basename = std::path::Path::new(path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(path);
-                let display = if path.len() > 60 {
-                    format!(
-                        "{}…  {}",
-                        truncate_chars(basename, 20),
-                        truncate_chars(path, 50)
-                    )
-                } else {
-                    format!("{}  {}", basename, path)
-                };
-                let label = NSString::from_str(&display);
-                let item: *mut AnyObject = msg_send![nsmenuitem_class, alloc];
-                let item: *mut AnyObject = msg_send![item, initWithTitle: &*label, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
-                // 用 representedObject 携带 path 字符串（点击拦截暂未实现，先用 tag 标识）
-                let repr = NSString::from_str(path);
-                let _: () = msg_send![item, setRepresentedObject: &*repr];
-                // tag 存 index（保留接口供未来菜单事件拦截扩展）
-                let _: () = msg_send![item, setTag: idx as isize];
-                let _: () = msg_send![item, setEnabled: true];
-                let _: () = msg_send![sub, addItem: item];
-            }
-        }
-        let _: () = msg_send![item_recent, setSubmenu: sub];
-        let _: () = msg_send![menu, addItem: item_recent];
-
-        // --- 分隔线 ---
-        // NSMenuItem.separatorItem 静态方法
-        let sep: *mut AnyObject = msg_send![nsmenuitem_class, separatorItem];
-        let _: () = msg_send![menu, addItem: sep];
-
-        // --- 当前文件 ---
-        if let Some(path) = state.current_file.as_deref() {
-            let basename = std::path::Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(path);
-            let display = if path.len() > 60 {
-                format!("当前：{}…", truncate_chars(basename, 40))
-            } else {
-                format!("当前：{}", basename)
-            };
-            let label = NSString::from_str(&display);
-            let item: *mut AnyObject = msg_send![nsmenuitem_class, alloc];
-            let item: *mut AnyObject = msg_send![item, initWithTitle: &*label, action: std::ptr::null::<AnyObject>(), keyEquivalent: &*NSString::from_str("")];
-            let _: () = msg_send![item, setEnabled: false]; // 仅显示，不可点
-            let _: () = msg_send![menu, addItem: item];
-        }
-
-        // 赋值给 NSApp.dockMenu
-        let nsapp_class = AnyClass::get(c"NSApplication").expect("NSApplication class");
-        let raw: *mut AnyObject = msg_send![nsapp_class, sharedApplication];
-        if !raw.is_null() {
-            let app_ns: &AnyObject = &*raw;
-            // setDockMenu: setter（macOS 11+）
-            let _: () = msg_send![app_ns, setDockMenu: menu];
-        }
-    }
-
-    let _ = mtm; // 抑制警告
-    let _ = app; // 暂未使用（click 事件通过前端 emit 协调）
-}
-#[cfg(not(target_os = "macos"))]
-fn set_dock_menu_macos(_state: DockStatePayload, _app: &AppHandle) {}
-
-/// Tauri command：前端 emit 当前 recent + currentFile，Rust 重建 Dock 菜单。
-/// catch_unwind 防 NSMenu/NSMenuItem 调用链上的 objc 异常（已被 NSException
-/// 接住前先拦下 Rust 边界 panic），避免 release profile 的 panic = "abort"
-/// 路径把整个 App 干掉。
+/// Tauri command：前端 invoke 时重建 Dock 菜单。
+/// 实际逻辑在 `commands/dock_menu::rebuild_dock_menu`（macOS only；
+/// 非 macOS 是 no-op）。catch_unwind 防 NSMenu/NSMenuItem 调用链上的 objc
+/// 异常（已被 NSException 接住前先拦下 Rust 边界 panic），避免 release profile
+/// 的 panic = "abort" 路径把整个 App 干掉。
 #[tauri::command]
 fn set_dock_menu(app: AppHandle, state: DockStatePayload) -> Result<(), String> {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        set_dock_menu_macos(state, &app);
+        commands::dock_menu::rebuild_dock_menu(&app, &state);
     }));
     if let Err(e) = result {
         let msg = e
@@ -317,6 +182,19 @@ fn set_dock_menu(app: AppHandle, state: DockStatePayload) -> Result<(), String> 
     }
     Ok(())
 }
+
+// ==================== macOS 启动拉前 ====================
+// 之前尝试在 setup 闭包里直接调 NSApp.setActivationPolicy()，
+// 会跟 tao 0.35 的 did_finish_launching 内部 AppState::launched 第二次设
+// activation policy 时序冲突，触发 MainThreadMarker::new().unwrap() 跨
+// extern "C" 边界 panic，被 abort 转成 "panic in a function that cannot unwind"。
+// 拉前动作改由前端 AppShell mount 时调 getCurrentWindow().setFocus() 实现。
+
+// Dock 菜单的 payload 类型 + 实现全部迁到 commands/dock_menu.rs（macOS only）。
+// 旧版本在这里用 msg_send![NSApp, setDockMenu:] 给 NSApplication 发不存在的
+// selector，objc runtime 静默 no-op，菜单从未设上——macOS 退回到默认的
+// 「应用名 + 窗口列表」渲染。详见 commands/dock_menu.rs 顶部注释。
+use commands::dock_menu::DockStatePayload;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -379,6 +257,12 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
             }
+
+            // macOS Dock 菜单接管：给 NSApp.delegate（TaoAppDelegate）注入
+            // applicationDockMenu: IMP，让 AppKit 调我们提供的菜单。
+            // 必须放在 set_menu 之后、首次右键 dock 之前。
+            // 详见 commands/dock_menu.rs 顶部注释。
+            commands::dock_menu::install_dock_menu_hook(handle);
 
             Ok(())
         })

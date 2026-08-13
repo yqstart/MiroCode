@@ -402,8 +402,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       void startWatch(selected);
       // 启动 LSP 语言服务（用户开启且运行时可用时）
       void startLsp(selected);
-      // 同步 macOS Dock 菜单（最近项目 + 当前文件）。切换工作区后编辑器当前文件已清，传 null。
-      void syncDockMenu(null);
+      // 同步 macOS Dock 菜单（最近项目 + 当前文件）。
+      // store 内部读 editor.activePath 拿当前文件，避免调用方传 stale 值。
+      void syncDockMenu();
       // macOS：把刚授权的工作区路径写为 security-scoped bookmark，
       // 下次自动更新后启动可走书签激活，不被 TCC 再问一次。
       void saveBookmark(selected);
@@ -779,13 +780,23 @@ export const useWorkspaceStore = defineStore("workspace", () => {
    * 调用方：openFolder / editor activePath 变化 / restoreLastFolder。
    * 非 macOS 平台 Rust 端是 no-op，调用零成本。
    */
-  async function syncDockMenu(currentFile: string | null) {
+  /**
+   * 同步最新状态给 macOS Dock 菜单。
+   * - `recent` 来自 localStorage，最多 8 条
+   * - `currentFile` 是 main 窗口当前活动 tab 的路径（由 store 内部读，
+   *   调用方无需关心，避免调用时 activePath 还没更新的竞态）
+   *
+   * 调用方：openFolder / editor activePath 变化 / restoreLastFolder。
+   * 非 macOS 平台 Rust 端是 no-op，调用零成本。
+   */
+  async function syncDockMenu() {
+    const editor = useEditorStore();
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("set_dock_menu", {
         state: {
           recent: recentFolders.value.slice(0, 8),
-          currentFile,
+          currentFile: editor.activePath,
         },
       });
     } catch {

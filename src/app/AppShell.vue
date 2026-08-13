@@ -48,6 +48,7 @@ const git = useGitStore();
 const { settingsOpen } = storeToRefs(ui);
 
 let unlistenMenu: (() => void) | undefined;
+let unlistenDockMenu: (() => void) | undefined;
 let teardownAutoSave: (() => void) | undefined;
 /** 菜单加速键与 window keydown 可能各触发一次，合并为单次切换 */
 let lastTerminalToggleAt = 0;
@@ -233,6 +234,24 @@ onMounted(async () => {
   } catch {
     // 纯 Vite 预览时无 Tauri runtime
   }
+  // macOS Dock 菜单（右键 Dock 图标弹出的菜单）点击事件。
+  // payload = { id: "recent" | "open_folder", path?: string }
+  // Rust 端由 commands/dock_menu.rs 的 DockMenuTarget emit。
+  try {
+    unlistenDockMenu = await listen<{ id: string; path?: string }>(
+      "menu://dock",
+      (event) => {
+        const { id, path } = event.payload;
+        if (id === "open_folder") {
+          void workspace.openFolder();
+        } else if (id === "recent" && path) {
+          void workspace.openFolder(path, { quiet: true });
+        }
+      },
+    );
+  } catch {
+    // 非 macOS / 纯 Vite 预览时无此事件源
+  }
 
   const bootFolder = readBootFolder();
   if (bootFolder) {
@@ -256,6 +275,7 @@ onUnmounted(() => {
   teardownAutoSave?.();
   workspace.stopWatch();
   unlistenMenu?.();
+  unlistenDockMenu?.();
 });
 </script>
 
