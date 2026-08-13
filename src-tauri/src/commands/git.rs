@@ -2358,10 +2358,25 @@ fn git_rebase_continue_blocking(root: String) -> Result<String, String> {
                 &root,
                 &["-c", "core.editor=true", "cherry-pick", "--continue"],
             );
+            // --continue 失败（仍残留冲突）：不推进 step，让用户继续处理
+            if repo.path().join("CHERRY_PICK_HEAD").is_file() {
+                return Err("GIT_REBASE_CONFLICT|||继续 Rebase 仍有冲突".into());
+            }
         } else if !repo.statuses(None).map(|s| s.is_empty()).unwrap_or(true) {
             // 有已暂存变更则提交
             let msg = "Miro Code rebase continue";
             let _ = git_commit(root.clone(), msg.into(), None, None);
+        }
+        // 当前冲突的 step 已通过 cherry-pick --continue / 提交完成：
+        // 从 remaining 移除首位再重放，否则 replay 会对同一 commit 再次
+        // cherry-pick——变更已应用，git 报 "previous cherry-pick is now empty"
+        // 或再次冲突，用户只能 Abort（skip 分支已有相同处理）
+        {
+            let mut state = load_miro_rebase(&root)?;
+            if !state.remaining.is_empty() {
+                state.remaining.remove(0);
+                save_miro_rebase(&root, &state)?;
+            }
         }
         return replay_miro_rebase(root);
     }
