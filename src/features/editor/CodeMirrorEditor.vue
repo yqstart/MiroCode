@@ -47,6 +47,8 @@ import { editorThemeExtensions } from "@/features/editor/theme";
 import { createMiroFindPanel, openFindPanel, openFindReplacePanel } from "@/features/editor/findPanel";
 import { createLspExtension, createLspReferencesKeymap, createDiagnosticsManager, lspRename } from "@/features/lsp/lspExtension";
 import { lspManager } from "@/features/lsp/manager";
+import { wordAt } from "@/features/editor/documentSymbols";
+import { promptInput } from "@/shared/promptDialog";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
@@ -248,9 +250,19 @@ function createEditor() {
                 workspace.showNotice("未打开工作区", 2000);
                 return true;
               }
-              const newName = window.prompt("重命名为：");
-              if (newName == null) return true; // 取消
-              void lspRename(v, props.path, root, newName);
+              // Tauri WKWebView 不支持 window.prompt（返回 null 静默失败），
+              // 改用应用内 PromptDialog；预填当前光标处符号名
+              const current =
+                wordAt(v.state.doc.toString(), v.state.selection.main.head)?.word ?? "";
+              void promptInput({
+                title: "重命名符号",
+                label: "新名称",
+                defaultValue: current,
+                confirmText: "重命名",
+              }).then((newName) => {
+                if (!newName) return; // 取消 / 空输入
+                void lspRename(v, props.path, root, newName);
+              });
               return true;
             },
           },
