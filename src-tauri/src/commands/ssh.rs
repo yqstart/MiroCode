@@ -496,6 +496,10 @@ pub fn ssh_shell_open(
         let mut buf = [0u8; 8192];
         let mut last_error: Option<String> = None;
         let mut soft_err_streak = 0u32;
+        // 跨 chunk 增量 UTF-8 解码：多字节字符跨 8KB chunk 边界时先保留不完整
+        // 尾字节，拼到下一 chunk 再解码，避免逐 chunk lossy 把边界字符损坏成
+        // U+FFFD（中文终端输出乱码）
+        let mut pending: Vec<u8> = Vec::with_capacity(4);
         loop {
             if stop.load(Ordering::SeqCst) {
                 break;
@@ -515,8 +519,31 @@ pub fn ssh_shell_open(
                 Ok(0) => break,
                 Ok(n) => {
                     soft_err_streak = 0;
-                    let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app.emit(&event_data, chunk);
+                    // 拼接残留 + 本轮数据，解码完整前缀，保留不完整尾部
+                    pending.extend_from_slice(&buf[..n]);
+                    match std::str::from_utf8(&pending) {
+                        Ok(s) => {
+                            let _ = app.emit(&event_data, s);
+                            pending.clear();
+                        }
+                        Err(e) => {
+                            let valid = e.valid_up_to();
+                            if valid > 0 {
+                                let s = std::str::from_utf8(&pending[..valid]).unwrap_or_default();
+                                let _ = app.emit(&event_data, s);
+                            }
+                            match e.error_len() {
+                                // 不完整序列（被 chunk 截断）：保留待拼
+                                None => {
+                                    let _ = pending.drain(..valid);
+                                }
+                                // 真正无效字节：丢弃（等效 lossy），其后等下轮
+                                Some(bad_len) => {
+                                    let _ = pending.drain(..valid + bad_len);
+                                }
+                            }
+                        }
+                    }
                 }
                 Err(err) => {
                     if stop.load(Ordering::SeqCst) {
