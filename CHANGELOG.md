@@ -2,6 +2,15 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.13.10] - 2026-08-13
+
+### 修复
+
+- **终端删除键变空格（根治，非组合态 229 吞键路径）**：macOS 输入法活跃时 Backspace 的 keydown `keyCode=229`，xterm 6 的 `CompositionHelper.keydown()` 对非组合态 229 一律走 `_handleAnyTextareaChanges` 并提前返回——`evaluateKeyboardEvent` 永不执行，`\x7f`（删除控制符）发不出去，表现为「删除键删除不了」；同时输入法把 textarea 残留逐个替换为等长空格，经 `CompositionHelper` 的 `_finalizeComposition` / `_handleAnyTextareaChanges` 等长分支绕过 input 事件层直接派发进 shell——「输入 N 字符 → 出现 N 个空格」，缓冲耗尽后删除键彻底无反应
+  - 修 1（`terminalInputBridge.ts`）：非组合态 Backspace/Delete 不再交给 xterm——手动派发 `\x7f`/`\x1b[3~` + `preventDefault` + `return false`，彻底绕开 229 吞键分支
+  - 修 2（`terminalInputBridge.ts`）：onData 纯空白拦截从「删除键时间窗」改为「空格键 keydown 追踪」——只有用户真实按过空格键的空白才放行，IME 泄漏空白一律拦截，不再依赖被输入法吞掉的删除键信号
+  - 验证：打包 app 实测——`cd`/`npm` 后连续按删除键正常删除，无空格插入；命令中的空格键输入不受影响
+
 ## [0.13.9] - 2026-08-13
 
 ### 修复
@@ -723,6 +732,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
 [0.13.7]: https://github.com/yqstart/MiroCode/compare/v0.13.6...v0.13.7
+[0.13.10]: https://github.com/yqstart/MiroCode/compare/v0.13.9...v0.13.10
 [0.13.9]: https://github.com/yqstart/MiroCode/compare/v0.13.8...v0.13.9
 [0.13.8]: https://github.com/yqstart/MiroCode/compare/v0.13.7...v0.13.8
 [0.13.6]: https://github.com/yqstart/MiroCode/compare/v0.13.5...v0.13.6
