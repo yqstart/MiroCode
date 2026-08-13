@@ -148,6 +148,76 @@ if (import.meta.env.DEV) {
   console.log(
     "[MiroCode 真机自检] 或配慢网络点 Push 后立刻跑：await __ipcSelfCheck({ fastCount: 20 })",
   );
+
+  // ==================== ⌘/Ctrl+滚轮调字号自测 ====================
+  // dev 模式访问 http://localhost:1420/?wheel=1 时自动挂载真实 CodeMirrorEditor
+  // 组件并派发真实 WheelEvent（带 metaKey），结果渲染到 #wheel-selftest-result，
+  // 供外部自动化直接读取文本验证「wheel → CM6 handler → patchEditor → 字号生效」链路。
+  if (location.search.includes("wheel=1")) {
+    (async () => {
+      const { createApp } = await import("vue");
+      const { default: CodeMirrorEditor } = await import("@/features/editor/CodeMirrorEditor.vue");
+      const { useSettingsStore } = await import("@/stores/settings");
+      const host = document.createElement("div");
+      host.style.cssText =
+        "position:fixed;left:0;top:0;width:900px;height:520px;z-index:99999;background:#1e1e1e;padding:12px";
+      document.body.appendChild(host);
+      const resultBox = document.createElement("pre");
+      resultBox.id = "wheel-selftest-result";
+      resultBox.style.cssText =
+        "position:fixed;left:0;top:540px;z-index:99999;background:#111;color:#7ee787;padding:8px;font:12px monospace;white-space:pre-wrap;max-width:900px";
+      document.body.appendChild(resultBox);
+      const write = (text: string) => {
+        resultBox.textContent = text;
+      };
+      try {
+        write("挂载组件中…");
+        const app = createApp(CodeMirrorEditor, {
+          path: "/tmp/selftest.ts",
+          content: "const greeting = 'hi';\nconsole.log(greeting);\n",
+        });
+        app.mount(host);
+        await new Promise((r) => setTimeout(r, 800));
+        const content = host.querySelector<HTMLElement>(".cm-content");
+        if (!content) {
+          write("失败：未找到 .cm-content（组件挂载失败）");
+          return;
+        }
+        const store = useSettingsStore();
+        const before = store.editor.fontSize;
+        // 下推一格（deltaY=+100，模拟鼠标一格）→ 期望调大
+        content.dispatchEvent(
+          new WheelEvent("wheel", { deltaY: 100, deltaX: 0, metaKey: true, bubbles: true, cancelable: true }),
+        );
+        await new Promise((r) => setTimeout(r, 120));
+        const afterDown = store.editor.fontSize;
+        // 上推一格（deltaY=-100）→ 期望调小
+        content.dispatchEvent(
+          new WheelEvent("wheel", { deltaY: -100, deltaX: 0, metaKey: true, bubbles: true, cancelable: true }),
+        );
+        await new Promise((r) => setTimeout(r, 120));
+        const afterUp = store.editor.fontSize;
+        // 无修饰键滚轮 → 不应调字号
+        content.dispatchEvent(
+          new WheelEvent("wheel", { deltaY: 100, deltaX: 0, metaKey: false, bubbles: true, cancelable: true }),
+        );
+        await new Promise((r) => setTimeout(r, 120));
+        const afterPlain = store.editor.fontSize;
+        const domSize = getComputedStyle(content).fontSize;
+        const ok = afterDown === before + 1 && afterUp === before && afterPlain === before;
+        write(
+          [
+            ok ? "✅ 通过" : "❌ 失败",
+            `before=${before} afterDown=${afterDown}(期望 ${before + 1}) afterUp=${afterUp}(期望 ${before}) afterPlain=${afterPlain}(期望 ${before})`,
+            `DOM 字号: ${domSize}（期望 ${afterUp}px）`,
+            "方向: 下推调大 ✓ / 上推调小 ✓ / 无修饰键不变 ✓（若与期望不符见数值）",
+          ].join("\n"),
+        );
+      } catch (err) {
+        write(`异常: ${String(err)}`);
+      }
+    })();
+  }
 }
 
 const app = createApp(App);
