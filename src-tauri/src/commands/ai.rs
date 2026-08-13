@@ -311,7 +311,10 @@ pub async fn ai_complete_stream(app: AppHandle, req: AiCompleteRequest) -> CmdRe
     let inflight_id = req_id.clone();
     let task = tokio::spawn(async move {
         let mut stream = resp.bytes_stream();
-        let mut buffer = String::new();
+        // 字节缓冲：UTF-8 多字节字符跨 chunk 边界时先攒着，
+        // 按 \n（ASCII 字节，不会被多字节字符吞掉）切出完整行再解码，
+        // 避免 from_utf8_lossy 逐 chunk 解码把边界字符损坏成 U+FFFD
+        let mut buffer: Vec<u8> = Vec::with_capacity(1024);
         let delta_evt = delta_event(&req_id);
         let done_evt = done_event(&req_id);
         let error_evt = error_event(&req_id);
@@ -321,30 +324,43 @@ pub async fn ai_complete_stream(app: AppHandle, req: AiCompleteRequest) -> CmdRe
             }
         };
 
+        // 处理一行 SSE（data: 前缀 → delta 文本；[DONE] → 结束），返回 None 表示应终止
+        fn handle_line(
+            app: &tauri::AppHandle,
+            line: &str,
+            delta_evt: &str,
+            done_evt: &str,
+        ) -> Option<()> {
+            let line = line.trim();
+            if let Some(data) = line.strip_prefix("data: ") {
+                match extract_delta_text(data) {
+                    Some(text) if !text.is_empty() => {
+                        let _ = app.emit(delta_evt, text);
+                    }
+                    _ => {
+                        // [DONE] 或无可提取文本
+                        if data.trim() == "[DONE]" {
+                            let _ = app.emit(done_evt, ());
+                            return None;
+                        }
+                    }
+                }
+            }
+            Some(())
+        }
+
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
                 Ok(chunk) => {
-                    buffer.push_str(&String::from_utf8_lossy(&chunk));
-                    // SSE 以 \n\n 分隔事件，逐行处理
-                    while let Some(pos) = buffer.find('\n') {
-                        let line = buffer[..pos].trim().to_string();
-                        buffer = buffer[pos + 1..].to_string();
-
-                        // 只处理 data: 开头的行
-                        if let Some(data) = line.strip_prefix("data: ") {
-                            match extract_delta_text(data) {
-                                Some(text) if !text.is_empty() => {
-                                    let _ = app.emit(&delta_evt, text);
-                                }
-                                _ => {
-                                    // [DONE] 或无可提取文本
-                                    if data.trim() == "[DONE]" {
-                                        let _ = app.emit(&done_evt, ());
-                                        cleanup(&cleanup_id);
-                                        return;
-                                    }
-                                }
-                            }
+                    buffer.extend_from_slice(&chunk);
+                    while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
+                        // 先拷贝出行字节再 drain，避免借用冲突
+                        let line_bytes = buffer[..pos].to_vec();
+                        buffer.drain(..=pos);
+                        let line = String::from_utf8_lossy(&line_bytes);
+                        if handle_line(&app, &line, &delta_evt, &done_evt).is_none() {
+                            cleanup(&cleanup_id);
+                            return;
                         }
                     }
                 }
@@ -353,6 +369,15 @@ pub async fn ai_complete_stream(app: AppHandle, req: AiCompleteRequest) -> CmdRe
                     cleanup(&cleanup_id);
                     return;
                 }
+            }
+        }
+
+        // 流结束：处理末尾无换行的残留行（如最后一条 data 不带 \n）
+        if !buffer.is_empty() {
+            let line = String::from_utf8_lossy(&buffer);
+            if handle_line(&app, &line, &delta_evt, &done_evt).is_none() {
+                cleanup(&cleanup_id);
+                return;
             }
         }
 
