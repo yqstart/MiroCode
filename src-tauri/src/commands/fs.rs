@@ -56,11 +56,17 @@ pub fn list_dir(
 
 #[tauri::command]
 pub fn read_text_file(root: String, path: String) -> Result<String, String> {
+    const MAX_BYTES: u64 = 20 * 1024 * 1024; // 20MB（对齐 read_file_base64 的上限策略）
     let root_path = PathBuf::from(&root);
     let file = normalize(&path)?;
     ensure_inside_workspace(&root_path, &file)?;
     if !file.is_file() {
         return Err("目标不是文件".into());
+    }
+    // 先查元数据，超大文件不整读进内存（避免内存翻倍 + IPC 序列化爆炸）
+    let meta = fs::metadata(&file).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_BYTES {
+        return Err(format!("文件过大，暂不支持打开（上限 {}MB）", MAX_BYTES / 1024 / 1024));
     }
     let bytes = fs::read(&file).map_err(|e| e.to_string())?;
     if bytes.contains(&0) {
