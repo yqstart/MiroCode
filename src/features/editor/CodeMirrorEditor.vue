@@ -170,14 +170,14 @@ function scrollTo(line: number, column: number) {
   emitCursor(view);
 }
 
-/** 字体大小调节：10-24，每次 ±1，节流 60ms 避免 wheel 抖动 */
+/** 字体大小调节：10-24；wheel deltaY 累积，每满一格（100px）调 1px，
+ *  对齐 VS Code 手感：快速滚动不丢步，慢速滚动也不至于一格猛跳 */
 const FONT_SIZE_MIN = 10;
 const FONT_SIZE_MAX = 24;
-let lastFontAdjust = 0;
+const WHEEL_STEP_DELTA = 100;
+let fontWheelAcc = 0;
+
 function adjustFontSize(delta: number) {
-  const now = performance.now();
-  if (now - lastFontAdjust < 60) return;
-  lastFontAdjust = now;
   const cur = settings.editor.fontSize;
   const next = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, cur + delta));
   if (next === cur) return;
@@ -188,9 +188,14 @@ function adjustFontSize(delta: number) {
 function wheelFontSize(event: WheelEvent): boolean {
   if (!(event.metaKey || event.ctrlKey)) return false;
   event.preventDefault();
-  // deltaY 单位约为 ±100/格，1 步为 ±1px
-  const step = event.deltaY < 0 ? 1 : -1;
-  adjustFontSize(step);
+  // deltaMode 归一化：0=像素（触控板/主流鼠标）、1=行、2=页，统一换算成像素累积
+  const delta =
+    event.deltaMode === 1 ? event.deltaY * 40 : event.deltaMode === 2 ? event.deltaY * 100 : event.deltaY;
+  fontWheelAcc += delta;
+  const steps = Math.trunc(fontWheelAcc / WHEEL_STEP_DELTA);
+  if (steps === 0) return true;
+  fontWheelAcc -= steps * WHEEL_STEP_DELTA;
+  adjustFontSize(steps);
   return true;
 }
 
