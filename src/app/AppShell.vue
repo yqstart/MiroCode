@@ -10,6 +10,7 @@ import EditorArea from "@/app/EditorArea.vue";
 import StatusBar from "@/app/StatusBar.vue";
 import FindInFilesDialog from "@/features/search/FindInFilesDialog.vue";
 import QuickOpen from "@/features/search/QuickOpen.vue";
+import TerminalPanel from "@/features/sessions/TerminalPanel.vue";
 import SettingsModal from "@/features/settings/SettingsModal.vue";
 import ChoiceDialog from "@/shared/ChoiceDialog.vue";
 import GitAuthDialog from "@/shared/GitAuthDialog.vue";
@@ -295,6 +296,7 @@ onUnmounted(() => {
         <EditorArea />
       </div>
     </div>
+    <TerminalPanel v-if="sessions.mounted" v-show="sessions.open" />
     <StatusBar />
     <QuickOpen />
     <FindInFilesDialog />

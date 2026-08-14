@@ -1,17 +1,15 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, computed, ref } from "vue";
-import { PanelLeft, PanelLeftClose, TerminalSquare, Copy, Check } from "lucide-vue-next";
+import { PanelLeft, PanelLeftClose, Copy, Check } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import UpdateBadge from "@/app/UpdateBadge.vue";
 import { formatShortcut, isMacOS } from "@/shared/platform";
-import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useI18n } from "@/i18n";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
-const sessions = useSessionsStore();
 const workspace = useWorkspaceStore();
 const { layout } = storeToRefs(settings);
 const { rootPath } = storeToRefs(workspace);
@@ -25,40 +23,6 @@ const tip = computed(() =>
     shortcut: formatShortcut("mod", "B"),
   }),
 );
-
-const terminalTip = computed(() =>
-  t("editor.openTerminal") + " · " + formatShortcut("mod", "J"),
-);
-
-async function openTerminal() {
-  // 未打开项目时 PTY 不能传 cwd=null（会继承 App bundle 的 /，shell 启动即错），
-  // 退回到 home 目录，提供「先开终端再选项目」的快速路径
-  let cwd = workspace.rootPath;
-  if (!cwd) {
-    cwd = homeDir.value;
-    if (!cwd) {
-      cwd = await loadHomeDirFallback();
-    }
-  }
-  sessions.openSessions(cwd);
-}
-
-/** 缓存一次 home 目录；未打开项目时终端 cwd 用它兜底 */
-const homeDir = ref<string | null>(null);
-async function loadHomeDir() {
-  try {
-    const { homeDir: get } = await import("@tauri-apps/api/path");
-    homeDir.value = await get();
-  } catch {
-    homeDir.value = null;
-  }
-}
-
-/** 用户点按钮时若 home 还没取到，再 await 一次 */
-async function loadHomeDirFallback(): Promise<string | null> {
-  await loadHomeDir();
-  return homeDir.value;
-}
 
 /** 全屏时原生红绿灯隐藏，折叠按钮应贴左 */
 const isFullscreen = ref(false);
@@ -130,9 +94,6 @@ onMounted(() => {
       // 非桌面壳
     }
   })();
-
-  // 预取 home 目录，未打开项目时开终端用
-  void loadHomeDir();
 });
 
 onUnmounted(() => {
@@ -177,23 +138,12 @@ onUnmounted(() => {
       <span class="project-name" data-tauri-drag-region>{{ projectTitle }}</span>
       <span v-if="rootPath" class="project-sep" data-tauri-drag-region>·</span>
       <span v-if="rootPath" class="project-path" data-tauri-drag-region>{{ projectPath }}</span>
-      <Transition name="copied">
+      <Transition name="copied" mode="out-in">
         <Check v-if="copied" :size="12" class="copy-check" />
         <Copy v-else-if="rootPath" :size="12" class="copy-icon" />
       </Transition>
     </button>
     <div class="drag-fill" data-tauri-drag-region />
-    <!-- 右上角：终端开启按钮（与红绿灯同排，UpdateBadge 之前） -->
-    <button
-      type="button"
-      class="terminal-btn"
-      :title="terminalTip"
-      :aria-label="terminalTip"
-      :disabled="!rootPath && !homeDir"
-      @click="openTerminal"
-    >
-      <TerminalSquare :size="15" :stroke-width="1.75" />
-    </button>
     <UpdateBadge />
   </header>
 </template>
@@ -225,8 +175,7 @@ onUnmounted(() => {
   width: var(--space-2);
 }
 
-.sidebar-btn,
-.terminal-btn {
+.sidebar-btn {
   width: 28px;
   height: 28px;
   flex-shrink: 0;
@@ -237,21 +186,9 @@ onUnmounted(() => {
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-/* 终端入口：与红绿灯对称的右留白由 .titlebar padding-right:14px 统一管 */
-
 .sidebar-btn:hover {
   color: var(--text-primary);
   background: var(--accent-soft);
-}
-
-.terminal-btn:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: var(--accent-soft);
-}
-
-.terminal-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
 }
 
 /* 全局项目标题：可点击整行复制路径；内部文字继续走 data-tauri-drag-region 让标题栏可拖 */

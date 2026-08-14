@@ -260,6 +260,13 @@ export const useSettingsStore = defineStore("settings", () => {
     );
   }
 
+  function setTerminalPanelHeight(height: number) {
+    settings.layout.terminalPanelHeight = Math.min(
+      640,
+      Math.max(120, Math.round(height)),
+    );
+  }
+
   function setLocale(next: AppSettings["locale"]) {
     settings.locale = next;
   }
@@ -286,6 +293,7 @@ export const useSettingsStore = defineStore("settings", () => {
     setGitLogWindowOpen,
     toggleGitLogWindow,
     setGitLogWindowHeight,
+    setTerminalPanelHeight,
     setLocale,
     setAutoCheckUpdates,
   };

@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Columns2, Eye, FileCode, GitCommitHorizontal, PenLine, Pin, Server, TerminalSquare, X } from "lucide-vue-next";
+import { Columns2, Eye, FileCode, GitCommitHorizontal, PenLine, Pin, Server, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import CodeMirrorEditor from "@/features/editor/CodeMirrorEditor.vue";
 import ImagePreview from "@/features/editor/ImagePreview.vue";
 import { renderMarkdown } from "@/features/editor/markdown/preview";
 import CompareView from "@/features/git/CompareView.vue";
 import GitLogPanel from "@/features/git/GitLogPanel.vue";
-import SessionsView from "@/features/sessions/SessionsView.vue";
 import SshView from "@/features/sessions/SshView.vue";
 import { basename, relativeToRoot } from "@/shared/fs";
 import { isRasterImagePath, isSvgPath } from "@/shared/media";
@@ -44,12 +43,7 @@ const git = useGitStore();
 const settings = useSettingsStore();
 const { tabs, activePath, activeTab } = storeToRefs(editor);
 const { rootPath } = storeToRefs(workspace);
-const {
-  open: sessionsOpen,
-  mounted: sessionsMounted,
-  isFocused: sessionsFocused,
-  tabId: sessionsTabId,
-} = storeToRefs(sessions);
+const { isFocused: sessionsFocused } = storeToRefs(sessions);
 const {
   open: sshOpen,
   mounted: sshMounted,
@@ -90,7 +84,6 @@ const isRaster = computed(() =>
 
 const showFileEditor = computed(
   () =>
-    !sessionsFocused.value &&
     !sshFocused.value &&
     !compareFocused.value &&
     !gitLogFocused.value &&
@@ -143,7 +136,6 @@ const previewHtml = computed(() => {
     !activeTab.value ||
     !markdownPreview.value ||
     !isMarkdown.value ||
-    sessionsFocused.value ||
     sshFocused.value ||
     compareFocused.value ||
     gitLogFocused.value
@@ -156,7 +148,6 @@ const previewHtml = computed(() => {
 const hasAnyTab = computed(
   () =>
     tabs.value.length > 0 ||
-    sessionsOpen.value ||
     sshOpen.value ||
     compareTabs.value.length > 0 ||
     gitLogOpen.value,
@@ -215,13 +206,6 @@ function activateFile(path: string) {
   editor.activate(path);
 }
 
-function activateSessions() {
-  ssh.blurSsh();
-  compare.blurCompare();
-  gitLog.blurLog();
-  sessions.focusSessions();
-}
-
 function activateSsh() {
   sessions.blurSessions();
   compare.blurCompare();
@@ -241,22 +225,6 @@ function activateGitLog() {
   ssh.blurSsh();
   compare.blurCompare();
   gitLog.focusLog();
-}
-
-async function closeSessionsTab() {
-  const ok = await sessions.closeSessions();
-  if (!ok) return;
-  if (gitLogOpen.value && !editor.activePath && !compareTabs.value.length) {
-    gitLog.focusLog();
-    return;
-  }
-  if (compareTabs.value.length && !editor.activePath) {
-    compare.focusCompare();
-    return;
-  }
-  if (!editor.activePath && editor.tabs.length) {
-    editor.activate(editor.tabs[0].path);
-  }
 }
 
 async function closeSshTab() {
@@ -290,7 +258,6 @@ function closeCompareTab(id: string) {
   compare.closeTab(id);
   if (
     !compare.tabs.length &&
-    !sessionsFocused.value &&
     !sshFocused.value &&
     !gitLogFocused.value &&
     editor.activePath
@@ -438,7 +405,7 @@ const formatDocumentDisabled = computed(
 
 function onEditorContextMenu(event: MouseEvent) {
   if (!activeTab.value || !showFileEditor.value) return;
-  if (sessionsFocused.value || compareFocused.value || gitLogFocused.value) return;
+  if (compareFocused.value || gitLogFocused.value) return;
   if (isRasterImagePath(activeTab.value.path)) return;
   event.preventDefault();
   event.stopPropagation();
@@ -584,26 +551,6 @@ onBeforeUnmount(() =>
         </button>
 
         <button
-          v-if="sessionsOpen"
-          type="button"
-          class="tab session-tab"
-          :class="{ active: sessionsFocused }"
-          :data-id="sessionsTabId"
-          @click="activateSessions"
-          @auxclick.middle.prevent="closeSessionsTab"
-        >
-          <TerminalSquare :size="12" class="term-icon" />
-          <span class="name">{{ t("editor.terminalTab") }}</span>
-          <span
-            class="close"
-            :title="t('editor.closeTerminal')"
-            @click.stop="closeSessionsTab"
-          >
-            <X :size="12" />
-          </span>
-        </button>
-
-        <button
           v-if="sshOpen"
           type="button"
           class="tab ssh-tab"
@@ -659,10 +606,6 @@ onBeforeUnmount(() =>
     </div>
 
     <div class="canvas">
-      <Transition name="canvas-fade">
-        <SessionsView v-if="sessionsMounted" v-show="sessionsFocused" />
-      </Transition>
-
       <Transition name="canvas-fade">
         <SshView v-if="sshMounted" v-show="sshFocused" />
       </Transition>
@@ -969,7 +912,6 @@ onBeforeUnmount(() =>
   transition: transform 180ms var(--ease-out);
 }
 
-.session-tab .term-icon,
 .ssh-tab .ssh-icon,
 .compare-tab .cmp-icon,
 .gitlog-tab .gitlog-icon {
@@ -1087,8 +1029,7 @@ onBeforeUnmount(() =>
   overflow: hidden;
 }
 
-.canvas > :deep(.log-panel),
-.canvas > :deep(.sessions-view) {
+.canvas > :deep(.log-panel) {
   height: 100%;
 }
 

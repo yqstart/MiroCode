@@ -7,19 +7,17 @@ export interface LocalTerminalSession {
   cwd: string | null;
 }
 
-const SESSIONS_TAB_ID = "miro://sessions";
-
 /**
- * 本地终端会话：作为编辑区标签打开（⌘J / 资源树右键「在终端中打开」 / 欢迎页 CTA）。
+ * 本地终端会话：作为底部面板打开（状态栏左下角按钮 / ⌘J / 资源树右键「在终端中打开」）。
  * SSH 远程会话已拆分为独立标签（见 ssh store），与本 store 解耦。
  */
 export const useSessionsStore = defineStore("sessions", () => {
-  /** 终端标签是否出现在编辑区标签栏 */
+  /** 终端底部面板是否展开（对应 AppShell 中 TerminalPanel 的 v-show） */
   const open = ref(false);
   const focused = ref(false);
   /**
-   * 快捷键隐藏后会话仍存活：视图保持挂载、PTY 不销毁，
-   * 与关闭标签（卸载并结束进程）区分。
+   * 快捷键收起后面板仍保活：视图保持挂载、PTY 不销毁，
+   * 与关闭全部终端（卸载并结束进程）区分。
    */
   const dormant = ref(false);
   const localTerminals = ref<LocalTerminalSession[]>([]);
@@ -33,9 +31,8 @@ export const useSessionsStore = defineStore("sessions", () => {
   let seq = 0;
   let writeSeq = 0;
 
-  const tabId = SESSIONS_TAB_ID;
   const isFocused = computed(() => open.value && focused.value);
-  /** 是否应挂载 SessionsView（显示中或快捷键隐藏保活） */
+  /** 是否应挂载终端面板（显示中或收起保活） */
   const mounted = computed(() => open.value || dormant.value);
   const hasAnySession = computed(() => localTerminals.value.length > 0);
 
@@ -70,7 +67,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     focused.value = true;
     if (restoring) return;
     ensureDefaultLocal(cwd);
-    blurPeers();
+    // 底部面板与画布（SSH/GitLog/Compare）并存，打开面板不打断其它视图的聚焦
   }
 
   /** 隐藏终端标签但保留会话与 PTY（⌘/Ctrl+J） */
@@ -188,7 +185,6 @@ export const useSessionsStore = defineStore("sessions", () => {
   }
 
   return {
-    tabId,
     open,
     focused,
     dormant,

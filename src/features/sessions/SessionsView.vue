@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Plus, TerminalSquare, X } from "lucide-vue-next";
+import { ChevronDown, Plus, TerminalSquare, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import LocalTerminal from "@/features/sessions/LocalTerminal.vue";
 import PackageScriptsMenu from "@/features/sessions/PackageScriptsMenu.vue";
@@ -53,6 +53,14 @@ function onAddLocal() {
       <div v-if="pinnedScripts.length" class="scripts-slot">
         <PackageScriptsMenu variant="compact" />
       </div>
+      <button
+        type="button"
+        class="collapse"
+        :title="t('sessions.collapsePanel')"
+        @click="sessions.hideSessions()"
+      >
+        <ChevronDown :size="14" />
+      </button>
     </header>
 
     <div class="body">
@@ -152,6 +160,23 @@ function onAddLocal() {
   display: flex;
   justify-content: flex-end;
   overflow: hidden;
+}
+
+/* 收起面板按钮：顶栏最右（无脚本芯片时靠 margin-left:auto 推右） */
+.collapse {
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.collapse:hover {
+  color: var(--text-primary);
+  background: var(--accent-soft);
 }
 
 .body {

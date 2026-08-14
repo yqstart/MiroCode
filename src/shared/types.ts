@@ -66,6 +66,8 @@ export interface LayoutState {
   sidebarWidth: number;
   activePanel: SidePanelId;
   gitLogWindow: GitLogWindowState;
+  /** 底部终端面板高度（px），可拖拽调整并持久化 */
+  terminalPanelHeight: number;
 }
 
 export interface AppSettings {
@@ -112,6 +114,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
       open: false,
       height: 280,
     },
+    terminalPanelHeight: 240,
   },
   autoCheckUpdates: true,
 };

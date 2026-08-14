@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { GitBranch } from "lucide-vue-next";
+import { GitBranch, TerminalSquare } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import BranchesPopup from "@/features/git/BranchesPopup.vue";
 import { THEME_LABELS, THEME_ORDER } from "@/features/editor/theme";
 import type { ThemeId } from "@/shared/types";
+import { formatShortcut } from "@/shared/platform";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
+import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -18,9 +20,11 @@ const ui = useUiStore();
 const workspace = useWorkspaceStore();
 const editor = useEditorStore();
 const git = useGitStore();
+const sessions = useSessionsStore();
 const { editor: editorPrefs, theme } = storeToRefs(settings);
 const { activeTab } = storeToRefs(editor);
 const { snapshot } = storeToRefs(git);
+const { open: terminalOpen } = storeToRefs(sessions);
 
 const themeMenuOpen = ref(false);
 const branchesOpen = ref(false);
@@ -44,6 +48,44 @@ const syncLabel = computed(() => {
   return parts.join(" ");
 });
 const themeLabel = computed(() => THEME_LABELS[theme.value]);
+
+/** 状态栏终端开关：提示语随面板显隐变化 */
+const terminalTip = computed(
+  () =>
+    t(terminalOpen.value ? "status.hideTerminal" : "status.openTerminal") +
+    " · " +
+    formatShortcut("mod", "J"),
+);
+
+/** 未打开项目时终端 cwd 用 home 目录兜底（提供「先开终端再选项目」路径） */
+const homeDir = ref<string | null>(null);
+async function loadHomeDir() {
+  try {
+    const { homeDir: get } = await import("@tauri-apps/api/path");
+    homeDir.value = await get();
+  } catch {
+    homeDir.value = null;
+  }
+}
+
+async function loadHomeDirFallback(): Promise<string | null> {
+  await loadHomeDir();
+  return homeDir.value;
+}
+
+function toggleTerminal() {
+  if (terminalOpen.value) {
+    sessions.hideSessions();
+    return;
+  }
+  void (async () => {
+    let cwd = workspace.rootPath;
+    if (!cwd) {
+      cwd = homeDir.value ?? (await loadHomeDirFallback());
+    }
+    sessions.openSessions(cwd);
+  })();
+}
 
 // LSP 状态指示器
 const lspStatus = ref<string>("disabled");
@@ -150,6 +192,8 @@ let unsubAi: (() => void) | null = null;
 
 onMounted(() => {
   window.addEventListener("click", onDocClick);
+  // 预取 home 目录，未打开项目时终端 cwd 用它兜底
+  void loadHomeDir();
   void import("@/features/lsp/manager").then(({ lspManager }) => {
     unsubLsp = lspManager.onStatusChange((status) => {
       lspStatus.value = status;
@@ -174,6 +218,17 @@ onBeforeUnmount(() => {
 <template>
   <footer class="status-bar">
     <div class="left">
+      <button
+        type="button"
+        class="terminal-btn"
+        :class="{ active: terminalOpen }"
+        :title="terminalTip"
+        :aria-label="terminalTip"
+        :aria-pressed="terminalOpen"
+        @click="toggleTerminal"
+      >
+        <TerminalSquare :size="13" />
+      </button>
       <span class="root-name" :title="workspace.rootName">{{
         workspace.rootName
       }}</span>
@@ -298,6 +353,28 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 左下角终端开关按钮：VS Code 风格，active 态高亮 */
+.terminal-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  transition: color var(--transition-fast) var(--ease-out),
+    background var(--transition-fast) var(--ease-out);
+}
+
+.terminal-btn:hover {
+  color: var(--text-primary);
+  background: var(--accent-soft);
+}
+
+.terminal-btn.active {
+  color: var(--accent);
 }
 
 .branch-switch {
