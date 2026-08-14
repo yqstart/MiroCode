@@ -77,7 +77,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                     Miro Code（前端 Vue 3）                    │
 │  AppShell │ TitleBar │ ActivityBar │ SideBar │ EditorArea    │
-│  StatusBar │ SettingsModal │ 编辑区多标签（文件/终端/SSH/GitLog）│
+│  StatusBar │ SettingsModal │ 编辑区多标签（文件/SSH/GitLog）│ 终端底部面板 │
 ├─────────────────────────────────────────────────────────────┤
 │  Pinia Stores：workspace / ui / editor / git / gitLog /      │
 │  search / sessions / ssh / settings / compare / packageScripts │
@@ -140,8 +140,10 @@ MiroCode/
 ┌────────┬──────────┬──────────────────────────────────────┐
 │Activity│ SideBar  │           EditorArea                 │
 │ Bar    │ Project  │  多标签：文件 / Diff / GitLog /       │
-│        │ /Commit  │  Compare / 终端 / SSH / Markdown 预览 │
+│        │ /Commit  │  Compare / SSH / Markdown 预览       │
 ├────────┴──────────┴──────────────────────────────────────┤
+│                终端底部面板（TerminalPanel）              │
+├──────────────────────────────────────────────────────────┤
 │                     StatusBar                            │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -150,8 +152,8 @@ MiroCode/
 |---|---|
 | ActivityBar | Project / Commit；底区 GitLog / Package / 设置 |
 | SideBar | Project（资源树）与 Commit（暂存 / 更改）切换 |
-| EditorArea | 多标签；终端 / SSH / GitLog / Compare 等非文件标签固定钉在右侧 |
-| StatusBar | 左侧：SSH 入口 / 根目录 / 分支（含 ↑↓ 同步标记）/ 语言 / 编码 / 冲突数 / LSP 指示器 / AI 指示器；右侧：Ln/Col / 缩进 / 主题 / Ready |
+| EditorArea | 多标签；SSH / GitLog / Compare 等非文件标签固定钉在右侧（终端已改为底部面板） |
+| StatusBar | 左侧：终端入口 / 根目录 / 分支（含 ↑↓ 同步标记）/ 语言 / 编码 / 冲突数 / LSP 指示器 / AI 指示器；右侧：Ln/Col / 缩进 / 主题 / Ready |
 | 系统菜单 | 原生菜单（文件 / 编辑 / 视图 / 工具 / 帮助），UI 文案随 i18n 切换 |
 | Settings | 模态设置，左导航 4 区：编辑器 / AI / 快捷键 / 系统（关于 + 更新） |
 
@@ -266,8 +268,8 @@ MiroCode/
 
 | 项 | 说明 |
 |---|---|
-| 本地终端 | 编辑区独立标签，⌘J 开关；xterm + PTY（`tauri-plugin-pty`），多标签顶栏；隐藏时保活，关闭标签才销毁 |
-| SSH | **独立编辑区标签**（与本地终端解耦），状态栏左下角 Server 按钮入口；主机列表 / 远程终端 |
+| 本地终端 | **底部面板**（VS Code 风格）：状态栏左下角终端按钮 / ⌘J 开关；xterm + PTY（`tauri-plugin-pty`），多标签顶栏；面板高度可拖拽并持久化（`settings.layout.terminalPanelHeight`）；收起时保活（v-show 隐藏），关闭全部终端才销毁；打开面板不打断画布（SSH/GitLog/Compare）聚焦 |
+| SSH | **独立编辑区标签**（与本地终端解耦）；主机列表 / 远程终端 |
 | 主机配置 | `~/.mirocode/ssh-profiles.json`（应用级全局，与项目无关）；「记住密码」写 `~/.mirocode/ssh-credentials.json`（0600） |
 | 密钥校验 | `~/.ssh/known_hosts` + `~/.mirocode/known_hosts`；未知主机指纹需用户确认（TOFU） |
 | 切换项目 | 强制关闭本窗口全部远程 Shell；本地终端随工作区重建 |

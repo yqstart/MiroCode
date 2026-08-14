@@ -60,9 +60,9 @@ LSP（`features/lsp`）二期已接入：Rust transport 层（`src-tauri/src/com
 
 AI 行内补全（`features/ai` + `features/editor/aiCompletion`）：ghost text 形态，类似 GitHub Copilot。Rust 层（`src-tauri/src/commands/ai.rs`）用 reqwest 流式请求 AI 服务，tokio 读 SSE 逐 chunk `app.emit("ai://delta/{req_id}")`（复刻 LSP `spawn_read_loop`）；前端 `ai/manager.ts` 单例照搬 LspManager 状态机 + 防抖取消；`aiCompletion/ghostTextExtension.ts` 用 CodeMirror 6 `Decoration.widget` + `WidgetType` 渲染 ghost text（CM6 无原生 inline API）+ Tab 接受 / Esc 取消 keymap（`Prec.highest` 抢占，LSP popup 打开时不拦截）；多 provider 预设（DeepSeek `deepseek-v4-pro` / 自定义），FIM 模式走标准 `/completions` 端点（prompt+suffix，API 服务器内部处理 FIM token，前端不拼 `<|fim_begin|>` 等 token）；API Key 存 `~/.mirocode/ai-credentials.json`（0600，复刻 SSH 凭据模式），不进 localStorage；设置面板 AI 配置分区 + 状态栏 AI 指示器。
 
-会话视图：本地终端（`features/sessions`，编辑区标签，⌘J）与 SSH 远程（`features/sessions/SshView.vue` + `stores/ssh.ts`，独立编辑区标签，状态栏左下角 SSH 按钮入口）**已拆分解耦**。
-- 本地终端：随工作区切换重建（cwd = 项目根）；多标签顶栏；仅关闭标签或切换工作区时销毁（PTY 随组件卸载退出）
-- package.json scripts：活动栏 Package 入口（点击后在本地终端注入 `pnpm/npm/yarn/bun run …`）；Scripts 弹层可逐条**勾选**，勾选的脚本以芯片形式常驻本地终端顶栏右侧（`shared/pinnedScripts.ts` 按项目持久化勾选集合，`PackageScriptsMenu` compact 变体渲染 `pinnedScripts` 子集）
+会话视图：本地终端（`features/sessions`，**底部面板**，状态栏左下角终端按钮 / ⌘J）与 SSH 远程（`features/sessions/SshView.vue` + `stores/ssh.ts`，独立编辑区标签）**已拆分解耦**。
+- 本地终端（`TerminalPanel.vue` 底部面板 + `SessionsView.vue`）：随工作区切换重建（cwd = 项目根）；面板高度可拖拽并持久化（`settings.layout.terminalPanelHeight`）；面板收起（⌘J / 顶栏 ▼）时会话与 PTY 保活（v-show 隐藏），仅关闭全部终端 subtab 或切换工作区时销毁；打开面板不打断画布（SSH/GitLog/Compare）聚焦
+- package.json scripts：活动栏 Package 入口（点击后在本地终端注入 `pnpm/npm/yarn/bun run …`）；Scripts 弹层可逐条**勾选**，勾选的脚本以芯片形式常驻终端顶栏右侧（`shared/pinnedScripts.ts` 按项目持久化勾选集合，`PackageScriptsMenu` compact 变体渲染 `pinnedScripts` 子集）
 - SSH 远程：独立编辑区标签，含主机列表 / 远程终端；关闭 SSH 标签不影响本地终端，反之亦然
 - SSH 主机配置：应用级全局（`~/.mirocode/ssh-profiles.json`），与项目/窗口无关；可选「记住密码」写入 `~/.mirocode/ssh-credentials.json`（0600）
 - SSH 主机密钥：校验 `~/.ssh/known_hosts` + `~/.mirocode/known_hosts`；未知密钥需用户确认（TOFU）
