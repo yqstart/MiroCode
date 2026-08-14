@@ -53,6 +53,18 @@ function spawnPty() {
       rows: term.rows,
       cwd: props.cwd ?? undefined,
       name: "xterm-256color",
+      // ==================== 根治：注入终端环境变量 ====================
+      // tauri-plugin-pty 0.3.1 的 term_name 参数被丢弃（lib.rs:52 `let _ = term_name;`），
+      // 从未传给 PTY 子进程；而 Tauri GUI app 启动时通常 TERM=dumb（GUI 进程环境默认），
+      // 被子 shell 继承后，zle/bash 行编辑器判定为非交互终端 → 删除键回显用「原地空格
+      // 覆盖」(只发 \x20，缺 \b 退格)而非标准擦除 \b \b，表现为「删除键删不掉 + 后面冒
+      // 空格、数量=字符数」（中文输入法上屏 c'd 同样受累）。这里在 env 里显式注入
+      // TERM=xterm-256color，让行编辑器按真实终端做擦除回显。
+      // 不注入 LANG/LC_*：继承 GUI 进程的 locale 即可，强制 zh_CN.UTF-8 会被 oh-my-zsh
+      // 等启动流程叠加（LC_ALL 全局覆盖），实测会致回车键 (\r) 不被 zle 接受 → 命令无法执行。
+      env: {
+        TERM: "xterm-256color",
+      },
     });
 
     pty.onData((data) => {

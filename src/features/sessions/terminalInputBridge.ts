@@ -6,7 +6,11 @@ function isMacPlatform(): boolean {
 }
 
 function isWhitespaceOnly(data: string): boolean {
-  return /^[\s\u00a0\u3000]+$/.test(data);
+  // 只匹配「空格族」（半角空格 / 全角空格 / 不间断空格），排除 Tab（\t）与
+  // 控制字符（\r\n\f\v）：\s 会把 Tab/回车误判为纯空白，Tab 在 onData 空白
+  // 拦截分支被静默丢弃 → shell 补全（Tab 提示）失效；回车被丢 → 命令不执行。
+  // Tab 由 safeWrite 内的 120ms 去重逻辑单独放行，不受此判定影响。
+  return /^[ \u00a0\u3000]+$/.test(data);
 }
 
 /** 拼音音节分隔符 / 弯撇号：中英切换时常被 IME 误提交（main → mai'n） */

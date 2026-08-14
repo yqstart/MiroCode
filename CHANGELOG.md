@@ -2,6 +2,16 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.13.11] - 2026-08-14
+
+### 修复
+
+- **终端删除键变空格（真根因，非 229/IME 事件链）**：`tauri-plugin-pty` 的 `term_name` 参数是死代码（`lib.rs` 直接 `let _ = term_name`），从未传给 PTY 子进程；本地 PTY 的 shell 子进程继承 Tauri GUI app 的 `TERM=dumb`，zle 行编辑器判定为非交互终端 → 删除键回显走「原地空格覆盖」（只发 `\x20` 缺 `\b` 退格），视觉表现为「删不掉 + 后面冒空格、空格数 = 已输入字符数」。0.13.10 的手动派发 `\x7f` 已把删除字节正确发出，病灶在 shell 回显层而非前端
+  - 修（`LocalTerminal.vue`）：spawn 时显式注入 `TERM=xterm-256color`（`term_name` 参数无效，只能走 env）；不注入 LANG/LC_*（继承 GUI 进程 locale 即可，强制 locale 会被 oh-my-zsh 启动流程叠加导致回车异常）
+- **终端回车键命令不执行（0.13.10 引入的回归）**：`terminalInputBridge.ts` 的 `isWhitespaceOnly` 用 `\s` 匹配，把 Enter 的回车 `\r` 误判为「纯空白」，在 onData 的「只认真实空格键 keydown」拦截分支被静默丢弃 → 命令无法执行。改只匹配空格族（半角/全角/不间断空格），排除控制字符 `\r\n\f\v`
+- **终端 Tab 补全提示消失（0.13.10 引入的隐藏回归）**：同上 `isWhitespaceOnly` 把 Tab 的 `\t` 误判为纯空白拦截丢弃 → shell 收不到 Tab、补全不触发。Tab 改由 safeWrite 内既有 120ms 去重单独放行
+  - 验证：打包 app 实测——删除键正常删除无空格插入；`ls`/`echo` 等命令回车正常执行；`cd se`+Tab 正常补全
+
 ## [0.13.10] - 2026-08-13
 
 ### 修复
@@ -732,6 +742,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
 [0.13.7]: https://github.com/yqstart/MiroCode/compare/v0.13.6...v0.13.7
+[0.13.11]: https://github.com/yqstart/MiroCode/compare/v0.13.10...v0.13.11
 [0.13.10]: https://github.com/yqstart/MiroCode/compare/v0.13.9...v0.13.10
 [0.13.9]: https://github.com/yqstart/MiroCode/compare/v0.13.8...v0.13.9
 [0.13.8]: https://github.com/yqstart/MiroCode/compare/v0.13.7...v0.13.8
