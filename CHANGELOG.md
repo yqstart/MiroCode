@@ -2,6 +2,16 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.14.0] - 2026-08-14
+
+### 新增
+
+- **本地终端改为底部面板（VS Code / Cursor 风格）**：终端从编辑区标签迁出，以底部面板形态与编辑器上下分栏并存
+  - 入口：状态栏左下角终端按钮 / ⌘/Ctrl+J / 资源树右键「在终端中打开」；未打开项目时 cwd 回退 home 目录（先开终端再选项目）
+  - 面板高度可拖拽调整并持久化（`settings.layout.terminalPanelHeight`，120–640px，默认 240px）
+  - 收起（⌘/Ctrl+J 或顶栏 ▼）时会话与 PTY 保活（v-show 隐藏），仅关闭全部终端 subtab 或切换工作区时销毁
+  - 打开面板不打断画布视图聚焦：与 SSH / Git Log / Compare 并存互不干扰
+
 ## [0.13.11] - 2026-08-14
 
 ### 修复
@@ -742,6 +752,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
 [0.13.7]: https://github.com/yqstart/MiroCode/compare/v0.13.6...v0.13.7
+[0.14.0]: https://github.com/yqstart/MiroCode/compare/v0.13.11...v0.14.0
 [0.13.11]: https://github.com/yqstart/MiroCode/compare/v0.13.10...v0.13.11
 [0.13.10]: https://github.com/yqstart/MiroCode/compare/v0.13.9...v0.13.10
 [0.13.9]: https://github.com/yqstart/MiroCode/compare/v0.13.8...v0.13.9

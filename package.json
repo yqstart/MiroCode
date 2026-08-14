@@ -1,7 +1,7 @@
 {
   "name": "mirocode",
   "private": true,
-  "version": "0.13.11",
+  "version": "0.14.0",
   "license": "MIT",
   "type": "module",
   "scripts": {
