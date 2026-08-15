@@ -97,8 +97,11 @@ export const useCompareStore = defineStore("compare", () => {
       workspace.showNotice("请选择具体文件查看分栏对比");
       return;
     }
+    const root = workspace.rootPath;
     try {
       const sides = await gitFileSides(workspace.rootPath, path, staged);
+      // 等待期间已切换工作区：旧仓库的对比标签不得落入新工作区
+      if (workspace.rootPath !== root) return;
       seq += 1;
       upsertTab({
         id: `diff-${seq}`,
@@ -123,8 +126,11 @@ export const useCompareStore = defineStore("compare", () => {
   async function openMerge(path: string) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
+    const root = workspace.rootPath;
     try {
       const sides = await gitConflictSides(workspace.rootPath, path);
+      // 等待期间已切换工作区：旧仓库的合并标签不得落入新工作区
+      if (workspace.rootPath !== root) return;
       seq += 1;
       upsertTab({
         id: `merge-${seq}`,
@@ -187,6 +193,7 @@ export const useCompareStore = defineStore("compare", () => {
     focusCompare,
     blurCompare,
     activate,
+    upsertTab,
     closeTab,
     clearAll,
     openDiff,

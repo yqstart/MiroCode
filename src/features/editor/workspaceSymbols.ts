@@ -134,7 +134,13 @@ class WorkspaceSymbolCache {
         text = read.length > this.MAX_FILE_BYTES ? read.slice(0, this.MAX_FILE_BYTES) : read;
       }
       const hash = djb2(text);
-      const symbols = await parseFile(root, path);
+      // content 已提供时直接索引，避免重复读盘；且符号表与 hash 基于同一
+      // 份文本（此前 hash 基于截断的 content、符号表却基于磁盘全文，超大文件
+      // 两者永不一致，缓存反复失效重建）
+      const symbols =
+        content !== undefined
+          ? indexDocumentSymbols(text, path)
+          : await parseFile(root, path);
       this.fileCache.set(path, { hash, symbols });
       this.touch(path);
       evictIfNeeded(this.fileCache, this.MAX_FILES);

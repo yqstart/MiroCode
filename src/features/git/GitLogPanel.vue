@@ -91,13 +91,36 @@ const rows = computed<GraphRow[]>(() => {
   }
 
   const current = snapshot.value.branch;
+  // 分支范围过滤：「当前分支」= 从当前分支尖端沿父链可达的提交（log 窗口内）。
+  // 选择「全部」时为 null（不过滤）
+  const currentBranchReachable = (() => {
+    if (branchScope.value !== "current" || !current) return null;
+    const byId = new Map(log.value.map((c) => [c.id, c]));
+    const visited = new Set<string>();
+    const queue: string[] = [];
+    for (const c of log.value) {
+      const refs = c.refs ?? [];
+      if (refs.includes(current) || refs.some((r) => r.endsWith(`/${current}`))) {
+        queue.push(c.id);
+      }
+    }
+    while (queue.length) {
+      const id = queue.pop()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      const commit = byId.get(id);
+      if (!commit) continue;
+      for (const p of commit.parents ?? []) queue.push(p);
+    }
+    return visited;
+  })();
+
   for (const item of log.value) {
+    if (currentBranchReachable && !currentBranchReachable.has(item.id)) continue;
     let refs = item.refs ?? [];
     if (!showRemote.value) {
       refs = refs.filter((r) => !isRemoteRef(r));
     }
-    void current;
-    void branchScope.value;
     const row: GraphRow = {
       kind: "commit",
       key: item.id,

@@ -345,7 +345,16 @@ pub async fn replace_in_files(
         let mut replacements = 0usize;
         let mut touched = Vec::new();
 
+        // 外层 120s 超时无法取消线程：闭包内自检截止时间提前停写。
+        // 否则超时返回后线程仍在后台覆写文件，用户重试会与旧任务并发写同一批文件
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(110);
+        let mut processed = 0usize;
+
         for path in files {
+            processed += 1;
+            if processed % 50 == 0 && std::time::Instant::now() > deadline {
+                return Err("替换超时（110s），已停止继续写入，请缩小范围重试".into());
+            }
             ensure_inside_workspace(&root_path, &path)?;
             let Ok(bytes) = fs::read(&path) else {
                 continue;

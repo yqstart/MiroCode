@@ -47,6 +47,8 @@ export const usePackageScriptsStore = defineStore("packageScripts", () => {
     loading.value = true;
     try {
       const info = await loadPackageScripts(root);
+      // 等待期间已切换工作区：旧项目结果作废，不得覆盖新项目的脚本芯片
+      if (workspace.rootPath !== root) return;
       loadedRoot.value = root;
       pinned.value = loadPinnedForRoot(root);
       if (!info) {
@@ -60,7 +62,8 @@ export const usePackageScriptsStore = defineStore("packageScripts", () => {
       manager.value = info.manager;
       scripts.value = info.scripts;
     } finally {
-      loading.value = false;
+      // 只有仍属当前工作区的刷新才复位 loading（新工作区的 refresh 会自己管理）
+      if (workspace.rootPath === root) loading.value = false;
     }
   }
 

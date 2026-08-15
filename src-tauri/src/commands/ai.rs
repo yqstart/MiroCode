@@ -46,9 +46,10 @@ pub fn ai_cancel(req_id: String) -> CmdResult<()> {
 
 // ==================== 路径与凭据存储 ====================
 
-/// ~/.mirocode 目录
+/// ~/.mirocode 目录（Windows 上 HOME 常未设置，回退 USERPROFILE，
+/// 与 ssh.rs / git.rs 的凭据目录定位保持一致）
 fn miro_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(PathBuf::from(home).join(".mirocode"))
 }
 

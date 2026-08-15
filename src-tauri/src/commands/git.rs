@@ -644,6 +644,12 @@ pub fn git_discard_paths(root: String, paths: Vec<String>) -> Result<(), String>
         .ok_or_else(|| "裸仓库无法丢弃工作区变更".to_string())?
         .to_path_buf();
 
+    // 路径来自前端 invoke，join 后必须仍落在工作区内：否则含 `..` 或绝对
+    // 路径的输入可直接删除 / 覆写仓库外任意文件（此处绕过 git2 直接 std::fs）
+    for p in &paths {
+        crate::commands::path_util::ensure_inside_workspace(&workdir, &workdir.join(p))?;
+    }
+
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(true)
@@ -1066,11 +1072,22 @@ impl TempGitCredentialStore {
             percent_encode_credential(username),
             percent_encode_credential(password)
         );
-        std::fs::write(&path_buf, payload).map_err(|e| format!("写入临时 Git 凭据失败: {e}"))?;
-        #[cfg(unix)]
+        // 创建时即 0600（对齐 write_private 模式）：先 0644 落盘再 chmod
+        // 存在瞬时权限窗口，期间同机其它用户可读到明文密码
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path_buf, std::fs::Permissions::from_mode(0o600));
+            use std::io::Write;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut f = opts
+                .open(&path_buf)
+                .map_err(|e| format!("写入临时 Git 凭据失败: {e}"))?;
+            f.write_all(payload.as_bytes())
+                .map_err(|e| format!("写入临时 Git 凭据失败: {e}"))?;
         }
         Ok(Self { path: path_buf })
     }
@@ -1668,6 +1685,8 @@ pub fn git_resolve_conflict(root: String, path: String, strategy: String) -> Res
     let repo = open_repo(&root)?;
     let wd = repo.workdir().ok_or("无工作区")?.to_path_buf();
     let full = wd.join(&path);
+    // 校验路径落在工作区内：含 `..` / 绝对路径可把冲突内容覆写到仓库外任意文件
+    crate::commands::path_util::ensure_inside_workspace(&wd, &full)?;
 
     match strategy.as_str() {
         "ours" | "theirs" => {

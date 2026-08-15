@@ -189,17 +189,22 @@ function onDocClick() {
 // LSP 状态订阅（替代每 2s 轮询）
 let unsubLsp: (() => void) | null = null;
 let unsubAi: (() => void) | null = null;
+let disposed = false;
 
 onMounted(() => {
   window.addEventListener("click", onDocClick);
   // 预取 home 目录，未打开项目时终端 cwd 用它兜底
   void loadHomeDir();
   void import("@/features/lsp/manager").then(({ lspManager }) => {
+    // import 完成前组件已卸载：不再订阅，否则退订函数无人调用、永久留在
+    // statusHandlers 数组
+    if (disposed) return;
     unsubLsp = lspManager.onStatusChange((status) => {
       lspStatus.value = status;
     });
   });
   void import("@/features/ai/manager").then(({ aiManager }) => {
+    if (disposed) return;
     unsubAi = aiManager.onStatusChange((status) => {
       aiStatus.value = status;
     });
@@ -207,6 +212,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
   window.removeEventListener("click", onDocClick);
   unsubLsp?.();
   unsubLsp = null;

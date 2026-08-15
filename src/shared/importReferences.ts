@@ -114,7 +114,7 @@ export function resolveImportCandidate(
   // 无扩展名时不要返回裸路径（打开会失败）；猜最常见扩展供下划线提示
   for (const ext of RESOLVE_EXTENSIONS) {
     if (!ext) continue;
-    const candidate = ext.startsWith("/") ? `${target}${ext}` : `${target}${ext}`;
+    const candidate = `${target}${ext}`;
     if (underWorkspace(workspaceRoot, candidate)) return candidate;
   }
   return underWorkspace(workspaceRoot, target) ? target : null;
@@ -131,7 +131,7 @@ export async function resolveImportPath(
   if (!target) return null;
 
   for (const ext of RESOLVE_EXTENSIONS) {
-    const candidate = ext.startsWith("/") ? `${target}${ext}` : `${target}${ext}`;
+    const candidate = `${target}${ext}`;
     if (!underWorkspace(root, candidate) && ext !== "") continue;
     try {
       if (!(await pathExists(root, candidate))) continue;
@@ -296,6 +296,11 @@ export async function applyImportPatches(
     let content = await readTextFile(root, file);
     const sorted = [...filePatches].sort((a, b) => b.start - a.start);
     for (const patch of sorted) {
+      // 补丁偏移来自扫描时的内容快照：文件在扫描后被编辑过则偏移失效，
+      // 直接切片拼接会写坏文件。以 oldSpec 复核，不匹配则跳过该补丁
+      if (content.slice(patch.start, patch.end) !== patch.oldSpec) {
+        continue;
+      }
       content =
         content.slice(0, patch.start) +
         patch.newSpec +

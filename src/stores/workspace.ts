@@ -103,6 +103,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   let gitRefreshTimer: number | undefined;
   const selfWriteUntil = new Map<string, number>();
   let pendingWatchPaths = new Set<string>();
+  /**
+   * 工作区代际计数：openFolder 每次提交新工作区时自增。异步读取
+   * （loadChildren/refreshTree/refreshDirsForPaths）在 await 之后校验代际，
+   * 防止旧工作区的在途结果整表覆盖新工作区的资源树。
+   */
+  let workspaceEpoch = 0;
 
   function showNotice(message: string, ms = 2400, action?: ToastAction) {
     const id = ++noticeSeq;
@@ -138,13 +144,34 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const result: TreeNode[] = [];
     const q = filter.value.trim().toLowerCase();
 
+    // 子树匹配缓存：自底向上一次 DFS 计算各目录「子孙中是否有命中」，
+    // 避免原实现每个目录都递归重扫整棵子树（深层大目录下 O(n·d)）
+    const descMatch = new Map<string, boolean>();
+    const hasDescendantMatch = (path: string): boolean => {
+      const cached = descMatch.get(path);
+      if (cached !== undefined) return cached;
+      let found = false;
+      for (const child of childrenMap.value[path] || []) {
+        if (child.name.toLowerCase().includes(q)) {
+          found = true;
+          break;
+        }
+        if (child.isDir && hasDescendantMatch(child.path)) {
+          found = true;
+          break;
+        }
+      }
+      descMatch.set(path, found);
+      return found;
+    };
+
     const walk = (path: string, depth: number) => {
       const kids = childrenMap.value[path] || [];
       for (const child of kids) {
         const match = !q || child.name.toLowerCase().includes(q);
         const isExpanded = expanded.value.has(child.path);
         if (child.isDir) {
-          if (match || hasMatchingDescendant(child.path, q)) {
+          if (match || hasDescendantMatch(child.path)) {
             result.push({
               ...child,
               depth,
@@ -169,19 +196,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return result;
   });
 
-  function hasMatchingDescendant(path: string, q: string): boolean {
-    if (!q) return false;
-    const kids = childrenMap.value[path] || [];
-    for (const child of kids) {
-      if (child.name.toLowerCase().includes(q)) return true;
-      if (child.isDir && hasMatchingDescendant(child.path, q)) return true;
-    }
-    return false;
-  }
-
   async function loadChildren(path: string) {
     if (!rootPath.value) return;
+    const epoch = workspaceEpoch;
     const entries = await listDir(rootPath.value, path, extraIgnores.value);
+    // 等待期间已切换工作区：旧结果作废，不污染新工作区的资源树
+    if (epoch !== workspaceEpoch) return;
     childrenMap.value = { ...childrenMap.value, [path]: entries };
   }
 
@@ -222,13 +242,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   async function startWatch(root: string) {
     stopWatch();
     try {
-      unwatchFn = await watchFs(
+      const unwatch = await watchFs(
         root,
         (event) => {
           onWatchEvent(event);
         },
         { recursive: true, delayMs: 350 },
       );
+      // 等待期间已切换到别的文件夹：释放刚建立的监听，避免监听目标与 rootPath 错位
+      if (rootPath.value !== root) {
+        unwatch();
+        return;
+      }
+      unwatchFn = unwatch;
       watchActive.value = true;
     } catch {
       watchActive.value = false;
@@ -359,6 +385,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       // 即使后续 reset 全部失败，UI 至少是「打开了」——比「半残状态」更可恢复。
       stopWatch();
       refreshAgain = false;
+      workspaceEpoch += 1;
       rootPath.value = selected;
       rootName.value = basename(selected);
       childrenMap.value = { [selected]: entries };
@@ -453,6 +480,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   async function refreshTree() {
     if (!rootPath.value) return;
     const root = rootPath.value;
+    const epoch = workspaceEpoch;
     const paths = Object.keys(childrenMap.value);
     const nextMap: Record<string, DirEntryInfo[]> = {};
     await Promise.all(
@@ -465,6 +493,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         }
       }),
     );
+    // 等待期间已切换工作区：结果作废
+    if (epoch !== workspaceEpoch) return;
     childrenMap.value = nextMap;
     const nextExpanded = new Set(
       [...expanded.value].filter((p) => p === root || Boolean(nextMap[p])),
@@ -480,6 +510,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   async function refreshDirsForPaths(changedAbsPaths: string[]) {
     const root = rootPath.value;
     if (!root) return;
+    const epoch = workspaceEpoch;
     const dirs = new Set<string>();
     for (const p of changedAbsPaths) {
       if (!p.startsWith(root)) continue;
@@ -504,6 +535,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         }
       }),
     );
+    // 等待期间已切换工作区：结果作废
+    if (epoch !== workspaceEpoch) return;
     childrenMap.value = nextMap;
   }
 

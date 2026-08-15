@@ -172,6 +172,17 @@ fn ls_lang_root(root: &Path, language: &str) -> PathBuf {
     root.join(language)
 }
 
+/// 校验语言名 / 版本号是安全的单级路径段（拒绝路径分隔符、`..` 等逃逸字符）。
+/// language 来自前端 invoke，version 来自远端清单或本地 installed.json，均为
+/// 不可信输入：直接 join 拼接可被构造为路径穿越（任意目录删除 / 任意文件写）。
+fn is_safe_segment(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
 /// 本地安装记录路径：<lang_root>/installed.json
 fn installed_path(lang_root: &Path) -> PathBuf {
     lang_root.join(LS_INSTALLED_NAME)
@@ -269,9 +280,15 @@ pub struct BundledRuntime {
 
 /// 解析指定语言的激活捆绑包运行时；失败返回 None（不阻塞 LSP 回退）
 pub fn bundled_runtime(app: &AppHandle, language: &str) -> Option<BundledRuntime> {
+    if !is_safe_segment(language) {
+        return None;
+    }
     let root = ls_root(app).ok()?;
     let lang_root = ls_lang_root(&root, language);
     let record = read_installed(&lang_root)?;
+    if !is_safe_segment(&record.version) {
+        return None;
+    }
     let dir = version_dir(&lang_root, &record.version);
     if !dir.is_dir() {
         return None;
@@ -285,6 +302,8 @@ pub fn bundled_runtime(app: &AppHandle, language: &str) -> Option<BundledRuntime
 /// - 目录存在 manifest.json（BundleManifest）
 /// - node 可执行文件：Windows 为 node/node.exe，Unix 为 node/bin/node
 /// - entry 指向的 JS 入口存在
+/// - Unix 下 node 必须带执行位（历史事故：解压丢 +x 导致检测「可用」但启动全挂，
+///   LSP 状态栏一直「降级」；校验失败返回 None 回退宿主 npx）
 fn resolve_bundle_dir(dir: &Path) -> Option<BundledRuntime> {
     let raw = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
     let bundle: BundleManifest = serde_json::from_str(&raw).ok()?;
@@ -298,7 +317,7 @@ fn resolve_bundle_dir(dir: &Path) -> Option<BundledRuntime> {
     let node_path = node_candidates
         .iter()
         .map(|p| dir.join(p))
-        .find(|p| p.exists())?;
+        .find(|p| is_executable_file(p))?;
 
     let entry = dir.join(&bundle.entry);
     if !entry.exists() {
@@ -310,6 +329,20 @@ fn resolve_bundle_dir(dir: &Path) -> Option<BundledRuntime> {
         node_path,
         entry,
     })
+}
+
+/// 文件存在且可执行：Unix 校验 mode 的任意执行位；Windows 仅存在即可（.exe）
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
 }
 
 // ==================== 远端清单 ====================
@@ -372,6 +405,10 @@ async fn download_zip(
         return Err(format!("下载失败: HTTP {}", resp.status()));
     }
 
+    // 捆绑包 zip 大小上限：恶意/被劫持镜像可无限流式下发（content_length 可伪造
+    // 或缺失）撑爆磁盘。实际产物（便携 Node + server）远小于此值。
+    const MAX_ZIP_BYTES: u64 = 512 * 1024 * 1024;
+
     let total = resp.content_length().unwrap_or(0);
     let mut received: u64 = 0;
     let mut stream = resp.bytes_stream();
@@ -382,6 +419,14 @@ async fn download_zip(
         file.write_all(&chunk)
             .map_err(|e| format!("写入临时文件失败: {e}"))?;
         received += chunk.len() as u64;
+        if received > MAX_ZIP_BYTES {
+            drop(file);
+            let _ = std::fs::remove_file(dest);
+            return Err(format!(
+                "下载超出大小上限（{}MB），已中止",
+                MAX_ZIP_BYTES / 1024 / 1024
+            ));
+        }
         let percent = if total > 0 {
             (received as f64 / total as f64) * 100.0
         } else {
@@ -404,11 +449,22 @@ async fn download_zip(
     Ok(())
 }
 
-/// 计算文件 sha256（十六进制小写）
+/// 计算文件 sha256（十六进制小写）；流式分块计算，
+/// 避免把整个 zip（可达数百 MB）一次性读入内存
 fn sha256_hex(path: &Path) -> Result<String, String> {
-    let data = std::fs::read(path).map_err(|e| format!("读取下载文件失败: {e}"))?;
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).map_err(|e| format!("读取下载文件失败: {e}"))?;
     let mut hasher = Sha256::new();
-    hasher.update(&data);
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("读取下载文件失败: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
     let digest = hasher.finalize();
     let mut hex = String::with_capacity(64);
     for byte in digest {
@@ -442,16 +498,53 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
+            // zip 记录的 unix 权限位需在 copy 前取出（copy 消费 &mut entry）
+            let unix_mode = entry.unix_mode();
             let mut out = std::fs::File::create(&target).map_err(|e| e.to_string())?;
             std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+            // File::create 产物一律 644，这里恢复执行位（Node 二进制缺 +x 会导致
+            // LSP 检测「可用」但 spawn 全线失败 → 状态栏一直「LSP 降级」）
+            apply_extracted_permissions(&target, unix_mode, &name);
         }
     }
     Ok(())
 }
 
+/// 解压后恢复文件权限：优先应用 zip 记录的 unix 权限位；bin 目录（node/bin/）
+/// 下的文件强制补执行位，即使 zip 侧 mode 缺失或错误也能保证 Node 可启动。
+#[cfg(unix)]
+fn apply_extracted_permissions(path: &Path, unix_mode: Option<u32>, entry_name: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let in_bin = entry_name.split('/').any(|seg| seg == "bin");
+    let mode = match unix_mode {
+        Some(m) if m != 0 => {
+            if in_bin {
+                m | 0o111
+            } else {
+                m
+            }
+        }
+        _ => {
+            if in_bin {
+                0o755
+            } else {
+                0o644
+            }
+        }
+    };
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+}
+
+#[cfg(not(unix))]
+fn apply_extracted_permissions(_path: &Path, _unix_mode: Option<u32>, _entry_name: &str) {}
+
 /// 删除目录（忽略错误，尽力清理）
+/// 删除文件或目录（尽力清理，忽略错误）。
+/// 对文件调用 remove_dir_all 会失败——下载失败的半截 zip 靠它清不掉
 fn remove_dir_if_exists(path: &Path) {
-    if path.exists() {
+    if path.is_file() {
+        let _ = std::fs::remove_file(path);
+    } else if path.exists() {
         let _ = std::fs::remove_dir_all(path);
     }
 }
@@ -553,6 +646,9 @@ pub async fn ls_install(
 ) -> Result<String, String> {
     let _guard = ls_ops_lock().lock().await;
 
+    if !is_safe_segment(&language) {
+        return Err(format!("非法的语言标识「{language}」"));
+    }
     let root = ls_root(&app)?;
     let lang_root = ls_lang_root(&root, &language);
     std::fs::create_dir_all(&lang_root).map_err(|e| format!("创建语言目录失败: {e}"))?;
@@ -578,6 +674,14 @@ pub async fn ls_install(
     let lang_manifest = manifest.languages.get(&language).ok_or_else(|| {
         format!("远端清单不含语言「{language}」的产物")
     })?;
+    // version 参与后续路径拼接（zip 名 / 解压目录 / 版本目录），必须先做段校验，
+    // 恶意镜像可借此构造 `../..` 逃逸到 app_data_dir 之外
+    if !is_safe_segment(&lang_manifest.version) {
+        return Err(format!(
+            "远端清单包含非法版本号「{}」，已拒绝安装",
+            lang_manifest.version
+        ));
+    }
     let asset = lang_manifest
         .platforms
         .get(platform)
@@ -696,9 +800,19 @@ pub async fn ls_install(
 pub async fn ls_uninstall(app: AppHandle, language: String) -> Result<(), String> {
     let _guard = ls_ops_lock().lock().await;
 
+    if !is_safe_segment(&language) {
+        return Err(format!("非法的语言标识「{language}」"));
+    }
     let root = ls_root(&app)?;
     let lang_root = ls_lang_root(&root, &language);
     if let Some(record) = read_installed(&lang_root) {
+        // installed.json 属本地数据但也可能被篡改：版本号非法时拒绝删除目录
+        if !is_safe_segment(&record.version) {
+            return Err(format!(
+                "安装记录中的版本号非法「{}」，已拒绝卸载",
+                record.version
+            ));
+        }
         remove_dir_if_exists(&version_dir(&lang_root, &record.version));
     }
     let _ = std::fs::remove_file(installed_path(&lang_root));
@@ -755,7 +869,15 @@ mod tests {
             std::fs::write(dir.join("node/node.exe"), b"fake").unwrap();
         } else {
             std::fs::create_dir_all(dir.join("node/bin")).unwrap();
-            std::fs::write(dir.join("node/bin/node"), b"#!/bin/sh\nexit 0\n").unwrap();
+            let node_path = dir.join("node/bin/node");
+            std::fs::write(&node_path, b"#!/bin/sh\nexit 0\n").unwrap();
+            // resolve_bundle_dir 校验执行位，夹具需与真实安装产物一致（带 +x）
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&node_path, std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
         }
         // server 入口（按语言不同）
         let entry = match language {
@@ -830,6 +952,83 @@ mod tests {
         make_fake_bundle(dir.path(), "ts", "0.2.0");
         std::fs::remove_dir_all(dir.path().join("node")).unwrap();
         assert!(resolve_bundle_dir(dir.path()).is_none());
+    }
+
+    /// 历史事故回归：解压丢执行位后 node 以 644 落盘，检测「存在」即判可用，
+    /// 实际 spawn 全线失败 → 状态栏一直「LSP 降级」。现应判不可用回退宿主 npx。
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_bundle_dir_node_not_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        make_fake_bundle(dir.path(), "ts", "0.2.0");
+        let node_path = dir.path().join("node/bin/node");
+        std::fs::set_permissions(&node_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(resolve_bundle_dir(dir.path()).is_none());
+    }
+
+    /// 解压恢复执行位：zip 条目不带 unix 权限记录时，bin 目录下文件补 0o755
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_adds_exec_bit_for_bin() {
+        use std::os::unix::fs::PermissionsExt;
+        use zip::write::SimpleFileOptions;
+
+        let src = tempfile::tempdir().unwrap();
+        let zip_path = src.path().join("bundle.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file("node/bin/node", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"fake-node").unwrap();
+        writer
+            .start_file("manifest.json", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"{}").unwrap();
+        writer.finish().unwrap();
+
+        let dest = tempfile::tempdir().unwrap();
+        extract_zip(&zip_path, dest.path()).unwrap();
+        let node_mode = std::fs::metadata(dest.path().join("node/bin/node"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_ne!(node_mode & 0o111, 0, "node 应补执行位");
+        let manifest_mode = std::fs::metadata(dest.path().join("manifest.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(manifest_mode & 0o111, 0, "普通文件不应获得执行位");
+    }
+
+    /// zip 记录了正确权限时原样保留（node 0o755 不被覆盖成 644）
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_preserves_unix_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        use zip::write::SimpleFileOptions;
+
+        let src = tempfile::tempdir().unwrap();
+        let zip_path = src.path().join("bundle.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file(
+                "node/bin/node",
+                SimpleFileOptions::default().unix_permissions(0o755),
+            )
+            .unwrap();
+        writer.write_all(b"fake-node").unwrap();
+        writer.finish().unwrap();
+
+        let dest = tempfile::tempdir().unwrap();
+        extract_zip(&zip_path, dest.path()).unwrap();
+        let mode = std::fs::metadata(dest.path().join("node/bin/node"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755, "应保留 zip 记录的 0o755");
     }
 
     #[test]

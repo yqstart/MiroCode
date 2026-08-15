@@ -17,12 +17,15 @@ const git = useGitStore();
 const { snapshot } = storeToRefs(git);
 
 let resolveFn: ((r: { force: boolean } | null) => void) | null = null;
+/** 加载序号：连续两次 open 时旧加载结果作废，不覆盖新对话框状态 */
+let loadSeq = 0;
 
 async function open(): Promise<{ force: boolean } | null> {
   if (resolveFn) {
     resolveFn(null);
     resolveFn = null;
   }
+  const seq = ++loadSeq;
   force.value = false;
   commits.value = [];
   visible.value = true;
@@ -30,12 +33,16 @@ async function open(): Promise<{ force: boolean } | null> {
   await nextTick();
   try {
     if (workspace.rootPath) {
-      commits.value = await gitUnpushedCommits(workspace.rootPath, 40);
+      const result = await gitUnpushedCommits(workspace.rootPath, 40);
+      // 期间又触发了新的 open：本次作废，直接以 null 结束（等价取消），
+      // 不覆盖新对话框的 commits/loading，也不再注册 resolveFn
+      if (seq !== loadSeq) return null;
+      commits.value = result;
     }
   } catch {
-    commits.value = [];
+    if (seq === loadSeq) commits.value = [];
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) loading.value = false;
   }
   return new Promise((resolve) => {
     resolveFn = resolve;

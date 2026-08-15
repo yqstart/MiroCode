@@ -548,7 +548,8 @@ async function runMenu(action: string) {
       if (result) {
         // 目录重命名须连带更新其下已打开标签的路径：
         // 只改单文件路径的话，目录内已打开文件保存时仍写回旧路径
-        if (menu.value?.isDir) {
+        // 注意：closeMenu() 已置 menu.value = null，此处必须用解构出的 isDir
+        if (isDir) {
           editor.renameTabsUnderPrefix(result.from, result.to);
         } else {
           editor.renameTabPath(result.from, result.to);
@@ -566,7 +567,7 @@ async function runMenu(action: string) {
       return;
     }
     if (action === "copy") {
-      workspace.setClipboard("copy", path, Boolean(menu.value?.isDir));
+      workspace.setClipboard("copy", path, isDir);
       return;
     }
     if (action === "cut") {
@@ -574,7 +575,7 @@ async function runMenu(action: string) {
         workspace.showNotice(t("explorer.cannotCutRoot"));
         return;
       }
-      workspace.setClipboard("cut", path, Boolean(menu.value?.isDir));
+      workspace.setClipboard("cut", path, isDir);
       return;
     }
     if (action === "paste") {

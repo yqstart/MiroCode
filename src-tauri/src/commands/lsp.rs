@@ -244,6 +244,14 @@ where
     if content_length == 0 {
         return Err("Content-Length 为 0".into());
     }
+    // Content-Length 完全由对端（子进程 stdout）控制：不设上限时一条坏消息
+    // 即可触发巨量内存分配把应用 OOM 掉。正常语言服务消息远小于 64MB。
+    const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+    if content_length > MAX_MESSAGE_BYTES {
+        return Err(format!(
+            "Content-Length 超出上限（{content_length} > {MAX_MESSAGE_BYTES}），消息流损坏或对端异常"
+        ));
+    }
 
     // 2. 读 body
     let mut body = vec![0u8; content_length];
@@ -481,22 +489,12 @@ pub async fn lsp_start(
     let (child, stdin, stdout) =
         spawn_server(app.clone(), server_type, root.clone()).await?;
 
-    // 启动 stdout 读取循环
-    spawn_read_loop(
-        app,
-        state.inner().clone(),
-        stdout,
-        server_id,
-        server_type,
-        root.clone(),
-    );
-
     let server_state = LspServerState {
         child: Some(child),
         stdin: Some(stdin),
         server_id,
         server_type,
-        root,
+        root: root.clone(),
     };
 
     {
@@ -504,7 +502,34 @@ pub async fn lsp_start(
         servers.insert(server_id, server_state);
     }
 
+    // 先插入再启动读取循环：子进程秒退（npx 缺包 / 入口损坏）时清理分支
+    // 能 remove 到条目并 kill+wait 回收；顺序颠倒会留下幽灵条目 + 僵尸进程
+    spawn_read_loop(app, state.inner().clone(), stdout, server_id, server_type, root);
+
     Ok(server_id)
+}
+
+/// 向指定 server 写入一条 JSON-RPC 消息。
+/// 锁内持 stdin 引用写管道：server 卡死不再读 stdin 时 64KB 管道写满会阻塞，
+/// 若不加超时整个 servers 锁永不释放，lsp_stop 等全部命令跟着死锁。
+/// 超时后 future 被取消、锁随之释放，其它命令仍可执行（半截写入无害——
+/// 该 server 已不健康，等待被停止）。
+async fn send_to_server(
+    manager: &LspManager,
+    server_id: u64,
+    message: Value,
+) -> Result<(), String> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        async {
+            let mut servers = manager.servers.lock().await;
+            let server = servers.get_mut(&server_id).ok_or("server 不存在")?;
+            let stdin = server.stdin.as_mut().ok_or("stdin 已关闭")?;
+            write_lsp_message(stdin, &message).await
+        },
+    )
+    .await
+    .map_err(|_| "写入语言服务超时（5s），server 疑似卡死".to_string())?
 }
 
 /// 发送 JSON-RPC 请求（带 id）
@@ -516,18 +541,13 @@ pub async fn lsp_send_request(
     method: String,
     params: Option<Value>,
 ) -> Result<(), String> {
-    let mut servers = state.servers.lock().await;
-    let server = servers.get_mut(&server_id).ok_or("server 不存在")?;
-
     let message = serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
         "method": method,
         "params": params.unwrap_or(Value::Null),
     });
-
-    let stdin = server.stdin.as_mut().ok_or("stdin 已关闭")?;
-    write_lsp_message(stdin, &message).await
+    send_to_server(&state.inner(), server_id, message).await
 }
 
 /// 发送 JSON-RPC 通知（无 id）
@@ -538,17 +558,12 @@ pub async fn lsp_send_notification(
     method: String,
     params: Option<Value>,
 ) -> Result<(), String> {
-    let mut servers = state.servers.lock().await;
-    let server = servers.get_mut(&server_id).ok_or("server 不存在")?;
-
     let message = serde_json::json!({
         "jsonrpc": "2.0",
         "method": method,
         "params": params.unwrap_or(Value::Null),
     });
-
-    let stdin = server.stdin.as_mut().ok_or("stdin 已关闭")?;
-    write_lsp_message(stdin, &message).await
+    send_to_server(&state.inner(), server_id, message).await
 }
 
 /// 响应 server 发来的反向请求（如 workspace/applyEdit）
@@ -559,17 +574,12 @@ pub async fn lsp_send_response(
     id: Value,
     result: Value,
 ) -> Result<(), String> {
-    let mut servers = state.servers.lock().await;
-    let server = servers.get_mut(&server_id).ok_or("server 不存在")?;
-
     let message = serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
         "result": result,
     });
-
-    let stdin = server.stdin.as_mut().ok_or("stdin 已关闭")?;
-    write_lsp_message(stdin, &message).await
+    send_to_server(&state.inner(), server_id, message).await
 }
 
 /// 停止单个 server（发 shutdown -> exit -> kill）
@@ -602,6 +612,8 @@ pub async fn lsp_stop(state: State<'_, LspManager>, server_id: u64) -> Result<()
             Ok(_) => {}
             Err(_) => {
                 let _ = child.kill().await;
+                // kill 后必须 wait 收尸：否则 Unix 上成为僵尸进程随应用累积
+                let _ = child.wait().await;
             }
         }
     }
@@ -648,6 +660,8 @@ pub async fn lsp_stop_all_inner(manager: &LspManager) -> Result<(), String> {
                     Ok(_) => {}
                     Err(_) => {
                         let _ = child.kill().await;
+                        // kill 后必须 wait 收尸：否则 Unix 上成为僵尸进程随应用累积
+                        let _ = child.wait().await;
                     }
                 }
             }

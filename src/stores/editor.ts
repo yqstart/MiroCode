@@ -129,9 +129,12 @@ export const useEditorStore = defineStore("editor", () => {
 
     try {
       // 栅格图：不读文本，仅作预览标签
+      const root = workspace.rootPath;
       const content = isRasterImagePath(path)
         ? ""
         : await readTextFile(workspace.rootPath, path);
+      // 读取期间已切换工作区：旧文件标签不得落入新工作区
+      if (workspace.rootPath !== root) return;
       tabs.value.push({
         id: path,
         path,
@@ -531,6 +534,8 @@ export const useEditorStore = defineStore("editor", () => {
     }
     const idx = tabs.value.findIndex((t) => t.path === path);
     tabs.value = tabs.value.filter((t) => t.path !== path);
+    // 清除外部更新标记：否则重开同路径文件时会触发一次多余的 CM dispatch
+    pendingExternalUpdates.delete(path);
     if (activePath.value === path) {
       const next = tabs.value[idx] || tabs.value[idx - 1] || null;
       if (next) {
@@ -623,19 +628,32 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
-  function closeTabsUnder(prefix: string) {
+  function closeTabsUnder(prefix: string): boolean {
     const victims = tabs.value.filter(
       (t) =>
         t.path === prefix ||
         t.path.startsWith(`${prefix}/`) ||
         t.path.startsWith(`${prefix}\\`),
     );
+    // 脏标签汇总确认（与 closeTab / 切换工作区一致）：
+    // 删除目录可能连带关闭含未保存改动的文件，静默丢弃不可接受
+    const dirty = victims.filter(
+      (t) => !isRasterImagePath(t.path) && t.content !== t.original,
+    );
+    if (dirty.length > 0) {
+      const ok = window.confirm(
+        `${dirty.length} 个文件有未保存更改，关闭标签将丢弃这些更改。继续？`,
+      );
+      if (!ok) return false;
+    }
     for (const tab of victims) {
       tabs.value = tabs.value.filter((t) => t.path !== tab.path);
+      pendingExternalUpdates.delete(tab.path);
     }
     if (activePath.value && victims.some((t) => t.path === activePath.value)) {
       activePath.value = tabs.value[0]?.path ?? null;
     }
+    return true;
   }
 
   /** 切换工作区前：有未保存更改则确认是否丢弃 */
@@ -655,6 +673,7 @@ export const useEditorStore = defineStore("editor", () => {
     activePath.value = null;
     jumpStack.value = [];
     openAt.value = null;
+    pendingExternalUpdates.clear();
   }
 
   // ==================== Markdown 预览/编辑模式（按文件路径持久化） ====================

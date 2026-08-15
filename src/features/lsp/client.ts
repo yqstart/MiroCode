@@ -359,7 +359,7 @@ export function uriToPath(uri: string): string {
   if (uri.startsWith("file://")) {
     let path = uri.slice(7);
     // Windows: /C:/... -> C:\...
-    if (/^\/[A-Zaza]:/.test(path)) {
+    if (/^\/[A-Za-z]:/.test(path)) {
       path = path.slice(1).replace(/\//g, "\\");
     }
     return path;

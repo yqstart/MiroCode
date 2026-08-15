@@ -107,6 +107,9 @@ mod macos {
                 bookmarkDataIsStale: is_stale,
                 error: &mut err
             ];
+            // ns_data 使用完毕：initWithBytes 的 +1 引用在此释放（原先从不
+            // release，每次 resolve 泄漏一个 NSData 对象）
+            let _: () = msg_send![ns_data, release];
             if url.is_null() {
                 let msg = if !err.is_null() {
                     let desc: *mut AnyObject = msg_send![&*err, localizedDescription];
@@ -146,10 +149,13 @@ mod macos {
             if !ok {
                 return Err("startAccessingSecurityScopedResource 返回 false".into());
             }
+            // URLByResolvingBookmarkData 返回 autoreleased 对象：存入 thread-local
+            // 前必须 retain，否则 autorelease pool drain 后指针悬垂
+            let url_retained: *mut AnyObject = msg_send![&*url, retain];
             // 保留 NSURL 防止 ARC 立刻释放：把指针存到 thread-local Vec
             // （实际由 release_* 调 stopAccessingSecurityScopedResource 对应释放）
             ACTIVE_URLS.with(|cell| {
-                cell.borrow_mut().push(url as usize);
+                cell.borrow_mut().push(url_retained as usize);
             });
             Ok(true)
         }
@@ -162,6 +168,8 @@ mod macos {
                 unsafe {
                     let url: &AnyObject = &*(*ptr as *const AnyObject);
                     let _: () = msg_send![url, stopAccessingSecurityScopedResource];
+                    // 对应 resolve 里存入前的 retain
+                    let _: () = msg_send![url, release];
                 }
             }
             cell.borrow_mut().clear();

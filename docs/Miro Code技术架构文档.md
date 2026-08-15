@@ -141,18 +141,19 @@ MiroCode/
 │Activity│ SideBar  │           EditorArea                 │
 │ Bar    │ Project  │  多标签：文件 / Diff / GitLog /       │
 │        │ /Commit  │  Compare / SSH / Markdown 预览       │
+│        │          ├──────────────────────────────────────┤
+│        │          │   终端底部面板（TerminalPanel，仅占   │
+│        │          │   编辑区列，资源管理器保持整列全高）  │
 ├────────┴──────────┴──────────────────────────────────────┤
-│                终端底部面板（TerminalPanel）              │
-├──────────────────────────────────────────────────────────┤
 │                     StatusBar                            │
 └──────────────────────────────────────────────────────────┘
 ```
 
 | 区域 | 职责 |
 |---|---|
-| ActivityBar | Project / Commit；底区 GitLog / Package / 设置 |
+| ActivityBar | Project / Commit / GitLog；底区 Package / 终端 / 设置 |
 | SideBar | Project（资源树）与 Commit（暂存 / 更改）切换 |
-| EditorArea | 多标签；SSH / GitLog / Compare 等非文件标签固定钉在右侧（终端已改为底部面板） |
+| EditorArea | 多标签；GitLog 与普通文件标签一致（不固定右侧，参与滚动排序）；SSH / Compare 固定钉在右侧（终端为底部面板） |
 | StatusBar | 左侧：终端入口 / 根目录 / 分支（含 ↑↓ 同步标记）/ 语言 / 编码 / 冲突数 / LSP 指示器 / AI 指示器；右侧：Ln/Col / 缩进 / 主题 / Ready |
 | 系统菜单 | 原生菜单（文件 / 编辑 / 视图 / 工具 / 帮助），UI 文案随 i18n 切换 |
 | Settings | 模态设置，左导航 4 区：编辑器 / AI / 快捷键 / 系统（关于 + 更新） |
@@ -211,7 +212,7 @@ MiroCode/
 | 传输 | Rust stdio JSON-RPC + Content-Length 分帧；`spawn_read_loop` 逐消息事件推送 |
 | 能力 | hover / 签名帮助 / 语义补全 / 类型诊断 / 定义跳转 / 引用查找 / 重命名（WorkspaceEdit 多文件） |
 | 检测降级 | `nodeDetector.ts` 检测内置捆绑包 → node + npx + 两包是否可装；不可用则状态栏告警，各能力回退 v1 正则 |
-| 内置捆绑包 | `language_services.rs` 流式下载（多镜像自动降级）→ sha256 校验 → 解压激活；`ls_status` / `ls_install` / `ls_uninstall` 命令 + `ls://progress` 进度事件；产物发布在 GitHub Release 固定 tag `language-servers`（`ls-latest.json` 版本清单，CI workflow `language-servers.yml` 打包 5 平台） |
+| 内置捆绑包 | `language_services.rs` 流式下载（多镜像自动降级）→ sha256 校验 → 解压激活（恢复 unix 执行位，`node/bin/` 强制补 +x；启动前校验 Node 可执行性，不可执行回退宿主 npx）；`ls_status` / `ls_install` / `ls_uninstall` 命令 + `ls://progress` 进度事件；产物发布在 GitHub Release 固定 tag `language-servers`（`ls-latest.json` 版本清单，CI workflow `language-servers.yml` 打包 5 平台） |
 | 设置 | `lspEnabled` 开关 + 运行时状态展示；一键安装 / 更新 / 卸载 + 镜像源选择（自动 / 官方 / 加速 / 自定义） |
 
 ### 6.4 AI 行内补全（`features/ai/` + `commands/ai.rs`）
@@ -268,7 +269,8 @@ MiroCode/
 
 | 项 | 说明 |
 |---|---|
-| 本地终端 | **底部面板**（VS Code 风格）：状态栏左下角终端按钮 / ⌘J 开关；xterm + PTY（`tauri-plugin-pty`），多标签顶栏；面板高度可拖拽并持久化（`settings.layout.terminalPanelHeight`）；收起时保活（v-show 隐藏），关闭全部终端才销毁；打开面板不打断画布（SSH/GitLog/Compare）聚焦 |
+| 本地终端 | **底部面板**（VS Code 风格）：状态栏左下角终端按钮 / ⌘J 开关；xterm + PTY（`tauri-plugin-pty`），多标签顶栏；面板仅占**编辑区列**（AppShell `.center` 内 EditorArea 下方），资源管理器保持整列全高；高度可拖拽并持久化（`settings.layout.terminalPanelHeight`）；收起时保活（v-show 隐藏），关闭全部终端才销毁；打开面板不打断画布（SSH/GitLog/Compare）聚焦；新建终端挂载即聚焦 |
+| 终端忙/闲 | `terminalIdle.ts` 解析 PTY 输出流判定 shell 是否停在提示符（剥 ANSI 后行尾 `$ % # > ❯ »` 特征 + 150ms 稳定窗口），上报 `sessions` store 的 `localIdle`；Package 脚本芯片点击时活动终端忙则自动新开终端执行，写入命令即标记忙、命令结束提示符回归即恢复闲 |
 | SSH | **独立编辑区标签**（与本地终端解耦）；主机列表 / 远程终端 |
 | 主机配置 | `~/.mirocode/ssh-profiles.json`（应用级全局，与项目无关）；「记住密码」写 `~/.mirocode/ssh-credentials.json`（0600） |
 | 密钥校验 | `~/.ssh/known_hosts` + `~/.mirocode/known_hosts`；未知主机指纹需用户确认（TOFU） |

@@ -1,6 +1,6 @@
 [package]
 name = "mirocode"
-version = "0.14.0"
+version = "0.14.1"
 description = "Miro Code — 轻量化桌面代码编辑器"
 authors = ["MiroCode"]
 edition = "2021"
@@ -52,3 +52,7 @@ tauri-plugin-window-state = "2"
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"
+
+[[test]]
+name = "lsp_transport"
+required-features = ["test"]

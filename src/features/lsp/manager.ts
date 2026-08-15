@@ -385,9 +385,14 @@ class LspManagerImpl {
 
   // ==================== 诊断 ====================
 
-  /** 订阅诊断通知 */
-  onDiagnostics(handler: DiagnosticsHandler): void {
+  /** 订阅诊断通知，返回退订函数（编辑器组件随文件重挂载，须在卸载时退订，
+   *  否则 handler 数组随打开文件数无界增长） */
+  onDiagnostics(handler: DiagnosticsHandler): () => void {
     this.diagnosticsHandlers.push(handler);
+    return () => {
+      const idx = this.diagnosticsHandlers.indexOf(handler);
+      if (idx >= 0) this.diagnosticsHandlers.splice(idx, 1);
+    };
   }
 
   /** 处理 publishDiagnostics 通知 */

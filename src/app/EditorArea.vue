@@ -525,9 +525,29 @@ onBeforeUnmount(() =>
             </span>
           </span>
         </button>
+        <!-- GitLog 与普通文件标签一致：排在文件标签之后，参与滚动与排序，不固定右侧 -->
+        <button
+          v-if="gitLogOpen"
+          :key="`gitlog-${gitLogTabId}`"
+          type="button"
+          class="tab gitlog-tab"
+          :class="{ active: gitLogFocused }"
+          @click="activateGitLog"
+          @auxclick.middle.prevent="closeGitLogTab"
+        >
+          <GitCommitHorizontal :size="12" class="gitlog-icon" />
+          <span class="name">{{ t("editor.gitLogTab") }}</span>
+          <span
+            class="close"
+            :title="t('editor.closeGitLog')"
+            @click.stop="closeGitLogTab"
+          >
+            <X :size="12" />
+          </span>
+        </button>
       </TransitionGroup>
 
-      <!-- 固定标签区：终端 / SSH / GitLog / Compare 等非文件标签固定钉在标签栏最右侧，
+      <!-- 固定标签区：终端 / SSH / Compare 等非文件标签固定钉在标签栏最右侧，
            不随文件标签滚动，也不被文件标签挤压（flex-shrink:0） -->
       <div class="tabs-fixed">
         <button
@@ -565,26 +585,6 @@ onBeforeUnmount(() =>
             class="close"
             :title="t('editor.closeSsh')"
             @click.stop="closeSshTab"
-          >
-            <X :size="12" />
-          </span>
-        </button>
-
-        <button
-          v-if="gitLogOpen"
-          type="button"
-          class="tab gitlog-tab"
-          :class="{ active: gitLogFocused }"
-          :data-id="gitLogTabId"
-          @click="activateGitLog"
-          @auxclick.middle.prevent="closeGitLogTab"
-        >
-          <GitCommitHorizontal :size="12" class="gitlog-icon" />
-          <span class="name">{{ t("editor.gitLogTab") }}</span>
-          <span
-            class="close"
-            :title="t('editor.closeGitLog')"
-            @click.stop="closeGitLogTab"
           >
             <X :size="12" />
           </span>

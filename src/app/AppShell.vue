@@ -294,9 +294,10 @@ onUnmounted(() => {
       <SideBar />
       <div class="center">
         <EditorArea />
+        <!-- 终端面板只占编辑器列：资源管理器（ActivityBar+SideBar）保持整列高度 -->
+        <TerminalPanel v-if="sessions.mounted" v-show="sessions.open" />
       </div>
     </div>
-    <TerminalPanel v-if="sessions.mounted" v-show="sessions.open" />
     <StatusBar />
     <QuickOpen />
     <FindInFilesDialog />

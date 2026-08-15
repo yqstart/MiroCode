@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onBeforeUnmount } from "vue";
 import { storeToRefs } from "pinia";
 import { useSettingsStore } from "@/stores/settings";
 import ExplorerPanel from "@/features/explorer/ExplorerPanel.vue";
@@ -10,6 +11,8 @@ const settings = useSettingsStore();
 const { layout } = storeToRefs(settings);
 
 let dragging = false;
+/** 拖拽期间挂在 window 上的监听，卸载时必须移除 */
+let cleanupDrag: (() => void) | null = null;
 
 function onResizeStart(event: MouseEvent) {
   dragging = true;
@@ -27,13 +30,21 @@ function onResizeStart(event: MouseEvent) {
     window.removeEventListener("mouseup", onUp);
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
+    cleanupDrag = null;
   };
 
   document.body.style.cursor = "col-resize";
   document.body.style.userSelect = "none";
   window.addEventListener("mousemove", onMove);
   window.addEventListener("mouseup", onUp);
+  cleanupDrag = onUp;
 }
+
+onBeforeUnmount(() => {
+  // 拖拽中侧栏被收起（组件 v-if 卸载）或鼠标在窗口外释放：
+  // 清理监听并复位全局样式，避免 cursor/userSelect 永久残留
+  if (cleanupDrag) cleanupDrag();
+});
 </script>
 
 <template>

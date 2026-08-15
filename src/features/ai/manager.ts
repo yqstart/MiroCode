@@ -175,6 +175,12 @@ class AiManagerImpl {
       if (this._status !== "streaming") this.setStatus("streaming");
       callbacks.onDelta(text);
     });
+    // await 期间新请求已进入：过期请求不得继续注册监听，
+    // 否则 L192 的整体覆盖会丢新请求的监听引用（泄漏）并重发已取消的请求
+    if (epoch !== this.requestEpoch) {
+      unlistenDelta();
+      return;
+    }
     const unlistenDone = await onAiDone(reqId, () => {
       if (this.currentReqId !== reqId) return;
       // 后处理：剥围栏 / 括号平衡截断 / 去重判定（劣质建议返回 null 由前端清除）
@@ -183,12 +189,23 @@ class AiManagerImpl {
       this.cleanup(reqId);
       this.setStatus("idle");
     });
+    if (epoch !== this.requestEpoch) {
+      unlistenDelta();
+      unlistenDone();
+      return;
+    }
     const unlistenError = await onAiError(reqId, (msg) => {
       if (this.currentReqId !== reqId) return;
       callbacks.onError(msg);
       this.cleanup(reqId);
       this.setStatus("error");
     });
+    if (epoch !== this.requestEpoch) {
+      unlistenDelta();
+      unlistenDone();
+      unlistenError();
+      return;
+    }
     this.unlistenFns = [unlistenDelta, unlistenDone, unlistenError];
 
     // 构造补全请求参数（根据 provider 模板自动选择请求端点 + 多行策略）
@@ -228,6 +245,9 @@ class AiManagerImpl {
     try {
       await aiCompleteStream(req);
     } catch (e) {
+      // 过期请求的 catch 不得触碰状态机与监听：cleanup 会无条件清空
+      // unlistenFns，此时里面已是新请求的监听，误清会让新请求静默失联
+      if (epoch !== this.requestEpoch) return;
       this.cleanup(reqId);
       this.setStatus("error");
       callbacks.onError(String(e));

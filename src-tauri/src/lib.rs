@@ -370,8 +370,12 @@ pub fn run() {
             commands::git::dev_fake_block,
         ])
         .on_window_event(|window, event| {
-            // 窗口关闭时清理 LSP 进程（避免子进程孤儿）
+            // 仅主窗口销毁时清理 LSP：多窗口下关闭任意子窗口不应终止
+            // 主窗口正在使用的语言服务（LspManager 是全局单例）
             if let tauri::WindowEvent::Destroyed = event {
+                if window.label() != "main" {
+                    return;
+                }
                 let app = window.app_handle();
                 if let Some(state) = app.try_state::<commands::lsp::LspManager>() {
                     let state = state.inner().clone();

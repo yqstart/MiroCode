@@ -22,6 +22,12 @@ export const useSessionsStore = defineStore("sessions", () => {
   const dormant = ref(false);
   const localTerminals = ref<LocalTerminalSession[]>([]);
   const activeLocalId = ref<string | null>(null);
+  /**
+   * 各本地终端是否空闲（shell 停在提示符上）。由 LocalTerminal 解析 PTY 输出
+   * 上报（见 features/sessions/terminalIdle.ts）。缺省 undefined = 未知（PTY 未
+   * 启动），按「可用」处理。
+   */
+  const localIdle = ref<Record<string, boolean>>({});
   /** 注入到本地 PTY 的待发送输入 */
   const pendingLocalWrite = ref<{
     terminalId: string;
@@ -101,6 +107,9 @@ export const useSessionsStore = defineStore("sessions", () => {
   async function closeSessions(): Promise<boolean> {
     localTerminals.value = [];
     activeLocalId.value = null;
+    localIdle.value = {};
+    // 清空待注入命令：目标终端已销毁，残留任务永远无法被消费
+    pendingLocalWrite.value = null;
     open.value = false;
     focused.value = false;
     dormant.value = false;
@@ -136,6 +145,9 @@ export const useSessionsStore = defineStore("sessions", () => {
     const hadLocal = localTerminals.value.length > 0;
     localTerminals.value = [];
     activeLocalId.value = null;
+    localIdle.value = {};
+    // 旧终端全部销毁，其待注入命令作废
+    pendingLocalWrite.value = null;
     dormant.value = false;
 
     if (keepUiOpen || wasDormant || hadLocal) {
@@ -150,6 +162,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     const idx = localTerminals.value.findIndex((t) => t.id === id);
     if (idx < 0) return;
     localTerminals.value.splice(idx, 1);
+    delete localIdle.value[id];
     renumberLocalTitles();
     if (activeLocalId.value === id) {
       const next = localTerminals.value[idx] || localTerminals.value[idx - 1] || null;
@@ -165,17 +178,31 @@ export const useSessionsStore = defineStore("sessions", () => {
     focusSessions();
   }
 
-  /** 打开本地终端视图并向活动本地终端写入命令（含回车） */
+  /** LocalTerminal 上报本终端的空闲状态（见 terminalIdle.ts） */
+  function setLocalIdle(id: string, idle: boolean) {
+    localIdle.value[id] = idle;
+  }
+
+  /** 打开本地终端视图并向活动本地终端写入命令（含回车）。
+   *  活动终端正在跑任务（不空闲）时新开一个终端执行，避免命令叠加进 busy 终端。 */
   function runInLocalTerminal(command: string, cwd: string | null = null) {
     openSessions(cwd);
-    focusSessions();
-    const id = activeLocalId.value;
+    let id = activeLocalId.value;
+    // 未知（PTY 未启动）按可用处理；busy 或尚无终端则新开
+    if (!id || localIdle.value[id] === false) {
+      addLocalTerminal(cwd);
+      id = activeLocalId.value;
+    }
     if (!id) return;
+    focusSessions();
     const data = command.endsWith("\r") || command.endsWith("\n")
       ? command
       : `${command}\r`;
     writeSeq += 1;
     pendingLocalWrite.value = { terminalId: id, data, seq: writeSeq };
+    // 写入即忙：命令已注入但提示符检测尚未反应时，再次点击快捷方式不会叠进同一终端；
+    // 命令结束后 shell 重新打印提示符，检测器会把 idle 恢复为 true。
+    localIdle.value[id] = false;
   }
 
   function consumePendingLocalWrite(seq: number) {
@@ -192,6 +219,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     isFocused,
     localTerminals,
     activeLocalId,
+    localIdle,
     pendingLocalWrite,
     openSessions,
     hideSessions,
@@ -203,6 +231,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     resetLocalForWorkspace,
     closeLocalTerminal,
     activateLocal,
+    setLocalIdle,
     runInLocalTerminal,
     consumePendingLocalWrite,
   };

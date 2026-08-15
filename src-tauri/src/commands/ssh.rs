@@ -149,6 +149,8 @@ fn verify_or_trust_host_key(sess: &Session, host: &str, port: u16, accept: bool)
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
+            // 锁内完成 读-改-写：并发首次连接同一主机时交错会丢记录
+            let _guard = known_hosts_lock().lock().map_err(|e| e.to_string())?;
             let mut app_known = sess
                 .known_hosts()
                 .map_err(|e| format!("初始化 known_hosts 失败: {e}"))?;
@@ -365,6 +367,14 @@ fn cred_store_lock() -> &'static Mutex<()> {
     CRED_STORE_LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// TOFU known_hosts 写入锁：并发首次连接同一主机时读-改-写交错
+/// 会把先写入的主机密钥记录覆盖丢
+static KNOWN_HOSTS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn known_hosts_lock() -> &'static Mutex<()> {
+    KNOWN_HOSTS_LOCK.get_or_init(|| Mutex::new(()))
+}
+
 fn load_cred_map_from_disk(path: &Path) -> CmdResult<HashMap<String, SshSecretStored>> {
     if !path.exists() {
         return Ok(HashMap::new());
@@ -515,6 +525,18 @@ pub async fn ssh_shell_open(
 
     {
         let mut shells = state.shells.lock().map_err(|e| e.to_string())?;
+        // 连接耗时（最长 90s）期间可能有并发同 id 打开先完成：此时本次连接
+        // 作废并清理自己的通道，不能覆盖已存在的会话（覆盖会让先建立的
+        // 连接失去引用，SSH 会话与 TCP 连接静默泄漏）
+        if shells.contains_key(&id) {
+            drop(shells);
+            stop.store(true, Ordering::SeqCst);
+            if let Ok(mut ch) = channel.lock() {
+                let _ = ch.send_eof();
+                let _ = ch.close();
+            }
+            return Err("该 SSH 会话已存在".into());
+        }
         shells.insert(
             id.clone(),
             ShellSession {
@@ -629,7 +651,8 @@ pub async fn ssh_shell_open(
             if let Ok(mut ch) = shell.channel.lock() {
                 let _ = ch.send_eof();
                 let _ = ch.close();
-                let _ = ch.wait_close();
+                // 不 wait_close：libssh2 会强制阻塞模式等远端关通道，死网络下
+                // 无限阻塞会永久泄漏本读线程；close + drop 已回收本地资源
             }
         }
         let _ = app.emit(&event_exit, ());
@@ -672,13 +695,18 @@ pub fn ssh_shell_resize(state: State<'_, SshState>, id: String, cols: u32, rows:
 
 #[tauri::command]
 pub fn ssh_shell_close(state: State<'_, SshState>, id: String) -> CmdResult<()> {
-    let mut shells = state.shells.lock().map_err(|e| e.to_string())?;
-    if let Some(shell) = shells.remove(&id) {
+    // 先取出会话数据再放锁：wait_close 会强制阻塞模式等远端关通道，死网络下
+    // 可无限阻塞；持锁调用会把 open/write/resize 全部冻结
+    let shell = {
+        let mut shells = state.shells.lock().map_err(|e| e.to_string())?;
+        shells.remove(&id)
+    };
+    if let Some(shell) = shell {
         shell.stop.store(true, Ordering::SeqCst);
         if let Ok(mut ch) = shell.channel.lock() {
             let _ = ch.send_eof();
             let _ = ch.close();
-            let _ = ch.wait_close();
+            // 不 wait_close（理由同上：死网络下无限阻塞）；close + drop 已回收本地资源
         }
     }
     Ok(())

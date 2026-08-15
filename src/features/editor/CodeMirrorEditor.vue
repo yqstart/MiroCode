@@ -81,8 +81,8 @@ let diagManager: ReturnType<typeof createDiagnosticsManager> | null = null;
 // LSP 文档同步：didChange 防抖
 let lspChangeTimer: ReturnType<typeof setTimeout> | null = null;
 
-// LSP 诊断订阅标记（onDiagnostics 只需订阅一次，handler 内引用最新 diagManager）
-let lspDiagSubscribed = false;
+// LSP 诊断订阅的退订函数（组件随文件重挂载，卸载时必须退订，避免 handler 累积）
+let unsubDiagnostics: (() => void) | null = null;
 
 const navHandlers = {
   onNavigate: (path: string, line: number, column: number) => {
@@ -141,10 +141,9 @@ async function refreshLspDoc(path: string, text: string) {
   }
   // 设置诊断合流器
   diagManager = createDiagnosticsManager(path);
-  // 订阅 LSP 诊断（仅订阅一次，handler 始终引用最新的 diagManager）
-  if (!lspDiagSubscribed) {
-    lspDiagSubscribed = true;
-    lspManager.onDiagnostics((uri, diagnostics) => {
+  // 订阅 LSP 诊断（本组件生命周期内仅一次，handler 始终引用最新的 diagManager）
+  if (!unsubDiagnostics) {
+    unsubDiagnostics = lspManager.onDiagnostics((uri, diagnostics) => {
       if (diagManager && view) {
         diagManager.setLspDiagnostics(view, uri, diagnostics);
       }
@@ -272,6 +271,9 @@ function createEditor() {
                 confirmText: "重命名",
               }).then((newName) => {
                 if (!newName) return; // 取消 / 空输入
+                // 输入框打开期间可能已切换文件/关闭标签（view 已 destroy）：
+                // 在销毁的视图上 dispatch 属未定义行为，此处丢弃
+                if (view !== v) return;
                 void lspRename(v, props.path, root, newName);
               });
               return true;
@@ -357,6 +359,8 @@ onBeforeUnmount(() => {
     clearTimeout(lspChangeTimer);
     lspChangeTimer = null;
   }
+  unsubDiagnostics?.();
+  unsubDiagnostics = null;
   diagManager?.dispose();
   diagManager = null;
   view?.destroy();

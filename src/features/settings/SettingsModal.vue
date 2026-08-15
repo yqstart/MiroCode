@@ -333,15 +333,27 @@ async function testConnection() {
       };
       const timer = setTimeout(() => finish(false), 10000);
       void (async () => {
-        unlistenDelta = await listen<string>(`ai://delta/${testId}`, () => {
+        const d = await listen<string>(`ai://delta/${testId}`, () => {
           clearTimeout(timer);
           finish(true);
         });
-        unlistenErr = await listen<string>(`ai://error/${testId}`, (e) => {
+        // 超时已先触发（10s 无响应）：本次注册的监听立即回收，避免泄漏
+        if (settled) {
+          d();
+          return;
+        }
+        unlistenDelta = d;
+        const e2 = await listen<string>(`ai://error/${testId}`, (e) => {
           clearTimeout(timer);
           finish(false);
           workspace.showNotice(t("settings.ai.testFailed") + ": " + e.payload);
         });
+        if (settled) {
+          d();
+          e2();
+          return;
+        }
+        unlistenErr = e2;
         await aiCompleteStream({
           reqId: testId,
           apiBase: aiPrefs.value.apiBase,

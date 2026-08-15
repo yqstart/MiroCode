@@ -12,7 +12,15 @@ function readMap(): PinnedMap {
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== "object" || parsed === null) return {};
-    return parsed as PinnedMap;
+    // 逐值校验：损坏/旧版本数据（值非字符串数组）过滤掉，
+    // 否则 pinnedScripts computed 调用 includes 会抛 TypeError
+    const out: PinnedMap = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (Array.isArray(value) && value.every((x) => typeof x === "string")) {
+        out[key] = value as string[];
+      }
+    }
+    return out;
   } catch {
     return {};
   }

@@ -707,9 +707,14 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath || !snapshot.value.initialized) return;
     const nextLimit = limit ?? logLimit.value;
     logLimit.value = nextLimit;
+    // 与 refresh 同款序号防护：等待期间切换工作区，旧仓库日志不得写入新工作区
+    const seq = refreshSeq;
     try {
-      log.value = await gitLog(workspace.rootPath, nextLimit);
+      const result = await gitLog(workspace.rootPath, nextLimit);
+      if (seq !== refreshSeq) return;
+      log.value = result;
     } catch (error) {
+      if (seq !== refreshSeq) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1007,17 +1012,20 @@ export const useGitStore = defineStore("git", () => {
   async function compareBranchWithCurrent(other: string) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath || !snapshot.value.branch) return;
+    const root = workspace.rootPath;
     try {
       const sides = await gitBranchSides(
         workspace.rootPath,
         snapshot.value.branch,
         other,
       );
+      // 等待期间已切换工作区：旧仓库的对比标签不得落入新工作区
+      if (workspace.rootPath !== root) return;
       const { useCompareStore } = await import("@/stores/compare");
       const compare = useCompareStore();
-      const id = `branch-diff-${Date.now()}`;
-      compare.tabs.push({
-        id,
+      // upsert：同一分支重复对比时合并为同一标签，避免无限累积
+      compare.upsertTab({
+        id: `branch-diff-${Date.now()}`,
         kind: "diff",
         path: sides.path,
         title: t("git.branchCompare", { path: sides.path }),
@@ -1027,7 +1035,6 @@ export const useGitStore = defineStore("git", () => {
         right: sides.right,
         editableRight: false,
       });
-      compare.activate(id);
     } catch (error) {
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),

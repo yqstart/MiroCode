@@ -190,7 +190,12 @@ export const useSettingsStore = defineStore("settings", () => {
   watch(
     settings,
     () => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      // 存储不可用（隐私模式 / 配额超限）时静默降级：本次会话设置仍生效
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      } catch {
+        // ignore
+      }
     },
     { deep: true },
   );

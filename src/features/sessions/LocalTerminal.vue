@@ -9,6 +9,10 @@ import {
   attachTerminalInputBridge,
   terminalBaseOptions,
 } from "@/features/sessions/terminalInputBridge";
+import {
+  createPromptIdleTracker,
+  type PromptIdleTracker,
+} from "@/features/sessions/terminalIdle";
 import { terminalThemeColors } from "@/features/sessions/terminalTheme";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
@@ -31,6 +35,7 @@ let pty: IPty | null = null;
 let disposed = false;
 let resizeObserver: ResizeObserver | null = null;
 let detachInput: (() => void) | null = null;
+let idleTracker: PromptIdleTracker | null = null;
 
 function defaultShell(): string {
   const platform = navigator.platform.toLowerCase();
@@ -73,11 +78,17 @@ function spawnPty() {
         typeof data === "string"
           ? data
           : new TextDecoder().decode(data);
+      // 空闲检测：上报 shell 是否停在提示符上（快捷方式据此决定复用或新开终端）
+      idleTracker?.feed(text);
       term.write(text);
     });
 
     pty.onExit(() => {
       term?.writeln("\r\n\x1b[90m[进程已退出]\x1b[0m");
+    });
+
+    idleTracker = createPromptIdleTracker((idle) => {
+      sessions.setLocalIdle(props.sessionId, idle);
     });
 
     detachInput = attachTerminalInputBridge(term, (data) => {
@@ -126,6 +137,13 @@ async function boot() {
 
   resizeObserver = new ResizeObserver(() => tryFitAndSpawn());
   resizeObserver.observe(host.value);
+
+  // 新建终端（组件以 active=true 挂载）时直接聚焦：
+  // watch(active) 只在 active 变化时触发，挂载即为活动态不会走到那里，
+  // 此前需手动点击终端才能输入。
+  if (props.active && hostVisible()) {
+    term.focus();
+  }
 }
 
 onMounted(() => {
@@ -136,6 +154,8 @@ onBeforeUnmount(() => {
   disposed = true;
   resizeObserver?.disconnect();
   resizeObserver = null;
+  idleTracker?.dispose();
+  idleTracker = null;
   detachInput?.();
   detachInput = null;
   try {
@@ -175,7 +195,15 @@ watch(
       await new Promise((r) => window.setTimeout(r, 50));
       if (disposed) return;
     }
-    if (!pty || disposed) return;
+    if (!pty || disposed) {
+      // PTY 启动失败（非桌面环境 / 权限错误）：任务作废并消费，
+      // 否则残留 store 永远无人消费（旧 terminalId 已无对应终端）
+      if (!disposed) {
+        term?.writeln("\r\n\x1b[31m终端尚未就绪，命令未执行\x1b[0m");
+        sessions.consumePendingLocalWrite(job.seq);
+      }
+      return;
+    }
     try {
       pty.write(job.data);
     } catch {

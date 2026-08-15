@@ -6,12 +6,14 @@ import {
   History,
   Package,
   Settings,
+  TerminalSquare,
 } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import PackageScriptsMenu from "@/features/sessions/PackageScriptsMenu.vue";
 import { useGitLogStore } from "@/stores/gitLog";
 import { useGitStore } from "@/stores/git";
 import { usePackageScriptsStore } from "@/stores/packageScripts";
+import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -25,10 +27,12 @@ const workspace = useWorkspaceStore();
 const git = useGitStore();
 const gitLog = useGitLogStore();
 const pkg = usePackageScriptsStore();
+const sessions = useSessionsStore();
 const { layout } = storeToRefs(settings);
 const { isFocused: logFocused } = storeToRefs(gitLog);
 const { changedFileCount } = storeToRefs(git);
 const { available } = storeToRefs(pkg);
+const { open: terminalOpen } = storeToRefs(sessions);
 
 const scriptsOpen = ref(false);
 const scriptsBtn = ref<HTMLButtonElement | null>(null);
@@ -168,6 +172,16 @@ onBeforeUnmount(() => {
       >
         <Package :size="18" :stroke-width="1.75" />
         <span v-if="available && !scriptsOpen" class="dot" />
+      </button>
+      <!-- 终端入口：设置与 scripts 之间；点击展开/收起底部终端面板 -->
+      <button
+        class="item"
+        type="button"
+        :title="t('activity.terminal')"
+        :class="{ active: terminalOpen }"
+        @click="sessions.toggleSessions(workspace.rootPath)"
+      >
+        <TerminalSquare :size="18" :stroke-width="1.75" />
       </button>
       <button
         class="item"

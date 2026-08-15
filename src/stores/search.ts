@@ -35,6 +35,24 @@ export const useSearchStore = defineStore("search", () => {
       .filter(Boolean);
   }
 
+  /** 带超时的 race，返回清理函数：Promise.race 分出胜负后定时器仍在队列，
+   *  每次搜索固定泄漏一个 15s/30s 定时器，连续输入会短时堆积 */
+  function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
+    let timer: number | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error(message)), ms);
+    });
+    return {
+      promise: Promise.race([promise, timeout]),
+      clear: () => {
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+          timer = undefined;
+        }
+      },
+    };
+  }
+
   async function runFileSearch(query?: string) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
@@ -46,22 +64,21 @@ export const useSearchStore = defineStore("search", () => {
     }
     // 请求序号：快速输入时只保留最后一次的响应，旧的返回直接丢弃
     const seq = ++fileSearchSeq;
+    const root = workspace.rootPath;
     loading.value = true;
+    const guard = withTimeout(
+      searchFiles(workspace.rootPath, q, {
+        maxResults: 50,
+        extraIgnores: workspace.extraIgnores,
+        extensions: parseExtensions(),
+      }),
+      15_000,
+      "搜索超时（15s），请缩小范围或重试",
+    );
     try {
-      const result = await Promise.race([
-        searchFiles(workspace.rootPath, q, {
-          maxResults: 50,
-          extraIgnores: workspace.extraIgnores,
-          extensions: parseExtensions(),
-        }),
-        new Promise<never>((_, reject) =>
-          window.setTimeout(
-            () => reject(new Error("搜索超时（15s），请缩小范围或重试")),
-            15_000,
-          ),
-        ),
-      ]);
-      if (seq !== fileSearchSeq) return; // 已有更新的搜索，丢弃过期结果
+      const result = await guard.promise;
+      // 已有更新的搜索，或期间切换了工作区：丢弃过期结果
+      if (seq !== fileSearchSeq || workspace.rootPath !== root) return;
       fileResults.value = result;
     } catch (error) {
       if (seq !== fileSearchSeq) return;
@@ -70,6 +87,7 @@ export const useSearchStore = defineStore("search", () => {
         3200,
       );
     } finally {
+      guard.clear();
       if (seq === fileSearchSeq) loading.value = false;
     }
   }
@@ -83,11 +101,12 @@ export const useSearchStore = defineStore("search", () => {
       return;
     }
     const seq = ++contentSearchSeq;
+    const root = workspace.rootPath;
     loading.value = true;
     try {
       // 前端 30s 超时兜底：即使后端 IPC 卡死（线程毒化 / walk 无响应），
       // 也能恢复 loading 状态，避免「搜索中」永远转圈
-      const result = await Promise.race([
+      const guard = withTimeout(
         searchContent(workspace.rootPath, q, {
           maxResults: 200,
           caseSensitive: caseSensitive.value,
@@ -95,15 +114,13 @@ export const useSearchStore = defineStore("search", () => {
           extensions: parseExtensions(),
           contextLines: 0,
         }),
-        new Promise<never>((_, reject) =>
-          window.setTimeout(
-            () => reject(new Error("搜索超时（30s），请缩小范围或重试")),
-            30_000,
-          ),
-        ),
-      ]);
-      // 若期间发起了新的搜索或已关闭，丢弃本次过期结果
-      if (seq !== contentSearchSeq) return;
+        30_000,
+        "搜索超时（30s），请缩小范围或重试",
+      );
+      const result = await guard.promise;
+      guard.clear();
+      // 若期间发起了新的搜索、已关闭或切换了工作区，丢弃本次过期结果
+      if (seq !== contentSearchSeq || workspace.rootPath !== root) return;
       contentResults.value = result;
     } catch (error) {
       if (seq !== contentSearchSeq) return;
@@ -211,7 +228,9 @@ export const useSearchStore = defineStore("search", () => {
     fileResults.value = [];
     contentResults.value = [];
     replacePreview.value = null;
-    // 使进行中的搜索结果失效
+    // 使进行中的搜索结果失效（文件搜索与内容搜索都要失效，
+    // 否则工作区切换后旧工作区的在途结果仍会写回）
+    fileSearchSeq += 1;
     contentSearchSeq += 1;
     loading.value = false;
   }

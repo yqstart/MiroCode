@@ -236,6 +236,9 @@ mod macos {
                 action: action_sel,
                 keyEquivalent: &*NSString::from_str("")
             ];
+            // alloc+init 的 +1 交给 autorelease pool：对象生命周期由 menu 持有
+            // 关系决定，否则每次 rebuild 都泄漏 N 个 NSMenuItem 的初始引用
+            let _: *mut AnyObject = msg_send![open_item, autorelease];
             let repr = NSString::from_str("open_folder");
             let _: () = msg_send![open_item, setRepresentedObject: &*repr];
             let _: () = msg_send![open_item, setTarget: target_obj];
@@ -252,9 +255,11 @@ mod macos {
                 action: std::ptr::null::<AnyObject>(),
                 keyEquivalent: &*NSString::from_str("")
             ];
+            let _: *mut AnyObject = msg_send![recent_parent, autorelease];
 
             let recent_sub: *mut AnyObject = msg_send![nsmenu_class, alloc];
             let recent_sub: *mut AnyObject = msg_send![recent_sub, initWithTitle: &*recent_label];
+            let _: *mut AnyObject = msg_send![recent_sub, autorelease];
 
             if state.recent.is_empty() {
                 let empty_label = NSString::from_str("（无）");
@@ -265,6 +270,7 @@ mod macos {
                     action: std::ptr::null::<AnyObject>(),
                     keyEquivalent: &*NSString::from_str("")
                 ];
+                let _: *mut AnyObject = msg_send![empty_item, autorelease];
                 let _: () = msg_send![empty_item, setEnabled: false];
                 let _: () = msg_send![recent_sub, addItem: empty_item];
             } else {
@@ -290,6 +296,7 @@ mod macos {
                         action: action_sel,
                         keyEquivalent: &*NSString::from_str("")
                     ];
+                    let _: *mut AnyObject = msg_send![item, autorelease];
                     let id_str = format!("recent::{}", path);
                     let repr = NSString::from_str(&id_str);
                     let _: () = msg_send![item, setRepresentedObject: &*repr];
@@ -320,11 +327,14 @@ mod macos {
                     action: std::ptr::null::<AnyObject>(),
                     keyEquivalent: &*NSString::from_str("")
                 ];
+                let _: *mut AnyObject = msg_send![item, autorelease];
                 let _: () = msg_send![item, setEnabled: false];
                 current_item_ptr = item;
             }
 
             // ==================== 拼成顶级 NSMenu ====================
+            // menu 的 +1 由 DOCK_MENU 指针持有（下次 rebuild 时 release 平衡），
+            // 不能 autorelease；item 的初始引用才交给 pool
             let menu: *mut AnyObject = msg_send![nsmenu_class, alloc];
             let menu: *mut AnyObject = msg_send![menu, init];
             let title = NSString::from_str("Miro Code");

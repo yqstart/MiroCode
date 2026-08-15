@@ -71,6 +71,16 @@ function fit() {
   }
 }
 
+/** 清理 Tauri 事件监听（boot 中途卸载与 onBeforeUnmount 共用） */
+function detachListeners() {
+  void unlistenData?.();
+  void unlistenExit?.();
+  void unlistenError?.();
+  unlistenData = null;
+  unlistenExit = null;
+  unlistenError = null;
+}
+
 async function boot() {
   if (!host.value || term) return;
 
@@ -84,6 +94,7 @@ async function boot() {
   await nextTick();
   fit();
 
+  if (disposed) return;
   term.writeln(
     `\x1b[90m连接 ${props.config.username}@${props.config.host}:${props.config.port || 22} …\x1b[0m`,
   );
@@ -93,6 +104,11 @@ async function boot() {
       if (!term || disposed) return;
       term.write(event.payload);
     });
+    if (disposed) {
+      // 组件已在 await 期间卸载：onBeforeUnmount 早已执行，需自行回收已注册的监听
+      detachListeners();
+      return;
+    }
     unlistenError = await listen<string>(`ssh://error/${props.sessionId}`, (event) => {
       if (!term || disposed || failedReported) return;
       failedReported = true;
@@ -100,12 +116,20 @@ async function boot() {
       term.writeln(`\r\n\x1b[31m${event.payload}\x1b[0m`);
       emit("failed", event.payload);
     });
+    if (disposed) {
+      detachListeners();
+      return;
+    }
     unlistenExit = await listen(`ssh://exit/${props.sessionId}`, () => {
       connected = false;
       if (failedReported || disposed) return;
       term?.writeln("\r\n\x1b[90m[远程会话已结束]\x1b[0m");
       emit("closed");
     });
+    if (disposed) {
+      detachListeners();
+      return;
+    }
 
     await sshShellOpen(
       props.sessionId,
@@ -113,6 +137,12 @@ async function boot() {
       term.cols || 80,
       term.rows || 24,
     );
+    if (disposed) {
+      // 连接已建立但组件已卸载：立即关闭，否则 Rust 侧 SSH 会话永久泄漏
+      detachListeners();
+      void sshShellClose(props.sessionId);
+      return;
+    }
     connected = true;
     term.focus();
 
@@ -121,11 +151,13 @@ async function boot() {
       queueSshWrite(data);
     });
   } catch (error) {
+    if (disposed || !term) return;
     const message = error instanceof Error ? error.message : String(error);
     term.writeln(`\r\n\x1b[31m连接失败: ${message}\x1b[0m`);
     emit("failed", message);
   }
 
+  if (disposed || !host.value) return;
   resizeObserver = new ResizeObserver(() => fit());
   resizeObserver.observe(host.value);
 }
@@ -140,12 +172,7 @@ onBeforeUnmount(() => {
   resizeObserver = null;
   detachInput?.();
   detachInput = null;
-  void unlistenData?.();
-  void unlistenExit?.();
-  void unlistenError?.();
-  unlistenData = null;
-  unlistenExit = null;
-  unlistenError = null;
+  detachListeners();
   if (connected) {
     void sshShellClose(props.sessionId);
   }

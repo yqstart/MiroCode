@@ -255,7 +255,6 @@ function onKeydown(event: KeyboardEvent) {
             class="hit"
             :class="{ active: index === activeIndex }"
             @click="openHit(index)"
-            @dblclick="openHit(index)"
           >
             <span class="loc">{{ hit.relative }}:{{ hit.line }}</span>
             <span class="preview">{{ hit.preview }}</span>
