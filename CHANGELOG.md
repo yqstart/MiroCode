@@ -2,6 +2,49 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.14.1] - 2026-08-15
+
+### 新增
+
+- **终端忙/闲检测**：`terminalIdle.ts` 解析 PTY 输出流判定 shell 是否停在提示符（剥 ANSI 后行尾 `$ % # > ❯ »` 特征 + 150ms 稳定窗口），状态存 `stores/sessions.ts` 的 `localIdle`
+- **Package 脚本芯片忙时自动新开终端**：点击脚本芯片时若活动终端正在运行任务（shell 未停在提示符），自动新开终端执行，避免命令叠加进忙碌终端；命令结束提示符回归后恢复复用
+- **活动栏新增终端图标入口**（Package 与设置之间），与状态栏左下角按钮 / ⌘/Ctrl+J 等价
+- **新建本地终端挂载即聚焦**：打开面板 / 新建终端后可直接输入，无需手动点击
+
+### 修复
+
+（2026-08-15 全局代码审查：竞态统一模式 + 安全加固 + 资源泄漏，27 前端 + 11 Rust）
+
+**竞态（异步在途结果提交前校验代际/序号 + 工作区未变）**：
+- 切换工作区竞态统一修复：`workspace.ts` 的 `workspaceEpoch`（openFolder 提交时自增，loadChildren / refreshTree / refreshDirsForPaths / startWatch 在 await 后校验）；git `refreshSeq`（loadLog 补上）；search `fileSearchSeq` / `contentSearchSeq`；PushDialog `loadSeq`（连续两次 open 旧结果作废）；compare 开 Diff / 冲突分栏前校验 rootPath 未变；editor 读文件期间切换工作区不落旧标签
+- 组件卸载竞态：RemoteTerminal boot 每个 await 后查 `disposed` 并自行回收已注册监听（连接已建立则主动关会话，防 Rust 侧 SSH 会话泄漏）；CodeMirrorEditor LSP 诊断订阅改为退订函数并在卸载时退订（原订阅随打开文件数无界累积）；SettingsModal AI 测试连接超时先触发时立即回收监听
+
+**安全**：
+- 语言服务捆绑包路径穿越：language / version 增加 `is_safe_segment` 段白名单校验（此前不可信输入直接 join 可构造 `../` 逃逸，删除任意目录 / 写任意文件）
+- Git discard / resolve_conflict 路径逃逸：复用 `ensure_inside_workspace`，含 `..` / 绝对路径的输入不再能绕过 git2 直接覆写工作区外文件
+- 凭据文件瞬时 0644 权限窗口：`TempGitCredentialStore` 改 `OpenOptions::mode(0o600)` 创建即私有（消除 git push 明文密码的瞬时窗口）
+- 语言服务 zip 下载上限 512MB（恶意 / 被劫持镜像无限流式下发撑爆磁盘，超限中止并清残留）；sha256 改 64KB 分块流式计算（数百 MB 产物不再整读入内存）
+- AI 凭据目录：`HOME` 补 `USERPROFILE` fallback（Windows 常未设 HOME，此前找不到 `~/.mirocode`）
+
+**资源泄漏 / 僵尸 / 卡死**：
+- LSP：写管道持锁加 5s 超时（server 卡死不再永久阻塞）；`lsp_start` 先 insert 再 spawn_read_loop（防幽灵条目 + 僵尸）；Content-Length 上限 64MB；kill 后补 `wait()` 收尸（Unix 僵尸进程随应用累积）
+- SSH：移除三处 `wait_close`（libssh2 强制阻塞等远端关通道，死网络下无限阻塞冻结 open/write/resize）；并发同 id `ssh_shell_open` 不覆盖已存在会话（先建连接作废并关通道，不再静默泄漏）；TOFU known_hosts 读-改-写加锁（并发首次连接同一主机不再丢密钥记录）
+- macOS Dock 菜单：NSMenuItem / 子菜单 init 后立即 autorelease（此前每次 rebuild 泄漏 N 个初始引用）；security_scoped NSData 用完 `release`、autoreleased NSURL 存 thread-local 前 `retain`（防悬垂指针）
+- 多窗口：仅主窗口 Destroyed 时清理 LSP（关闭任意子窗口不再误杀主窗口正在使用的语言服务）
+- 全局替换：外层 120s 超时无法取消线程，闭包内 110s 自检提前停写（超时返回后不再有旧任务后台继续覆写文件，与重试任务并发写同一批文件）
+
+**功能正确性**：
+- ExplorerPanel 右键菜单：`closeMenu()` 后 `menu.value` 恒 null 导致目录重命名 / 剪切后已打开标签路径不更新（改用解构出的 `isDir`）
+- GitLog 分支范围过滤「当前分支」：从桩实现补成「当前分支尖端沿父链 BFS 可达集」过滤（此前 current / all 显示相同）
+- workspaceSymbols：content 已提供时直接索引同一份文本（此前 hash 基于截断 content、符号表基于磁盘全文，超大文件两者永不一致、缓存反复失效重建）
+- 查找面板：移除双击重复触发 `openHit`（单击已打开，双击连发两次 IPC）
+- LocalTerminal：PTY 启动失败时消费 pending write（不再残留 store 中永远无人消费的任务）
+- 语言服务解压：恢复 zip 记录的 unix 执行位、`bin` 目录强制补 `+x`；启动前校验 Node 可执行性（不可执行视为未安装回退宿主 npx）——修复「解压丢执行位 → 检测可用但 spawn 全挂 → 状态栏一直 LSP 降级」
+
+### 构建
+
+- `pnpm-workspace.yaml` 补 `packages` 字段（缺失导致 Release 构建在依赖安装前全灭）；新增 `[[test]] lsp_transport` 声明
+
 ## [0.14.0] - 2026-08-14
 
 ### 新增
@@ -752,6 +795,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
 [0.13.7]: https://github.com/yqstart/MiroCode/compare/v0.13.6...v0.13.7
+[0.14.1]: https://github.com/yqstart/MiroCode/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/yqstart/MiroCode/compare/v0.13.11...v0.14.0
 [0.13.11]: https://github.com/yqstart/MiroCode/compare/v0.13.10...v0.13.11
 [0.13.10]: https://github.com/yqstart/MiroCode/compare/v0.13.9...v0.13.10
