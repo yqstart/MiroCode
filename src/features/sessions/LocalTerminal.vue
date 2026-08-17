@@ -9,6 +9,7 @@ import {
   attachTerminalInputBridge,
   terminalBaseOptions,
 } from "@/features/sessions/terminalInputBridge";
+import { createTerminalLinksAddon } from "@/features/sessions/terminalLinks";
 import {
   createPromptIdleTracker,
   type PromptIdleTracker,
@@ -53,6 +54,19 @@ function hostVisible(): boolean {
 function spawnPty() {
   if (!term || disposed) return;
   try {
+    // ==================== locale 注入：修复中文乱码 ====================
+    // macOS GUI 应用（Finder/Dock 启动）环境没有 LANG/LC_*（GUI 进程不继承
+    // shell 的 locale 设置），zsh 按 C locale 处理多字节 → 中文输入回显成
+    // $'\xNN' 转义乱码。注入 UTF-8 locale 修复（实测 en_US.UTF-8 下 zsh
+    // 中文回显与回车执行均正常）。只设 LANG、不设 LC_ALL：LC_ALL 一旦被
+    // oh-my-zsh 等启动脚本叠加即全局覆盖，历史上强制 zh_CN.UTF-8 曾致
+    // 回车不被 zle 接受 → 命令无法执行，此处保持最小侵入。
+    const env: Record<string, string> = {
+      TERM: "xterm-256color",
+    };
+    if (navigator.platform.toLowerCase().includes("mac")) {
+      env.LANG = "en_US.UTF-8";
+    }
     pty = spawn(defaultShell(), [], {
       cols: term.cols,
       rows: term.rows,
@@ -65,11 +79,7 @@ function spawnPty() {
       // 覆盖」(只发 \x20，缺 \b 退格)而非标准擦除 \b \b，表现为「删除键删不掉 + 后面冒
       // 空格、数量=字符数」（中文输入法上屏 c'd 同样受累）。这里在 env 里显式注入
       // TERM=xterm-256color，让行编辑器按真实终端做擦除回显。
-      // 不注入 LANG/LC_*：继承 GUI 进程的 locale 即可，强制 zh_CN.UTF-8 会被 oh-my-zsh
-      // 等启动流程叠加（LC_ALL 全局覆盖），实测会致回车键 (\r) 不被 zle 接受 → 命令无法执行。
-      env: {
-        TERM: "xterm-256color",
-      },
+      env,
     });
 
     pty.onData((data) => {
@@ -131,6 +141,9 @@ async function boot() {
   });
   fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+  // 链接点击打开：⌘/Ctrl + 点击在默认浏览器打开终端输出的 URL
+  // （dev server / 文档地址等），对齐 VS Code / Cursor 集成终端
+  term.loadAddon(createTerminalLinksAddon());
   term.open(host.value);
   await nextTick();
   tryFitAndSpawn();

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { MergeView } from "@codemirror/merge";
-import { EditorState, Prec, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, Prec, type Extension } from "@codemirror/state";
 import {
   EditorView,
   highlightActiveLine,
@@ -86,8 +86,7 @@ const mergeLayoutTheme = Prec.highest(
   }),
 );
 
-function buildExtensions(path: string, editable: boolean): Extension[] {
-  const lang = languageExtensionForPath(path);
+function buildExtensions(editable: boolean): Extension[] {
   const exts: Extension[] = [
     lineNumbers(),
     highlightActiveLine(),
@@ -101,7 +100,6 @@ function buildExtensions(path: string, editable: boolean): Extension[] {
     EditorView.editable.of(editable),
     EditorState.readOnly.of(!editable),
   ];
-  if (lang) exts.push(lang);
   if (editable) {
     exts.push(
       EditorView.updateListener.of((update) => {
@@ -130,6 +128,9 @@ function createView() {
   destroyView();
   lastEditable = current.editableRight;
 
+  // 语言解析器按需加载：先以无语言创建 Merge 视图，resolve 后 reconfigure 补齐（A/B 各自 Compartment）
+  const langCompA = new Compartment();
+  const langCompB = new Compartment();
   mergeView = new MergeView({
     parent: host.value,
     orientation: "a-b",
@@ -138,12 +139,21 @@ function createView() {
     collapseUnchanged: { margin: 3, minSize: 6 },
     a: {
       doc: current.left,
-      extensions: buildExtensions(current.path, false),
+      extensions: [langCompA.of([]), ...buildExtensions(false)],
     },
     b: {
       doc: current.right,
-      extensions: buildExtensions(current.path, current.editableRight),
+      extensions: [langCompB.of([]), ...buildExtensions(current.editableRight)],
     },
+  });
+
+  // 异步装配语言高亮；视图已重建/销毁则丢弃（竞态）
+  const mv = mergeView;
+  void languageExtensionForPath(current.path).then((lang) => {
+    if (mergeView !== mv) return;
+    const ext = lang ?? [];
+    mv.a.dispatch({ effects: langCompA.reconfigure(ext) });
+    mv.b.dispatch({ effects: langCompB.reconfigure(ext) });
   });
 
   // 初次挂载后强制测量，避免容器尚未布局完成时高度为 0

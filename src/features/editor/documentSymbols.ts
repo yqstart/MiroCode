@@ -1,4 +1,8 @@
-import { basename } from "@/shared/fs";
+// 本地 basename（node 直测环境无 @/ 别名，与 semanticScanner 保持零依赖风格）
+function basename(path: string): string {
+  const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return idx >= 0 ? path.slice(idx + 1) : path;
+}
 
 export type SymbolKind =
   | "function"
@@ -116,28 +120,6 @@ const WORD_RE = /[A-Za-z_$][\w$]*/;
  */
 const CSS_CLASS_RE = /\.([A-Za-z_][\w-]*)/;
 
-/** Vue SFC：取光标所在区块的纯 JS/TS 文本与行号偏移 */
-function scriptSliceForVue(
-  doc: string,
-  pos: number,
-): { text: string; lineOffset: number } | null {
-  const before = doc.slice(0, pos);
-  const scriptOpen = before.lastIndexOf("<script");
-  if (scriptOpen < 0) return null;
-  const scriptCloseBefore = before.lastIndexOf("</script>");
-  if (scriptCloseBefore > scriptOpen) return null;
-
-  const after = doc.slice(pos);
-  const scriptEndRel = after.indexOf("</script>");
-  if (scriptEndRel < 0) return null;
-
-  const contentStart = doc.indexOf(">", scriptOpen);
-  if (contentStart < 0 || contentStart >= pos) return null;
-  const scriptBody = doc.slice(contentStart + 1, pos + scriptEndRel);
-  const lineOffset = doc.slice(0, contentStart + 1).split("\n").length - 1;
-  return { text: scriptBody, lineOffset };
-}
-
 function indexLines(text: string, lineOffset = 0): Map<string, DocumentSymbol[]> {
   const map = new Map<string, DocumentSymbol[]>();
   const lines = text.split("\n");
@@ -183,7 +165,28 @@ function indexLines(text: string, lineOffset = 0): Map<string, DocumentSymbol[]>
   return map;
 }
 
-export function indexDocumentSymbols(
+// ==================== 符号索引缓存 ====================
+// 导航下划线装饰在每次光标移动/按键都会查符号索引；大文件全量逐行正则
+// 重建是输入卡顿的根源之一。这里按「内容 hash + 字符串引用」记忆化：
+// 纯光标移动（doc 字符串引用不变）O(1) 命中；内容变化才重新索引。
+// hash 仅作去重键，避免每次比较整串；djb2 + 长度碰撞概率可忽略。
+let symbolIndexCache: {
+  fileKey: string;
+  hash: string;
+  doc: string;
+  result: Map<string, DocumentSymbol[]>;
+} | null = null;
+
+function djb2(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i += 1) {
+    // Math.imul：真 int32 乘法，避免 h*33 溢出逃逸为 double（每次堆分配）
+    h = Math.imul(h, 33) ^ s.charCodeAt(i);
+  }
+  return (h >>> 0).toString(36) + ":" + s.length;
+}
+
+function computeDocumentIndex(
   doc: string,
   filePath: string,
 ): Map<string, DocumentSymbol[]> {
@@ -198,6 +201,22 @@ export function indexDocumentSymbols(
   }
   // CSS/SCSS/Less 及普通脚本文件：全文索引（CSS_CLASS_RE 会命中 CSS 选择器）
   return indexLines(doc);
+}
+
+export function indexDocumentSymbols(
+  doc: string,
+  filePath: string,
+): Map<string, DocumentSymbol[]> {
+  const fileKey = basename(filePath).toLowerCase();
+  const hit = symbolIndexCache;
+  // ① 同一字符串实例（纯光标移动）：O(1) 直接复用，不 hash
+  if (hit && hit.fileKey === fileKey && hit.doc === doc) return hit.result;
+  // ② 内容 hash 一致（新字符串但内容相同）：去重后复用，跳过全量重建
+  const hash = djb2(doc);
+  if (hit && hit.fileKey === fileKey && hit.hash === hash) return hit.result;
+  const result = computeDocumentIndex(doc, filePath);
+  symbolIndexCache = { fileKey, hash, doc, result };
+  return result;
 }
 
 /** 扫描 Vue SFC 中所有指定标签段（script/style），把符号追加到 map */
@@ -265,23 +284,9 @@ export function findSymbolDefinition(
 ): { line: number; column: number } | null {
   const hit = wordAt(doc, pos);
   if (!hit || pos < hit.from || pos > hit.to) return null;
-
-  const name = basename(filePath).toLowerCase();
-
-  // .vue 文件：脚本段是定义主战场（template/style 段不该出现符号定义）。
-  // 但若光标在 template/style 内、或脚本段未命中声明，仍回退到全文找一次。
-  if (name.endsWith(".vue")) {
-    const slice = scriptSliceForVue(doc, pos);
-    if (slice) {
-      const inScript = indexLines(slice.text, slice.lineOffset);
-      const inScriptHit = pickClosest(inScript.get(hit.word), doc, pos);
-      if (inScriptHit) return inScriptHit;
-    }
-    const full = indexLines(doc);
-    return pickClosest(full.get(hit.word), doc, pos);
-  }
-
-  const index = indexLines(doc);
+  // 走记忆化的全文档索引（host/template 内也能命中 script/style 段定义），
+  // 避免每次光标移动/按键对全文档逐行重建索引
+  const index = indexDocumentSymbols(doc, filePath);
   return pickClosest(index.get(hit.word), doc, pos);
 }
 

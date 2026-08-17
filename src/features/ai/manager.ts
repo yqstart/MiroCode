@@ -2,7 +2,7 @@
  * AI 补全管理器单例
  *
  * 职责：
- * 1. 状态机管理（disabled/idle/requesting/streaming/error），照搬 LspManager 模式
+ * 1. 状态机管理（disabled/idle/requesting/streaming/error）
  * 2. 防抖调度 + 在途请求取消（AbortController + reqId 比对）
  * 3. 发起流式补全请求，聚合增量文本回调
  *
@@ -90,7 +90,7 @@ class AiManagerImpl {
     }
   }
 
-  /** 订阅状态变化，返回取消函数（照搬 LspManager.onStatusChange） */
+  /** 订阅状态变化，返回取消函数 */
   onStatusChange(handler: (status: AiStatus) => void): () => void {
     this.statusHandlers.push(handler);
     handler(this._status);

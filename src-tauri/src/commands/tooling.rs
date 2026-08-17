@@ -1,5 +1,4 @@
 //! 工作区 Prettier 集成：调用项目本地 npx（需已安装依赖）
-//! 注：原 ESLint 集成已移除（LSP 类型诊断覆盖核心场景，ESLint 调度链路默认关闭且无人启用）
 
 use std::io::Write;
 use std::path::Path;

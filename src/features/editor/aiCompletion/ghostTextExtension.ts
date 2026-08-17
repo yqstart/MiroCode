@@ -144,8 +144,10 @@ class GhostTextWidget extends WidgetType {
 
 const renderPlugin = EditorView.decorations.from(
   suggestionField,
-  (suggestion): DecorationSet => {
+  (suggestion) => (view): DecorationSet => {
     if (!suggestion.text) return Decoration.none;
+    // VS Code 协作行为：补全 popup 打开时隐藏 ghost（避免双 UI 抢占视觉）
+    if (completionStatus(view.state) !== null) return Decoration.none;
     const widget = Decoration.widget({
       widget: new GhostTextWidget(suggestion.text),
       side: 1, // 放在光标位置之后
@@ -356,7 +358,7 @@ function acceptSuggestion(view: EditorView): boolean {
   const suggestion = view.state.field(suggestionField, false);
   if (!suggestion?.text) return false;
 
-  // 如果 LSP 补全 popup 打开，不抢占 Tab（让默认 keymap 处理 LSP 项）
+  // 如果补全 popup 打开，不抢占 Tab（让默认 keymap 处理补全项）
   if (completionStatus(view.state) !== null) return false;
 
   const { text, pos } = suggestion;

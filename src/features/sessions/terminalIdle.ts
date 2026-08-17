@@ -3,15 +3,28 @@
  *
  * 原理：shell 空闲时输出流末尾是提示符（prompt 通常无行尾换行，光标停在其后）；
  * 命令运行时输出的是命令产物，末尾不再出现提示符，直到命令结束 shell 重新打印
- * 提示符。对输出流做行切分（含无行尾的残余段），剥除 ANSI 转义后按行尾特征判定，
- * 并加一个稳定窗口：只有该判定在 N 毫秒内未被新输出推翻才上报空闲。
- * 启发式有误判空间（命令输出行恰以 $ / > 等结尾），误判后果仅是快捷方式多开或
- * 复用终端，不影响正确性；核心场景（dev server 等常驻任务）输出不匹配提示符特征。
+ * 提示符。对输出流做行切分（含无行尾的残余段），剥除 ANSI 转义后判定，并加一个
+ * 稳定窗口：只有该判定在 N 毫秒内未被新输出推翻才上报空闲。
+ * 判定双通道：① 行尾特征——传统提示符以 $ % # > ❯ » 收尾；② 行首符号特征——
+ * oh-my-zsh 等主题提示符以符号开头、目录/git 状态收尾（robbyrussell「➜  ~ git:(main)」
+ * 等），行首为提示符符号且行短即命中。启发式有误判空间（命令输出行恰以符号开头且短），
+ * 误判后果仅是快捷方式多开或复用终端，不影响正确性；核心场景（dev server 等常驻
+ * 任务）输出行既不以符号收尾、也不以符号开头，判定为忙碌。
  */
 
 /** 提示符行尾特征：剥除 ANSI 后以这些字符之一结尾（后跟可选空白）。
  *  $ % bash/zsh/csh 默认；# root；> 续行提示符/Windows；❯ » oh-my-zsh 常见主题 */
 const PROMPT_TAIL = /[$%#>❯»]\s*$/;
+
+/** 提示符符号：仅当位于行首时视作提示符行（提示符的符号恒在开头，如 omz 主题
+ *  行首的 ➜ / ❯ / »；✗ ✓ 较少见但同样只出现在部分主题的行首）。❯ » ➜ 为 omz
+ *  常见主题箭头（robbyrussell 用 ➜ U+279C，不在 PROMPT_TAIL 内）。
+ *  不用「行内任意位置」：日志行内嵌 % / > / ➜ 极为常见，会大面积误判。 */
+const PROMPT_SYMBOL_LEADING = /^[$%#>❯»➜✗✓]/;
+
+/** 符号特征的行长度上限：robbyrussell 带长 git 分支与目录约 60 字符，此处留余量；
+ *  长度约束过滤长日志输出行（如 top 的 %cpu 行、进度条行）的误判。 */
+const PROMPT_SYMBOL_MAX_LEN = 80;
 
 /** 提示符行长度上限：命令输出行远长于常规提示符，长度约束过滤大部分误判 */
 const PROMPT_MAX_LEN = 300;
@@ -24,9 +37,13 @@ function stripAnsi(text: string): string {
 }
 
 function isPromptLine(line: string): boolean {
-  const clean = stripAnsi(line);
+  // \r 是 PTY 输出普遍存在的行重置符（提示符重画前回行首），不属于提示符内容，
+  // 剔除后符号检测才不因前导 \r 失位。
+  const clean = stripAnsi(line).replace(/\r/g, "");
   if (!clean || clean.length > PROMPT_MAX_LEN) return false;
-  return PROMPT_TAIL.test(clean);
+  if (PROMPT_TAIL.test(clean)) return true;
+  if (clean.length <= PROMPT_SYMBOL_MAX_LEN && PROMPT_SYMBOL_LEADING.test(clean)) return true;
+  return false;
 }
 
 export interface PromptIdleTracker {

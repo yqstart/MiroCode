@@ -13,6 +13,7 @@
 
 import { readTextFile } from "@/shared/fs";
 import { indexDocumentSymbols, type DocumentSymbol, type SymbolKind } from "@/features/editor/documentSymbols";
+import { pickBestSymbols, rankSymbolCandidates } from "@/features/editor/completion/symbolFilter";
 
 /** 单文件解析出的符号表（key = 符号名） */
 export type FileSymbolTable = Map<string, DocumentSymbol[]>;
@@ -71,12 +72,15 @@ class WorkspaceSymbolCache {
   private readonly MAX_FILES = 500;
   /** 文件大小上限（bytes），超出截断避免单文件拖死 */
   private readonly MAX_FILE_BYTES = 1_000_000;
+  /** 工作区是否已全量扫描（searchSymbols 首次调用时懒构建） */
+  private workspaceScanned = false;
 
   /** 清空全部缓存（工作区根变更时调用） */
   clear(): void {
     this.fileCache.clear();
     this.globalIndex.clear();
     this.inflight.clear();
+    this.workspaceScanned = false;
   }
 
   /** 使单文件缓存失效（编辑保存后调用） */
@@ -98,6 +102,38 @@ class WorkspaceSymbolCache {
   invalidateAll(): void {
     this.fileCache.clear();
     this.globalIndex.clear();
+    this.workspaceScanned = false;
+  }
+
+  /**
+   * 按前缀查询全局符号（供补全使用）
+   *
+   * 首次调用触发工作区全量扫描（后台进行，不阻塞本次查询）；
+   * 之后为纯内存前缀过滤。大小写不敏感匹配，同符号取「最像定义」的候选。
+   */
+  async searchSymbols(
+    root: string,
+    prefix: string,
+    limit = 16,
+  ): Promise<Array<{ name: string; kind: SymbolKind; path: string; line: number }>> {
+    if (!root || !prefix) return [];
+    if (!this.workspaceScanned) {
+      this.workspaceScanned = true;
+      void this.scanWorkspace(root);
+    }
+    return pickBestSymbols(this.globalIndex, prefix, limit);
+  }
+
+  /** 后台全量构建工作区索引（仅首次 searchSymbols 触发，成功后常驻） */
+  private async scanWorkspace(root: string): Promise<void> {
+    const candidates: string[] = [];
+    await collectFiles(root, "", candidates, 4);
+    // 分批并行（避免一次发起过多 IPC；失败单文件容错）
+    const BATCH = 12;
+    for (let i = 0; i < candidates.length; i += BATCH) {
+      const batch = candidates.slice(i, i + BATCH);
+      await Promise.allSettled(batch.map((p) => this.getFileSymbols(root, p)));
+    }
   }
 
   /** 获取单文件符号表（自动构建） */
@@ -176,11 +212,11 @@ class WorkspaceSymbolCache {
     const inChain = list.filter((d) => candidates.has(d.path));
     if (inChain.length > 0) {
       // 优先 function / class / interface，variable 次之
-      const ranked = rankDefinitions(inChain);
+      const ranked = rankSymbolCandidates(inChain);
       return ranked[0] ?? null;
     }
     // 4) fallback：工作区任意位置第一个
-    const ranked = rankDefinitions(list);
+    const ranked = rankSymbolCandidates(list);
     return ranked[0] ?? null;
   }
 
@@ -321,22 +357,6 @@ class WorkspaceSymbolCache {
     this.fileCache.delete(key);
     this.fileCache.set(key, entry);
   }
-}
-
-/** 把候选按"更可能是定义"排序：function/class/interface/type 优先 */
-function rankDefinitions(
-  list: Array<DocumentSymbol & { path: string }>,
-): Array<DocumentSymbol & { path: string }> {
-  const priority: Record<SymbolKind, number> = {
-    function: 0,
-    class: 1,
-    interface: 2,
-    type: 3,
-    method: 4,
-    enum: 5,
-    variable: 6,
-  };
-  return [...list].sort((a, b) => (priority[a.kind] ?? 99) - (priority[b.kind] ?? 99));
 }
 
 /** 在 text 中找出所有 word 的精确出现位置（不依赖任何正则，含全词边界） */

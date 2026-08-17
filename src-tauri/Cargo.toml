@@ -1,6 +1,6 @@
 [package]
 name = "mirocode"
-version = "0.14.1"
+version = "0.15.0"
 description = "Miro Code — 轻量化桌面代码编辑器"
 authors = ["MiroCode"]
 edition = "2021"
@@ -34,10 +34,6 @@ base64 = "0.22"
 tokio = { version = "1", features = ["time", "rt", "rt-multi-thread", "macros", "process", "io-util", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"
-# 语言服务捆绑包：解压 zip（内置 Node + language server）
-zip = { version = "2", default-features = false, features = ["deflate"] }
-# 语言服务捆绑包：下载产物 sha256 完整性校验
-sha2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
@@ -53,6 +49,8 @@ tauri-plugin-window-state = "2"
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"
 
-[[test]]
-name = "lsp_transport"
-required-features = ["test"]
+# Release 构建：LTO + 单 codegen 单元，二进制更小、启动更快（构建时间略增）
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

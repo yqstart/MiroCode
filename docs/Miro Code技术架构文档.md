@@ -16,14 +16,14 @@
 | 阶段 | **功能定版**：核心功能集已收敛，进入优化迭代期（性能 / 流畅度 / 交互体验） |
 | 明确不做 | AI 对话面板、AI Agent、MCP / Skills 生态、插件市场、Monaco 替换 CM6 |
 
-已落地能力：资源树、多标签编辑、全局搜索 / 替换、Git（Commit / Log / Branches / Rebase / 冲突）、本地终端、SSH 远程 Shell、四主题、中英文界面、**LSP（TS / Vue）**、**AI 行内补全（ghost text）**、应用内更新。
+已落地能力：资源树、多标签编辑、全局搜索 / 替换、Git（Commit / Log / Branches / Rebase / 冲突）、本地终端、SSH 远程 Shell、四主题、中英文界面、**AI 行内补全（ghost text）**、应用内更新。
 
 ---
 
 ## 2. 设计原则
 
 1. **轻量优先**：进程少、内存低、启动快；能用系统能力 / 成熟库解决的不自研（胶水原则）。
-2. **Rust 干重活**：文件 IO、Git、搜索遍历、SSH、AI 流式请求、LSP transport 全部下沉 Rust；前端只做布局、交互与呈现。
+2. **Rust 干重活**：文件 IO、Git、搜索遍历、SSH、AI 流式请求全部下沉 Rust；前端只做布局、交互与呈现。
 3. **视觉一体**：主题以 CSS 变量驱动，UI 与编辑器高亮同源切换，避免两套皮肤割裂。
 4. **布局可记忆**：分栏尺寸、侧栏状态、打开标签、主题与编辑器偏好持久化。
 5. **优化优先于扩张**：优化项须有可感知效果或可量化指标（启动耗时 / 帧率 / 内存 / 操作延迟），「修一个验一个」。
@@ -49,7 +49,6 @@
 | 搜索 | **Rust walkdir + ignore + 正则** | async + `spawn_blocking` + LRU 文件列表缓存 |
 | SSH | **Rust `ssh2`（libssh2，vendored）** | 主机列表、凭据、远程 Shell |
 | AI 补全 | **Rust `reqwest` 流式请求 + tokio** | SSE 逐 chunk 推送前端，取消在途请求 |
-| LSP | **Rust stdio transport + 外部语言服务器** | `typescript-language-server` + `@vue/language-server` |
 | 终端 | **`@xterm/xterm` + `tauri-plugin-pty`** | 本地 PTY；SSH 走 ssh2 原生通道 |
 | 主题 | **CSS 变量 + CodeMirror `EditorView.theme` / `HighlightStyle`** | 四套主题，编辑器同步 |
 | 图标 | **Lucide**（控件）+ **Material Icon Theme**（文件图标） | 细线控件；文件类型对齐 VS Code |
@@ -67,7 +66,6 @@
 
 - 不自研文本缓冲与渲染引擎（用 CM6）
 - 不自研 Git 协议栈（优先复用 `git2` / 系统 Git，按能力边界混合实现）
-- 不自研 LSP 服务端（桥接官方/社区语言服务器，宿主提供 Node，缺 Node 降级 v1 正则方案）
 
 ---
 
@@ -83,13 +81,13 @@
 │  search / sessions / ssh / settings / compare / packageScripts │
 ├─────────────────────────────────────────────────────────────┤
 │              Tauri IPC（commands + events）                   │
-├──────────┬──────────┬──────────┬──────────┬──────────┬───────┤
-│ fs.rs    │ search.rs│ git.rs   │ ssh.rs   │ ai.rs    │ lsp.rs│
-│ 文件读写  │ 文件名/内容 │ 状态/提交  │ 远程终端  │ AI 流式  │ LSP  │
-│ 监听     │ 搜索/替换 │ 分支/Rebase│ 远程终端  │ 补全请求 │ 传输  │
-└──────────┴──────────┴──────────┴──────────┴──────────┴───────┘
+├──────────┬──────────┬──────────┬──────────┬──────────┤
+│ fs.rs    │ search.rs│ git.rs   │ ssh.rs   │ ai.rs    │
+│ 文件读写  │ 文件名/内容 │ 状态/提交  │ 远程终端  │ AI 流式  │
+│ 监听     │ 搜索/替换 │ 分支/Rebase│ 远程终端  │ 补全请求 │
+└──────────┴──────────┴──────────┴──────────┴──────────┘
                            │
-                    操作系统文件 / .git / 子进程（LSP / Node / PTY）
+                    操作系统文件 / .git / 子进程（PTY）
 ```
 
 ### 4.1 进程边界
@@ -97,8 +95,8 @@
 | 进程 | 职责 |
 |---|---|
 | WebView（前端） | UI、编辑器实例、主题、交互状态、AI ghost text 渲染 |
-| Rust 主进程 | 文件访问、Git、目录遍历、搜索、SSH Shell、AI 请求、LSP 子进程管理、窗口控制（macOS 红绿灯） |
-| 外部子进程 | 内置捆绑包的 Node + `typescript-language-server` + `@vue/language-server`（设置内一键安装）；回退时用宿主 npx 启动上述 server 与 Prettier / ESLint；PTY shell |
+| Rust 主进程 | 文件访问、Git、目录遍历、搜索、SSH Shell、AI 请求、窗口控制（macOS 红绿灯） |
+| 外部子进程 | PTY shell；按需启动的外部工具进程（如项目本地 Prettier） |
 
 ### 4.2 目录结构（定版）
 
@@ -109,19 +107,20 @@ MiroCode/
 │   ├── features/
 │   │   ├── explorer/         # 资源树（pointer 拖拽移动）
 │   │   ├── editor/           # CM6 编辑器、查找替换、补全、诊断、导航、主题、AI ghost text
+│   │   │   └── completion/   # 补全服务层：adapters（LSP→CM 转换）、html/css 语言服务封装、
+│   │   │                     # semanticScanner（JS/TS 轻量语义）、vueBindings（指令/绑定）、symbolFilter
 │   │   ├── search/           # QuickOpen（⌘P）/ FindInFiles（⌘⇧F）
 │   │   ├── git/              # CommitPanel / GitLogPanel / BranchesPopup / CompareView（冲突）/
 │   │   │                     # InteractiveRebaseDialog / PushDialog / UpdateProjectDialog
 │   │   ├── sessions/         # 本地终端 / SSH 远程 Shell
 │   │   ├── settings/         # 设置弹层（editor / ai / shortcuts / system）
-│   │   ├── lsp/              # LSP client（manager / transport / extension / nodeDetector）
 │   │   └── ai/               # AI 补全（manager / providers / fimTemplates / streamFilter / …）
 │   ├── stores/               # Pinia store（见 §5.2）
 │   ├── styles/               # tokens.css / themes.css / global.css
 │   ├── shared/               # fs / 对话框 / appUpdate / changelog / SSH API / 组件
 │   └── i18n/                 # zh-CN / en-US
 ├── src-tauri/                # Rust 后端
-│   ├── src/commands/         # fs / git / search / ssh / ai / lsp / tooling / path_util / window_chrome
+│   ├── src/commands/         # fs / git / search / ssh / ai / tooling / path_util / window_chrome
 │   ├── src/lib.rs / main.rs  # 命令注册、原生菜单、窗口
 │   ├── tests/                # Rust 单测（cargo test 需 --features test）
 │   └── tauri.conf.json       # 版本、updater pubkey / endpoints、打包
@@ -154,7 +153,7 @@ MiroCode/
 | ActivityBar | Project / Commit / GitLog；底区 Package / 终端 / 设置 |
 | SideBar | Project（资源树）与 Commit（暂存 / 更改）切换 |
 | EditorArea | 多标签；GitLog 与普通文件标签一致（不固定右侧，参与滚动排序）；SSH / Compare 固定钉在右侧（终端为底部面板） |
-| StatusBar | 左侧：终端入口 / 根目录 / 分支（含 ↑↓ 同步标记）/ 语言 / 编码 / 冲突数 / LSP 指示器 / AI 指示器；右侧：Ln/Col / 缩进 / 主题 / Ready |
+| StatusBar | 左侧：终端入口 / 根目录 / 分支（含 ↑↓ 同步标记）/ 语言 / 编码 / 冲突数 / AI 指示器；右侧：Ln/Col / 缩进 / 主题 / Ready |
 | 系统菜单 | 原生菜单（文件 / 编辑 / 视图 / 工具 / 帮助），UI 文案随 i18n 切换 |
 | Settings | 模态设置，左导航 4 区：编辑器 / AI / 快捷键 / 系统（关于 + 更新） |
 
@@ -195,31 +194,19 @@ MiroCode/
 |---|---|
 | 高亮 / 折叠 | CM6 Language + `HighlightStyle`，随主题切换 |
 | 查找替换 | `findPanel.ts`：⌘F 查找、⌘⌥F / ⌘H 替换、⌘G / F3 下一个 |
-| 补全 | `completions.ts`：JS 关键字 + snippet、HTML 标签、CSS 属性、Tailwind 类、文档词、**LSP 语义补全**合流；⌘Space 手动触发 |
-| 诊断 | `diagnostics.ts` + `eslintLinter.ts` + **LSP publishDiagnostics** 合流去重（LSP 优先）；JSON / Env 轻量校验 |
+| 补全 | `completions.ts` 分派链 + `completion/` 服务层：HTML/Vue template → `vscode-html-languageservice`（VS Code 同源，Vue 模式注入指令 custom data）；CSS/SCSS/Less → `vscode-css-languageservice`；JS/TS/JSX/TSX → 轻量语义（作用域声明 + import 绑定 + `workspaceSymbols` 跨文件符号 + `obj.` 成员联想）；Vue template 表达式 → `<script setup>` 绑定注入；均动态 import 按需加载，失败降级静态表；⌘Space 手动触发 |
+| 诊断 | `diagnostics.ts`：JSON / Env 轻量校验（本地实现） |
 | 格式化 | Prettier（`tooling.rs` 调 npx，`--stdin-filepath`） |
 | 跳转 | `navigation.ts`：相对路径 + `@/` 别名 import 跳转（`shared/importReferences.ts`）、同文档符号、跨文件符号索引；⌘[ 返回 |
-| 重命名 / 引用 | F2 / Shift+F12，LSP 优先，缺 Node 降级 v1 正则 |
+| 重命名 / 引用 | F2 重命名 / Shift+F12 引用：本地正则 + 符号索引方案（`renameSymbol.ts` / `findReferences.ts`） |
 | 预览 | Markdown 首次打开默认预览（marked，可切源码）；图片 / SVG 用 `ImagePreview.vue` |
 | 自动保存 | `autoSave.ts`：默认开启，1000ms 防抖写盘，页面隐藏 / 关窗前强制 flush |
 
-### 6.3 LSP（`features/lsp/` + `commands/lsp.rs`）
+### 6.3 AI 行内补全（`features/ai/` + `commands/ai.rs`）
 
 | 项 | 说明 |
 |---|---|
-| 语言服务器 | `typescript-language-server`（ts/tsx/mts/cts）、`@vue/language-server`（Volar，Vue 优先，缺则降级 ts） |
-| 启动策略 | **内置捆绑包优先**（`language_services.rs`：设置内一键安装的 Node + 双 server，路径 `app_data_dir/language-servers/<version>/`）；未安装回退宿主 `npx --no-install`（项目 / 全局 node_modules） |
-| 传输 | Rust stdio JSON-RPC + Content-Length 分帧；`spawn_read_loop` 逐消息事件推送 |
-| 能力 | hover / 签名帮助 / 语义补全 / 类型诊断 / 定义跳转 / 引用查找 / 重命名（WorkspaceEdit 多文件） |
-| 检测降级 | `nodeDetector.ts` 检测内置捆绑包 → node + npx + 两包是否可装；不可用则状态栏告警，各能力回退 v1 正则 |
-| 内置捆绑包 | `language_services.rs` 流式下载（多镜像自动降级）→ sha256 校验 → 解压激活（恢复 unix 执行位，`node/bin/` 强制补 +x；启动前校验 Node 可执行性，不可执行回退宿主 npx）；`ls_status` / `ls_install` / `ls_uninstall` 命令 + `ls://progress` 进度事件；产物发布在 GitHub Release 固定 tag `language-servers`（`ls-latest.json` 版本清单，CI workflow `language-servers.yml` 打包 5 平台） |
-| 设置 | `lspEnabled` 开关 + 运行时状态展示；一键安装 / 更新 / 卸载 + 镜像源选择（自动 / 官方 / 加速 / 自定义） |
-
-### 6.4 AI 行内补全（`features/ai/` + `commands/ai.rs`）
-
-| 项 | 说明 |
-|---|---|
-| 形态 | ghost text：CM6 `Decoration.widget` + `WidgetType` 渲染，Tab 接受 / Esc 取消（`Prec.highest`，LSP popup 打开时不拦截） |
+| 形态 | ghost text：CM6 `Decoration.widget` + `WidgetType` 渲染，Tab 接受 / Esc 取消（`Prec.highest` 抢占，补全 popup 打开时不拦截） |
 | Provider | 内置 **DeepSeek**（apiBase `https://api.deepseek.com/beta`，model `deepseek-v4-pro`）与 **自定义**（OpenAI 兼容端点）两个预设；选择后自动填充可覆盖 |
 | 协议 | FIM 走标准 `/completions` 端点（`{prompt, suffix, max_tokens, temperature, stream}`）；前端不拼 `<|fim_begin|>` 等 token，API 服务器内部处理 |
 | 流式 | Rust `reqwest` 流式 + tokio 读 SSE，逐 chunk `ai://delta/{reqId}` 推送；前端 `streamFilter.ts` 行级稳定更新 + 300ms 首字提示 |
@@ -282,7 +269,7 @@ MiroCode/
 
 ## 10. 主题与视觉体系
 
-- **主题 ID**：`miro-dark`（默认深色）、`dawn`（浅色）、`midnight`（深蓝）、`cyberpunk`（霓虹）——四套全部可用，设置面板主题卡 / 状态栏主题菜单 / 状态栏主题名右键循环切换
+- **主题 ID**：`miro-dark`（深色）、`dawn`（浅色，Miro Light）、`midnight`（深蓝）、`cyberpunk`（霓虹，应用默认）——四套全部可用，设置面板主题卡 / 状态栏主题菜单 / 状态栏主题名右键循环切换
 - **单一真相源**：`styles/tokens.css` 定义语义变量（色值见 `themes.css` 四套主题块）；组件只消费变量
 - **编辑器同步**：`features/editor/theme.ts` 维护四套 `PALETTES`（含 `HighlightStyle`），UI 主题切换时 `editorThemeExtensions` 同步重建，禁止 UI 已切换而代码区不同步
 - **圆角与密度**：设置弹层 16px、内容卡 12px、控件 8–10px；间距节奏 8 / 12 / 16 / 24
@@ -309,11 +296,10 @@ MiroCode/
 
 前端只通过类型化封装调用（`src/shared/` 下的 API 包装），不直接拼裸字符串命令。
 
-**命令命名空间**（Rust `commands/*.rs`）：`fs.*`（读写 / watch / pathExists）、`search.*`（files / content / replace）、`git.*`（status / stage / commit / branch / push / pull / rebase / stash / conflict…）、`ssh.*`（profile / connect / shell）、`ai_*`（请求 / 取消 / 凭据）、`lsp_*`（start / check_runtime）、`tooling.*`（format_with_prettier / lint_with_eslint）、`window_chrome.*`（macOS 红绿灯）。
+**命令命名空间**（Rust `commands/*.rs`）：`fs.*`（读写 / watch / pathExists）、`search.*`（files / content / replace）、`git.*`（status / stage / commit / branch / push / pull / rebase / stash / conflict…）、`ssh.*`（profile / connect / shell）、`ai_*`（请求 / 取消 / 凭据）、`tooling.*`（format_with_prettier / lint_with_eslint）、`window_chrome.*`（macOS 红绿灯）。
 
 **事件**：
 - `ai://delta/{req_id}`、`ai://done|error/{req_id}`：AI 流式补全
-- `lsp://`（`publishDiagnostics` 等）：LSP 消息推送
 - `fs://changed`：外部文件变更
 
 ---
@@ -322,10 +308,10 @@ MiroCode/
 
 | 指标 | 目标 | 落地手段 |
 |---|---|---|
-| 启动时长 | ≤ 2s（常规机器冷启动到可交互） | Tauri、延迟加载 Git/搜索/LSP |
+| 启动时长 | ≤ 2s（常规机器冷启动到可交互） | Tauri、延迟加载 Git/搜索 |
 | 千级文件打开 | 无明显卡顿 | 资源树懒加载子目录、Rust 侧遍历、搜索 LRU 缓存 + async |
 | 内存 | 显著低于 VSCode | CM6、编辑器实例按需创建回收、终端/SSH 连接生命周期 |
-| 编辑时延 | 输入无感 | 诊断/搜索防抖、LSP 事件化、AI 流式过滤管道 |
+| 编辑时延 | 输入无感 | 诊断/搜索防抖、AI 流式过滤管道 |
 | 跨平台 | Win / Mac / Linux | CI 4 平台构建矩阵（arm64 / x86_64 / Linux / Windows） |
 
 ---

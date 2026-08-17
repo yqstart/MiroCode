@@ -2,6 +2,29 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [0.15.0] - 2026-08-17
+
+### 变更
+
+- **默认主题改为 Miro Cyberpunk**：新安装 / 未设置主题的用户默认使用霓虹主题（`DEFAULT_SETTINGS.theme` 由 `miro-dark` 改为 `cyberpunk`）；已保存过主题配置的用户保持原选择
+- **Miro Dawn 更名为 Miro Light**：主题显示名更新（状态栏主题菜单 / 设置面板主题卡 / 快捷键循环提示同步），内部 ID 与样式标识 `dawn` / `data-theme="dawn"` 不变，已存配置无需迁移；文档（使用说明 / 视觉与主题规范 / 技术架构）同步
+- **操作顺滑度全面优化**（对齐 VS Code 手感，五阶段落地）：
+  - **输入 / 光标主链路**：导航下划线装饰改为「行级扫描 + 符号索引记忆化」（纯光标移动按 doc 引用 O(1) 命中，此前每次全文档正则重建，基准 2902µs → 0.25µs）；`dirtyPaths` 由每次全量字符串比较改为 tab 级 O(1) 脏标记（连续输入不再触发资源树 / 状态栏整树重渲染）；光标写入 rAF 合并；TS 补全程序注册按内容跳过（不再每次激活重编全部打开文件）+ import 解析缓存（消除每激活的磁盘 IPC 风暴）；轻量语义扫描按内容 hash 记忆化（含空结果）
+  - **面板 / 切 Tab / Git 刷新**：SideBar 活动栏切换改 KeepAlive（explorer↔commit 不再销毁重建整棵文件树）；切标签改「保留实例换文档」（不再销毁重建 EditorView，撤销历史 / 折叠 / 滚动按标签缓存恢复）；git_status 加 TTL 缓存 + 修改性命令失效；冲突文件列表改从 status 快照派生（省去主线程全量重扫）；branches / stash / rebase 状态查询改异步
+  - **Rust 主线程阻塞命令**：fs 读写 / 递归删除复制、git checkout / reset / merge / 分栏 diff 等 18 个重 IO 命令改 `async + spawn_blocking`（大文件、大目录、大仓库操作不再冻结 UI）
+  - **冷启动**：Cargo release 构建 LTO + 单 codegen 单元；Vite vendor 分包（vue / cm / xterm / markdown 独立 chunk，入口 2.88MB → 2.02MB，gzip 680KB → 422KB）
+  - **性能基准**：`scripts/perf/editor-input-bench.ts`（`pnpm test:perf`）度量导航装饰与语义扫描的冷 / 热成本，防回归
+
+### 修复
+
+- **查找面板搜索后关闭再 ⌘F 打不开**：`MiroFindPanel.mount()` 在 CM 的 update 事务中同步执行 `view.dispatch`（`revealFirstFromCursor` 自动选中首个匹配）会抛「Calls to EditorView.update are not allowed while an update is in progress」，面板插件创建失败——因 dispatch 仅在搜索词非空时触发，首次打开（空词）正常、搜索过一次后（query 保留）关闭再开即失效。修复为延迟到下一帧（requestAnimationFrame）执行，并以 `destroyed` 标志防止面板已关闭后误操作。jsdom 复现 open→close→open 五轮 + 替换面板路径全过
+
+- **终端忙/闲检测漏判 omz 主题提示符**：`terminalIdle.ts` 的提示符判定新增「行首符号」通道（`$ % # > ❯ » ➜ ✗ ✓` + 80 字符长度上限），覆盖 oh-my-zsh robbyrussell 等「符号开头 + 目录/git 状态收尾」的提示符（原仅匹配行尾 `$ % # > ❯ »`，此类提示符判定恒为忙碌）。此前服务停止后 shell 已回提示符仍被判定忙碌，点击 Package 脚本芯片会重复新开终端；修复后停止即恢复复用。配套自测 `scripts/terminal-idle-selfcheck.ts`（`pnpm test:terminal-idle`，真实 PTY 抓取数据回放 13 例）
+
+### 移除
+
+- **全部 LSP 语言服务**：前端 `features/lsp/` 模块（hover / 签名 / 语义补全 / 类型诊断 / 跳转 / 引用 / 重命名）、Rust stdio transport（`commands/lsp.rs`）、语言服务捆绑包安装与发布（`commands/language_services.rs`、`.github/workflows/language-servers.yml`、`scripts/language-servers/`）、设置面板「编辑器 → 语言服务」分区与状态栏 LSP 指示器；依赖 `vscode-languageserver-protocol` 一并移除。编辑器的补全 / 诊断 / 跳转 / 重命名由本地实现承接（关键词·snippet·HTML/CSS/Tailwind 补全、JSON/.env 诊断、正则+符号索引跳转与重命名）
+
 ## [0.14.1] - 2026-08-15
 
 ### 新增
@@ -795,6 +818,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
 [0.13.7]: https://github.com/yqstart/MiroCode/compare/v0.13.6...v0.13.7
+[0.15.0]: https://github.com/yqstart/MiroCode/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/yqstart/MiroCode/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/yqstart/MiroCode/compare/v0.13.11...v0.14.0
 [0.13.11]: https://github.com/yqstart/MiroCode/compare/v0.13.10...v0.13.11

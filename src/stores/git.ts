@@ -9,7 +9,6 @@ import {
   gitCheckoutRemote,
   gitCherryPick,
   gitCommit,
-  gitConflictFiles,
   gitCreateBranch,
   gitCreateBranchAt,
   gitDeleteBranch,
@@ -201,23 +200,26 @@ export const useGitStore = defineStore("git", () => {
         if (seq !== refreshSeq) return;
         snapshot.value = next;
         if (snapshot.value.initialized) {
-          // 与 gitStatus 结果相互独立的 4 项查询并行化，缩短整体阻塞
-          const [branchesRes, stashesRes, rebaseRes, conflictRes] =
-            await Promise.all([
-              gitBranches(workspace.rootPath),
-              gitStashList(workspace.rootPath).catch(() => []),
-              gitRebaseStatus(workspace.rootPath).catch(() => ({
-                ...EMPTY_REBASE,
-              })),
-              snapshot.value.conflictCount > 0
-                ? gitConflictFiles(workspace.rootPath)
-                : Promise.resolve([]),
-            ]);
+          // 与 gitStatus 结果相互独立的 3 项查询并行化，缩短整体阻塞
+          const [branchesRes, stashesRes, rebaseRes] = await Promise.all([
+            gitBranches(workspace.rootPath),
+            gitStashList(workspace.rootPath).catch(() => []),
+            gitRebaseStatus(workspace.rootPath).catch(() => ({
+              ...EMPTY_REBASE,
+            })),
+          ]);
           if (seq !== refreshSeq) return;
           branches.value = branchesRes;
           stashes.value = stashesRes as typeof stashes.value;
           rebaseStatus.value = rebaseRes;
-          conflictFiles.value = conflictRes;
+          // 冲突文件直接从 status 快照派生（entries 已带 conflicted 标记），
+          // 省去 gitConflictFiles 内部再跑一次完整 status（此前在主线程重扫）
+          conflictFiles.value =
+            snapshot.value.conflictCount > 0
+              ? snapshot.value.entries
+                  .filter((e) => e.conflicted)
+                  .map((e) => e.path)
+              : [];
         } else {
           branches.value = [];
           stashes.value = [];

@@ -135,6 +135,17 @@ function onKeydown(event: KeyboardEvent) {
     search.openFindInFiles();
     return;
   }
+  // ⌘F：打开编辑器内查找。编辑器聚焦时 CM 的 Prec.highest keymap 已处理并
+  // preventDefault（defaultPrevented 为 true 时跳过，避免重复打开）；
+  // 失焦场景（侧边栏/终端/状态栏）靠这里兜底——macOS 原生菜单也会触发
+  // requestFind，重复调用幂等无害，Windows/Linux 无原生菜单则全依赖此路径。
+  if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "f") {
+    if (!event.defaultPrevented) {
+      event.preventDefault();
+      editor.requestFind();
+    }
+    return;
+  }
   if (mod && event.key.toLowerCase() === "j") {
     event.preventDefault();
     toggleTerminal();

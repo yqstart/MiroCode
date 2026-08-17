@@ -130,15 +130,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     toasts.value = toasts.value.filter((x) => x.id !== id);
   }
 
-  /** 启动 LSP 语言服务（用户开启且运行时可用时） */
-  async function startLsp(root: string) {
-    const { useSettingsStore } = await import("@/stores/settings");
-    const settings = useSettingsStore();
-    if (!settings.editor.lspEnabled) return;
-    const { lspManager } = await import("@/features/lsp/manager");
-    void lspManager.start(root);
-  }
-
   const flatTree = computed(() => {
     if (!rootPath.value) return [] as TreeNode[];
     const result: TreeNode[] = [];
@@ -427,8 +418,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       }
       void useGitStore().refresh();
       void startWatch(selected);
-      // 启动 LSP 语言服务（用户开启且运行时可用时）
-      void startLsp(selected);
       // 同步 macOS Dock 菜单（最近项目 + 当前文件）。
       // store 内部读 editor.activePath 拿当前文件，避免调用方传 stale 值。
       void syncDockMenu();

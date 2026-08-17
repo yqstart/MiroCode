@@ -49,10 +49,9 @@ export function setupAutoSave(): () => void {
 
   stops.push(
     watch(
-      () =>
-        editor.tabs
-          .map((t) => `${t.path}:${t.content === t.original ? "0" : "1"}`)
-          .join("|"),
+      // dirtyPaths 的 Set 引用只在脏标签集合实际变化时替换（editor.ts 缓存），
+      // 连续输入不触发；比「tabs 拼接脏标记字符串」省去每键 O(tab 数) 构建
+      () => editor.dirtyPaths,
       () => scheduleDelayedSave(),
     ),
   );

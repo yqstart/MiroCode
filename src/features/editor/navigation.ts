@@ -1,5 +1,5 @@
 import { EditorView, ViewPlugin, Decoration, type DecorationSet } from "@codemirror/view";
-import type { Extension } from "@codemirror/state";
+import type { Extension, Text } from "@codemirror/state";
 import {
   IMPORT_RE,
   PATH_RE,
@@ -42,6 +42,36 @@ function findImportSpecAtPos(doc: string, pos: number): string | null {
 }
 
 /**
+ * 行级 import spec 探测：import/require/from 及路径引用都是单行结构，
+ * 装饰计算只扫光标所在行，避免每次光标移动对全文档跑正则。
+ * 返回 spec 及其精确区间（供直接画下划线，省去二次定位）。
+ */
+function findImportSpecOnLine(
+  lineText: string,
+  lineStart: number,
+  pos: number,
+): { spec: string; from: number; to: number } | null {
+  for (const re of [IMPORT_RE, PATH_RE]) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(lineText))) {
+      const start = lineStart + m.index;
+      const end = start + m[0].length;
+      if (pos < start || pos > end) continue;
+      const spec = m[1];
+      const specOffset = m[0].lastIndexOf(spec);
+      if (specOffset < 0) continue;
+      return {
+        spec,
+        from: start + specOffset,
+        to: start + specOffset + spec.length,
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * Vue 模板绑定：把光标位置 `@click="foo"` / `v-on:click="foo"` / `{{ foo }}`
  * 解析为对标识符 `foo` 的引用，返回 word 区间。供 go-to-definition 跨段查找。
  */
@@ -58,6 +88,28 @@ function findTemplateBindAtPos(
     const nameOffset = m[0].indexOf(name);
     if (nameOffset < 0) continue;
     const from = m.index + nameOffset;
+    const to = from + name.length;
+    if (pos >= from && pos <= to) {
+      return { word: name, from, to };
+    }
+  }
+  return null;
+}
+
+/** 行级模板绑定探测（装饰热路径用）：`@click="foo"` / `{{ foo }}` 为单行结构 */
+function findTemplateBindOnLine(
+  lineText: string,
+  lineStart: number,
+  pos: number,
+): { word: string; from: number; to: number } | null {
+  TEMPLATE_BIND_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TEMPLATE_BIND_RE.exec(lineText))) {
+    const name = m[1];
+    if (!name) continue;
+    const nameOffset = m[0].indexOf(name);
+    if (nameOffset < 0) continue;
+    const from = lineStart + m.index + nameOffset;
     const to = from + name.length;
     if (pos >= from && pos <= to) {
       return { word: name, from, to };
@@ -85,6 +137,32 @@ function findClassAttrAtPos(
     const value = m[1];
     let cur = valueStart;
     for (const part of value.split(/\s+/)) {
+      if (!part) continue;
+      const partFrom = cur;
+      const partTo = cur + part.length;
+      if (pos >= partFrom && pos <= partTo) {
+        return { word: part, from: partFrom, to: partTo };
+      }
+      cur = partTo + 1; // 跳过空白
+    }
+  }
+  return null;
+}
+
+/** 行级 class 属性探测（装饰热路径用，class 属性为单行结构） */
+function findClassAttrOnLine(
+  lineText: string,
+  lineStart: number,
+  pos: number,
+): { word: string; from: number; to: number } | null {
+  CLASS_ATTR_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CLASS_ATTR_RE.exec(lineText))) {
+    const valueStart = lineStart + m.index + m[0].indexOf(m[1]);
+    const valueEnd = valueStart + m[1].length;
+    if (pos < valueStart || pos > valueEnd) continue;
+    let cur = valueStart;
+    for (const part of m[1].split(/\s+/)) {
       if (!part) continue;
       const partFrom = cur;
       const partTo = cur + part.length;
@@ -222,52 +300,56 @@ export interface NavigationHandlers {
 
 const linkMark = Decoration.mark({ class: "cm-nav-link" });
 
-function createLinkDecorations(view: EditorView, handlers: NavigationHandlers): DecorationSet {
+/**
+ * 计算导航下划线装饰（输入/光标热路径）。
+ * 只扫光标所在行（import/class/模板绑定均为单行结构），符号判定走
+ * 记忆化的全文档索引；纯光标移动时 doc 字符串引用不变，索引 O(1) 命中。
+ */
+function computeLinkDecorations(
+  view: EditorView,
+  handlers: NavigationHandlers,
+  docText: string,
+): DecorationSet {
   const pos = view.state.selection.main.head;
-  const doc = view.state.doc.toString();
-  const hit = wordAt(doc, pos);
-  const classHit = findClassAttrAtPos(doc, pos);
-  const spec = findImportSpecAtPos(doc, pos);
+  const line = view.state.doc.lineAt(pos);
+  const specHit = findImportSpecOnLine(line.text, line.from, pos);
+  const classHit = findClassAttrOnLine(line.text, line.from, pos);
+  const hit = wordAt(docText, pos);
+  const onWord = !!hit && pos >= hit.from && pos <= hit.to;
+  const onClass = !!classHit && pos >= classHit.from && pos <= classHit.to;
+  // 光标不在 import 路径 / 标识符 / class 名上：直接不画，跳过索引查询
+  if (!specHit && !onWord && !onClass) return Decoration.none;
 
-  // import 路径上的任意位置都可提示；class 属性、符号则要求落在 word 上
-  if (!spec && (!hit || pos < hit.from || pos > hit.to) && (!classHit || pos < classHit.from || pos > classHit.to)) {
-    return Decoration.none;
-  }
-
-  const target = findTargetAtPos(
-    doc,
-    pos,
-    handlers.workspaceRoot(),
-    handlers.currentFile(),
-  );
-  if (!target) return Decoration.none;
-
-  if (target.kind === "import" && spec) {
-    // 高亮路径字符串本身
-    for (const re of [IMPORT_RE, PATH_RE]) {
-      re.lastIndex = 0;
-      let match: RegExpExecArray | null;
-      while ((match = re.exec(doc))) {
-        if (match[1] !== spec) continue;
-        const full = match[0];
-        const specOffset = full.lastIndexOf(spec);
-        if (specOffset < 0) continue;
-        const from = match.index + specOffset;
-        const to = from + spec.length;
-        if (pos >= match.index && pos <= match.index + full.length) {
-          return Decoration.set([linkMark.range(from, to)]);
-        }
-      }
+  // import 路径：同步解析（不查磁盘），命中才画
+  if (specHit && isLocalImportSpec(specHit.spec)) {
+    const resolved = resolveImportCandidate(
+      handlers.workspaceRoot(),
+      handlers.currentFile(),
+      specHit.spec,
+    );
+    if (resolved) {
+      return Decoration.set([linkMark.range(specHit.from, specHit.to)]);
     }
   }
 
+  const doc = docText;
+  const file = handlers.currentFile();
+  const index = indexDocumentSymbols(doc, file);
+
   // class 属性里的 class 名优先用 classHit 区间（支持含 `-` 的 class 名）
-  if (classHit && pos >= classHit.from && pos <= classHit.to) {
+  if (onClass && index.get(classHit.word)?.length) {
     return Decoration.set([linkMark.range(classHit.from, classHit.to)]);
   }
 
-  if (hit) {
-    return Decoration.set([linkMark.range(hit.from, hit.to)]);
+  // 普通标识符：符号索引命中或模板段绑定引用（@click / {{ }}）命中则画
+  if (onWord) {
+    if (index.get(hit.word)?.length) {
+      return Decoration.set([linkMark.range(hit.from, hit.to)]);
+    }
+    const bindHit = findTemplateBindOnLine(line.text, line.from, pos);
+    if (bindHit) {
+      return Decoration.set([linkMark.range(hit.from, hit.to)]);
+    }
   }
   return Decoration.none;
 }
@@ -292,15 +374,24 @@ export function createNavigationExtension(handlers: NavigationHandlers): Extensi
   const linkPlugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
+      // doc 字符串按 Text 引用缓存：纯光标移动（selectionSet 无 docChanged）
+      // 时 update.state.doc 是同一 Text 实例，直接复用字符串，跳过 toString
+      private lastDocText: Text;
+      private lastDocString: string;
 
       constructor(view: EditorView) {
-        this.decorations = createLinkDecorations(view, handlers);
+        this.lastDocText = view.state.doc;
+        this.lastDocString = view.state.doc.toString();
+        this.decorations = computeLinkDecorations(view, handlers, this.lastDocString);
       }
 
       update(update: import("@codemirror/view").ViewUpdate) {
-        if (update.selectionSet || update.docChanged) {
-          this.decorations = createLinkDecorations(update.view, handlers);
+        if (!update.selectionSet && !update.docChanged) return;
+        if (update.state.doc !== this.lastDocText) {
+          this.lastDocText = update.state.doc;
+          this.lastDocString = update.state.doc.toString();
         }
+        this.decorations = computeLinkDecorations(update.view, handlers, this.lastDocString);
       }
     },
     { decorations: (v) => v.decorations },

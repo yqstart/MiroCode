@@ -56,8 +56,16 @@ onBeforeUnmount(() => {
       :aria-label="t('app.sidebar')"
     >
       <Transition name="panel-fade" mode="out-in">
-        <ExplorerPanel v-if="layout.activePanel === 'explorer'" key="explorer" />
-        <CommitPanel v-else-if="layout.activePanel === 'commit'" key="commit" />
+        <KeepAlive>
+          <ExplorerPanel
+            v-if="layout.activePanel === 'explorer'"
+            key="explorer"
+          />
+          <CommitPanel
+            v-else-if="layout.activePanel === 'commit'"
+            key="commit"
+          />
+        </KeepAlive>
       </Transition>
       <div
         class="resizer"

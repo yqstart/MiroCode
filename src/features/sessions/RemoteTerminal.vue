@@ -9,6 +9,7 @@ import {
   attachTerminalInputBridge,
   terminalBaseOptions,
 } from "@/features/sessions/terminalInputBridge";
+import { createTerminalLinksAddon } from "@/features/sessions/terminalLinks";
 import { terminalThemeColors } from "@/features/sessions/terminalTheme";
 import {
   sshShellClose,
@@ -90,6 +91,8 @@ async function boot() {
   });
   fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+  // 链接点击打开：⌘/Ctrl + 点击在默认浏览器打开（远程输出里的服务地址同样适用）
+  term.loadAddon(createTerminalLinksAddon());
   term.open(host.value);
   await nextTick();
   fit();

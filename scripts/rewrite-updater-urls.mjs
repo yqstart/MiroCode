@@ -29,7 +29,7 @@ if (!token) {
   process.exit(1);
 }
 
-/** 镜像域名：与语言服务下载（language_services.rs GHPROXY_BASE）保持一致 */
+/** GitHub 下载加速镜像前缀 */
 const MIRROR_BASE = "https://ghfast.top/https://github.com";
 
 const API = "https://api.github.com";

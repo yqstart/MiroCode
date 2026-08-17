@@ -27,10 +27,10 @@
 
 | Theme ID | 显示名 | 角色 | 强调色 |
 |---|---|---|---|
-| `miro-dark` | Miro Dark | **默认深色**（应用默认） | 紫 `#8b5cf6` |
-| `dawn` | Miro Dawn | **浅色** | 蓝 `#2563eb` |
+| `miro-dark` | Miro Dark | 深色 | 紫 `#8b5cf6` |
+| `dawn` | Miro Light | **浅色** | 蓝 `#2563eb` |
 | `midnight` | Miro Midnight | 深蓝深色 | 青蓝 `#38bdf8` |
-| `cyberpunk` | Miro Cyberpunk | 高对比霓虹深色 | 青 `#22d3ee` |
+| `cyberpunk` | Miro Cyberpunk | 高对比霓虹深色（应用默认） | 青 `#22d3ee` |
 
 切换方式：设置 → 编辑器 → 外观主题（四宫格卡片）；状态栏主题名弹出菜单；状态栏主题名**右键**循环切换。UI 与编辑器高亮同源切换。
 
@@ -66,7 +66,7 @@
 | `--shadow-popover` | `0 8px 24px rgba(0,0,0,.32), 0 1px 2px rgba(0,0,0,.12)` | 弹层 / 右键菜单 |
 | `--shadow-modal` | `0 24px 64px rgba(0,0,0,.5), 0 4px 12px rgba(0,0,0,.2)` | 弹层更强 |
 
-### 3.2 Miro Dawn（`dawn`，浅色 / 雾白）
+### 3.2 Miro Light（`dawn`，浅色 / 雾白）
 
 | Token | 值 | 用途 |
 |---|---|---|
@@ -253,7 +253,7 @@ Midnight / Cyberpunk 各自维护完整 `HighlightStyle`（青蓝 / 霓虹粉青
 
 ### 7.1 设置弹层信息架构（左导航 4 区）
 
-- **编辑器**：外观主题（四宫格）/ 布局（字号、Tab 2/4、自动换行、行号）/ 文件保存（自动保存开关 + 延迟）/ Tooling（ESLint、Prettier、移动文件时更新 import）/ LSP（开关 + 运行时状态）/ 语言（中文 / English）/ 补全提示
+- **编辑器**：外观主题（四宫格）/ 布局（字号、Tab 2/4、自动换行、行号）/ 文件保存（自动保存开关 + 延迟）/ Tooling（ESLint、Prettier、移动文件时更新 import）/ 语言（中文 / English）/ 补全提示
 - **AI 行内补全**：开关 / provider / API Key / 地址 / 模型 / 多行策略 / 防抖 / 首字提示 / token 预算 / 温度 / 测试连接
 - **快捷键**：快捷键对照表
 - **系统**：关于 / 启动时自动检查更新 / 检查更新 / License
@@ -266,7 +266,7 @@ Midnight / Cyberpunk 各自维护完整 `HighlightStyle`（青蓝 / 霓虹粉青
 | 数字输入 | 右对齐或居中数字，窄宽度 |
 | 下拉 | 右 chevron，菜单同圆角体系 |
 | 主题卡 | 迷你代码窗缩略 + 名称；选中描边 + ✓ |
-| 状态栏指示器 | LSP / AI 用小圆点 + 文案，状态色区分（就绪 / 启动中 / 错误） |
+| 状态栏指示器 | AI 用小圆点 + 文案，状态色区分（就绪 / 思考中 / 错误） |
 
 ### 7.3 主界面（编辑壳）
 

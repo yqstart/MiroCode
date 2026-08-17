@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Columns2, Eye, FileCode, GitCommitHorizontal, PenLine, Pin, Server, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import CodeMirrorEditor from "@/features/editor/CodeMirrorEditor.vue";
 import ImagePreview from "@/features/editor/ImagePreview.vue";
 import { renderMarkdown } from "@/features/editor/markdown/preview";
-import CompareView from "@/features/git/CompareView.vue";
-import GitLogPanel from "@/features/git/GitLogPanel.vue";
-import SshView from "@/features/sessions/SshView.vue";
 import { basename, relativeToRoot } from "@/shared/fs";
 import { isRasterImagePath, isSvgPath } from "@/shared/media";
 import { formatShortcut } from "@/shared/platform";
@@ -22,6 +19,11 @@ import { useSessionsStore } from "@/stores/sessions";
 import { useSshStore } from "@/stores/ssh";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useI18n } from "@/i18n";
+
+// 非首屏标签视图异步加载（各自携带 merge/xterm 等重依赖，打开对应标签时才取 chunk）
+const CompareView = defineAsyncComponent(() => import("@/features/git/CompareView.vue"));
+const GitLogPanel = defineAsyncComponent(() => import("@/features/git/GitLogPanel.vue"));
+const SshView = defineAsyncComponent(() => import("@/features/sessions/SshView.vue"));
 
 const { t } = useI18n();
 
@@ -635,7 +637,6 @@ onBeforeUnmount(() =>
           />
           <CodeMirrorEditor
             v-else-if="showTextEditor"
-            :key="`editor-${activeTab.path}`"
             :path="activeTab.path"
             :content="activeTab.content"
             @contextmenu="onEditorContextMenu"

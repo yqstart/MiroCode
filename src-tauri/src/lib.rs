@@ -222,7 +222,6 @@ pub fn run() {
                 .build(),
         )
         .manage(commands::ssh::SshState::default())
-        .manage(commands::lsp::LspManager::default())
         .setup(|app| {
             let handle = app.handle();
 
@@ -278,6 +277,7 @@ pub fn run() {
             commands::fs::delete_entry,
             commands::fs::copy_entry,
             commands::fs::path_exists,
+            commands::fs::snippets_read_global,
             commands::search::search_files,
             commands::search::search_content,
             commands::search::replace_in_files,
@@ -345,18 +345,6 @@ pub fn run() {
             commands::security_scoped::create_security_scoped_bookmarks,
             commands::security_scoped::resolve_security_scoped_bookmarks,
             commands::security_scoped::release_security_scoped_bookmarks,
-            commands::lsp::lsp_check_runtime,
-            commands::lsp::lsp_start,
-            commands::lsp::lsp_send_request,
-            commands::lsp::lsp_send_notification,
-            commands::lsp::lsp_send_response,
-            commands::lsp::lsp_stop,
-            commands::lsp::lsp_stop_all,
-            commands::lsp::lsp_list_servers,
-            // 内置语言服务捆绑包（一键安装 / 卸载 / 状态）
-            commands::language_services::ls_status,
-            commands::language_services::ls_install,
-            commands::language_services::ls_uninstall,
             // AI 行内智能补全
             commands::ai::ai_secret_get,
             commands::ai::ai_secret_set,
@@ -369,22 +357,6 @@ pub fn run() {
             // 量化"卡住期间并发 IPC 的最大耗时"。release 构建下函数立即返回错误。
             commands::git::dev_fake_block,
         ])
-        .on_window_event(|window, event| {
-            // 仅主窗口销毁时清理 LSP：多窗口下关闭任意子窗口不应终止
-            // 主窗口正在使用的语言服务（LspManager 是全局单例）
-            if let tauri::WindowEvent::Destroyed = event {
-                if window.label() != "main" {
-                    return;
-                }
-                let app = window.app_handle();
-                if let Some(state) = app.try_state::<commands::lsp::LspManager>() {
-                    let state = state.inner().clone();
-                    tauri::async_runtime::spawn(async move {
-                        let _ = commands::lsp::lsp_stop_all_inner(&state).await;
-                    });
-                }
-            }
-        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

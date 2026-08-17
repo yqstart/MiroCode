@@ -26,7 +26,35 @@ fn unpushed_cache() -> &'static Mutex<HashMap<String, UnpushedCacheValue>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-#[derive(Debug, Serialize)]
+// ==================== git_status TTL 缓存 ====================
+// 保存/聚焦/切文件等读路径高频触发 refresh；同一 root 在 TTL 窗口内复用上次
+// 结果，避免大仓库（未 ignore 的 node_modules 等）反复全量 status。
+// 任何修改工作区/索引/HEAD 的 git 命令先 clear_status_cache()，保证操作后
+// 立即刷新能看到新状态（见各命令顶部调用）。
+const STATUS_CACHE_TTL: Duration = Duration::from_millis(1500);
+
+struct StatusCacheEntry {
+    root: String,
+    at: Instant,
+    result: Result<GitStatusSnapshot, String>,
+}
+
+static STATUS_CACHE: OnceLock<Mutex<Option<StatusCacheEntry>>> = OnceLock::new();
+
+fn status_cache() -> &'static Mutex<Option<StatusCacheEntry>> {
+    STATUS_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// 使 git_status 缓存失效（修改性命令在改变仓库状态前调用）
+pub(crate) fn clear_status_cache() {
+    if let Some(lock) = STATUS_CACHE.get() {
+        if let Ok(mut guard) = lock.lock() {
+            *guard = None;
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStatusEntry {
     pub path: String,
@@ -36,7 +64,7 @@ pub struct GitStatusEntry {
     pub conflicted: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStatusSnapshot {
     pub initialized: bool,
@@ -125,15 +153,35 @@ fn status_label(status: git2::Status) -> String {
 
 #[tauri::command]
 pub async fn git_status(root: String) -> Result<GitStatusSnapshot, String> {
+    // 读路径 TTL 缓存：高频 refresh（保存/聚焦/切文件）在窗口内复用上次结果
+    let now = Instant::now();
+    {
+        let guard = status_cache().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = guard.as_ref() {
+            if entry.root == root && now.duration_since(entry.at) < STATUS_CACHE_TTL {
+                return entry.result.clone();
+            }
+        }
+    }
     // 同步命令默认在主线程执行（Tauri 2 wry IPC handler 内联调用），
     // recurse_untracked_dirs 在大仓库（未 ignore 的 node_modules 等）可达秒级，
     // 放 spawn_blocking + 超时，避免冻结整个 UI
-    let handle = tokio::task::spawn_blocking(move || git_status_blocking(root));
-    match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
+    let task_root = root.clone();
+    let handle = tokio::task::spawn_blocking(move || git_status_blocking(task_root));
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("读取 Git 状态任务失败: {join}")),
         Err(_) => Err("读取 Git 状态超时（30s）".into()),
+    };
+    {
+        let mut guard = status_cache().lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some(StatusCacheEntry {
+            root,
+            at: Instant::now(),
+            result: result.clone(),
+        });
     }
+    result
 }
 
 fn git_status_blocking(root: String) -> Result<GitStatusSnapshot, String> {
@@ -240,6 +288,8 @@ fn git_status_blocking(root: String) -> Result<GitStatusSnapshot, String> {
 
 #[tauri::command]
 pub fn git_init(root: String) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     Repository::init(&root).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -284,12 +334,16 @@ fn index_add(repo: &Repository, paths: &[String]) -> Result<(), String> {
 
 #[tauri::command]
 pub fn git_stage(root: String, paths: Vec<String>) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let repo = open_repo(&root)?;
     index_add(&repo, &paths)
 }
 
 #[tauri::command]
 pub fn git_unstage(root: String, paths: Vec<String>) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let repo = open_repo(&root)?;
     match repo.head() {
         Ok(head) => {
@@ -324,6 +378,8 @@ pub fn git_commit(
     paths: Option<Vec<String>>,
     amend: Option<bool>,
 ) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     commit_internal(root, message, paths, amend, None)
 }
 
@@ -410,7 +466,17 @@ fn commit_internal(
 }
 
 #[tauri::command]
-pub fn git_branches(root: String) -> Result<Vec<GitBranchInfo>, String> {
+pub async fn git_branches(root: String) -> Result<Vec<GitBranchInfo>, String> {
+    // refresh 链路的伴随查询：放 spawn_blocking，避免主线程 revwalk
+    let handle = tokio::task::spawn_blocking(move || git_branches_blocking(root));
+    match tokio::time::timeout(Duration::from_secs(15), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("读取分支任务失败: {join}")),
+        Err(_) => Err("读取分支超时（15s）".into()),
+    }
+}
+
+fn git_branches_blocking(root: String) -> Result<Vec<GitBranchInfo>, String> {
     let repo = open_repo(&root)?;
     let mut list = Vec::new();
     let branches = repo.branches(None).map_err(|e| e.to_string())?;
@@ -440,7 +506,25 @@ pub fn git_branches(root: String) -> Result<Vec<GitBranchInfo>, String> {
 }
 
 #[tauri::command]
-pub fn git_checkout(root: String, name: String, force: Option<bool>) -> Result<(), String> {
+pub async fn git_checkout(
+    root: String,
+    name: String,
+    force: Option<bool>,
+) -> Result<(), String> {
+    // checkout_tree 会重写整个工作树，大仓库可达秒级，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || {
+        git_checkout_blocking(root, name, force)
+    });
+    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("切换分支任务失败: {join}")),
+        Err(_) => Err("切换分支超时（120s）".into()),
+    }
+}
+
+fn git_checkout_blocking(root: String, name: String, force: Option<bool>) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let repo = open_repo(&root)?;
     let (object, reference) = repo.revparse_ext(&name).map_err(|e| e.to_string())?;
     let mut builder = CheckoutBuilder::new();
@@ -463,17 +547,34 @@ pub fn git_checkout(root: String, name: String, force: Option<bool>) -> Result<(
 }
 
 #[tauri::command]
-pub fn git_create_branch(root: String, name: String, checkout: bool) -> Result<(), String> {
-    let repo = open_repo(&root)?;
-    let commit = repo
-        .head()
-        .map_err(|e| e.to_string())?
-        .peel_to_commit()
-        .map_err(|e| e.to_string())?;
-    repo.branch(&name, &commit, false)
-        .map_err(|e| e.to_string())?;
+pub async fn git_create_branch(
+    root: String,
+    name: String,
+    checkout: bool,
+) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
+    let task_root = root.clone();
+    let task_name = name.clone();
+    let handle = tokio::task::spawn_blocking(move || {
+        let repo = open_repo(&task_root)?;
+        let commit = repo
+            .head()
+            .map_err(|e| e.to_string())?
+            .peel_to_commit()
+            .map_err(|e| e.to_string())?;
+        repo.branch(&task_name, &commit, false)
+            .map_err(|e| e.to_string())?;
+        Ok::<(), String>(())
+    });
+    let branch_result = match tokio::time::timeout(Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => return Err(format!("创建分支任务失败: {join}")),
+        Err(_) => return Err("创建分支超时（30s）".into()),
+    };
+    branch_result?;
     if checkout {
-        git_checkout(root, name, Some(false))?;
+        git_checkout(root, name, Some(false)).await?;
     }
     Ok(())
 }
@@ -634,7 +735,21 @@ fn git_log_blocking(root: String, limit: Option<usize>) -> Result<Vec<GitCommitI
 
 /// 丢弃工作区指定路径的未提交变更（已跟踪还原到 HEAD；未跟踪则删除）。
 #[tauri::command]
-pub fn git_discard_paths(root: String, paths: Vec<String>) -> Result<(), String> {
+pub async fn git_discard_paths(root: String, paths: Vec<String>) -> Result<(), String> {
+    // 内部跑完整 status + checkout，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || {
+        git_discard_paths_blocking(root, paths)
+    });
+    match tokio::time::timeout(Duration::from_secs(60), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("丢弃变更任务失败: {join}")),
+        Err(_) => Err("丢弃变更超时（60s）".into()),
+    }
+}
+
+fn git_discard_paths_blocking(root: String, paths: Vec<String>) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     if paths.is_empty() {
         return Ok(());
     }
@@ -849,7 +964,23 @@ fn workdir_file_text(repo: &Repository, path: &str) -> Result<String, String> {
 
 /// 分栏 diff：staged=true → HEAD|Index；否则 Index|工作区。
 #[tauri::command]
-pub fn git_file_sides(
+pub async fn git_file_sides(
+    root: String,
+    path: String,
+    staged: Option<bool>,
+) -> Result<GitFileSides, String> {
+    // 含 blob 读取 + 可能全树对比，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || {
+        git_file_sides_blocking(root, path, staged)
+    });
+    match tokio::time::timeout(Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("读取分栏对比任务失败: {join}")),
+        Err(_) => Err("读取分栏对比超时（30s）".into()),
+    }
+}
+
+fn git_file_sides_blocking(
     root: String,
     path: String,
     staged: Option<bool>,
@@ -888,7 +1019,22 @@ pub fn git_file_sides(
 
 /// 冲突分栏：ours / theirs / base / working。
 #[tauri::command]
-pub fn git_conflict_sides(root: String, path: String) -> Result<GitConflictSides, String> {
+pub async fn git_conflict_sides(root: String, path: String) -> Result<GitConflictSides, String> {
+    // 含多 blob 读取，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || {
+        git_conflict_sides_blocking(root, path)
+    });
+    match tokio::time::timeout(Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("读取冲突分栏任务失败: {join}")),
+        Err(_) => Err("读取冲突分栏超时（30s）".into()),
+    }
+}
+
+fn git_conflict_sides_blocking(
+    root: String,
+    path: String,
+) -> Result<GitConflictSides, String> {
     if path.trim().is_empty() {
         return Err("路径不能为空".into());
     }
@@ -1358,6 +1504,8 @@ pub async fn git_pull(
     password: Option<String>,
     remember: Option<bool>,
 ) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let handle =
         tokio::task::spawn_blocking(move || git_pull_blocking(root, username, password, remember));
     match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
@@ -1527,6 +1675,8 @@ pub fn git_stash(
     message: Option<String>,
     include_untracked: Option<bool>,
 ) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let mut repo = open_repo(&root)?;
     let sig = repo.signature().map_err(|e| e.to_string())?;
     let msg = message.unwrap_or_else(|| "Miro Code stash".into());
@@ -1549,7 +1699,17 @@ pub struct GitStashEntry {
 }
 
 #[tauri::command]
-pub fn git_stash_list(root: String) -> Result<Vec<GitStashEntry>, String> {
+pub async fn git_stash_list(root: String) -> Result<Vec<GitStashEntry>, String> {
+    // refresh 链路的伴随查询：放 spawn_blocking，避免主线程遍历 stash
+    let handle = tokio::task::spawn_blocking(move || git_stash_list_blocking(root));
+    match tokio::time::timeout(Duration::from_secs(15), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("读取贮藏列表任务失败: {join}")),
+        Err(_) => Err("读取贮藏列表超时（15s）".into()),
+    }
+}
+
+fn git_stash_list_blocking(root: String) -> Result<Vec<GitStashEntry>, String> {
     let mut repo = open_repo(&root)?;
     let mut out = Vec::new();
     repo.stash_foreach(|index, message, oid| {
@@ -1566,6 +1726,8 @@ pub fn git_stash_list(root: String) -> Result<Vec<GitStashEntry>, String> {
 
 #[tauri::command]
 pub fn git_stash_pop(root: String, index: Option<usize>) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let mut repo = open_repo(&root)?;
     repo.stash_pop(index.unwrap_or(0), None)
         .map_err(|e| format!("弹出贮藏失败: {e}"))?;
@@ -1574,6 +1736,8 @@ pub fn git_stash_pop(root: String, index: Option<usize>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn git_stash_apply(root: String, index: usize) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let mut repo = open_repo(&root)?;
     repo.stash_apply(index, None)
         .map_err(|e| format!("应用贮藏失败: {e}"))?;
@@ -1582,6 +1746,8 @@ pub fn git_stash_apply(root: String, index: usize) -> Result<(), String> {
 
 #[tauri::command]
 pub fn git_stash_drop(root: String, index: usize) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let mut repo = open_repo(&root)?;
     repo.stash_drop(index)
         .map_err(|e| format!("删除贮藏失败: {e}"))?;
@@ -1589,7 +1755,19 @@ pub fn git_stash_drop(root: String, index: usize) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn git_reset_hard(root: String) -> Result<(), String> {
+pub async fn git_reset_hard(root: String) -> Result<(), String> {
+    // Hard reset 重写整个工作树，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || git_reset_hard_blocking(root));
+    match tokio::time::timeout(Duration::from_secs(60), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("重置任务失败: {join}")),
+        Err(_) => Err("重置超时（60s）".into()),
+    }
+}
+
+fn git_reset_hard_blocking(root: String) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let repo = open_repo(&root)?;
     let head = repo
         .head()
@@ -1602,6 +1780,8 @@ pub fn git_reset_hard(root: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn git_undo_commit(root: String) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let repo = open_repo(&root)?;
     let commit = repo
         .head()
@@ -1617,7 +1797,21 @@ pub fn git_undo_commit(root: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn git_revert_to(root: String, commit_id: String) -> Result<(), String> {
+pub async fn git_revert_to(root: String, commit_id: String) -> Result<(), String> {
+    // Hard reset 重写整个工作树，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || {
+        git_revert_to_blocking(root, commit_id)
+    });
+    match tokio::time::timeout(Duration::from_secs(60), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("回滚任务失败: {join}")),
+        Err(_) => Err("回滚超时（60s）".into()),
+    }
+}
+
+fn git_revert_to_blocking(root: String, commit_id: String) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let repo = open_repo(&root)?;
     let oid = resolve_commit_oid(&repo, &commit_id)?;
     let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
@@ -1626,7 +1820,21 @@ pub fn git_revert_to(root: String, commit_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn git_merge_branch(root: String, name: String) -> Result<String, String> {
+pub async fn git_merge_branch(root: String, name: String) -> Result<String, String> {
+    // merge 分析 + checkout/merge 重写工作树，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || {
+        git_merge_branch_blocking(root, name)
+    });
+    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("合并任务失败: {join}")),
+        Err(_) => Err("合并超时（120s）".into()),
+    }
+}
+
+fn git_merge_branch_blocking(root: String, name: String) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let repo = open_repo(&root)?;
     let branch = repo
         .find_branch(&name, BranchType::Local)
@@ -1681,7 +1889,29 @@ pub fn git_conflict_files(root: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub fn git_resolve_conflict(root: String, path: String, strategy: String) -> Result<(), String> {
+pub async fn git_resolve_conflict(
+    root: String,
+    path: String,
+    strategy: String,
+) -> Result<(), String> {
+    // 含 blob 读取 + 写盘 + index 操作，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || {
+        git_resolve_conflict_blocking(root, path, strategy)
+    });
+    match tokio::time::timeout(Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("解决冲突任务失败: {join}")),
+        Err(_) => Err("解决冲突超时（30s）".into()),
+    }
+}
+
+fn git_resolve_conflict_blocking(
+    root: String,
+    path: String,
+    strategy: String,
+) -> Result<(), String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let repo = open_repo(&root)?;
     let wd = repo.workdir().ok_or("无工作区")?.to_path_buf();
     let full = wd.join(&path);
@@ -1886,6 +2116,8 @@ pub async fn git_fetch(
     password: Option<String>,
     remember: Option<bool>,
 ) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || {
         git_fetch_blocking(root, remote, username, password, remember)
     });
@@ -1930,6 +2162,8 @@ pub async fn git_update_project(
     password: Option<String>,
     remember: Option<bool>,
 ) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || {
         git_update_project_blocking(root, strategy, username, password, remember)
     });
@@ -2051,6 +2285,8 @@ fn git_rebase_onto(root: String, onto_name: String) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn git_rebase_branch(root: String, onto: String) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     // 系统 git rebase 无超时，放 spawn_blocking 防主线程冻结
     let handle = tokio::task::spawn_blocking(move || git_rebase_onto(root, onto));
     match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
@@ -2062,6 +2298,8 @@ pub async fn git_rebase_branch(root: String, onto: String) -> Result<String, Str
 
 #[tauri::command]
 pub async fn git_cherry_pick(root: String, commit_id: String) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || git_cherry_pick_blocking(root, commit_id));
     match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
@@ -2086,6 +2324,8 @@ fn git_cherry_pick_blocking(root: String, commit_id: String) -> Result<String, S
 
 #[tauri::command]
 pub fn git_reset(root: String, commit_id: String, mode: String) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let repo = open_repo(&root)?;
     let oid = resolve_commit_oid(&repo, &commit_id)?;
     let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
@@ -2175,11 +2415,29 @@ pub fn git_set_upstream(root: String, branch: String, upstream: String) -> Resul
 
 /// 从远程分支检出为本地分支（并设置 upstream）
 #[tauri::command]
-pub fn git_checkout_remote(
+pub async fn git_checkout_remote(
     root: String,
     remote_ref: String,
     local_name: Option<String>,
 ) -> Result<String, String> {
+    // 内部含整工作树 checkout，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || {
+        git_checkout_remote_blocking(root, remote_ref, local_name)
+    });
+    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("检出远程分支任务失败: {join}")),
+        Err(_) => Err("检出远程分支超时（120s）".into()),
+    }
+}
+
+fn git_checkout_remote_blocking(
+    root: String,
+    remote_ref: String,
+    local_name: Option<String>,
+) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let repo = open_repo(&root)?;
     let commit = resolve_branch_commit(&repo, &remote_ref)?;
     let local = local_name.unwrap_or_else(|| {
@@ -2190,7 +2448,7 @@ pub fn git_checkout_remote(
             .to_string()
     });
     if repo.find_branch(&local, BranchType::Local).is_ok() {
-        git_checkout(root, local.clone(), Some(false))?;
+        git_checkout_blocking(root, local.clone(), Some(false))?;
         return Ok(format!("已切换到已有分支 {local}"));
     }
     repo.branch(&local, &commit, false)
@@ -2198,7 +2456,7 @@ pub fn git_checkout_remote(
     if let Ok(mut b) = repo.find_branch(&local, BranchType::Local) {
         let _ = b.set_upstream(Some(&remote_ref));
     }
-    git_checkout(root, local.clone(), Some(false))?;
+    git_checkout_blocking(root, local.clone(), Some(false))?;
     Ok(format!("已从 {remote_ref} 创建并切换到 {local}"))
 }
 
@@ -2325,7 +2583,17 @@ fn commit_info_from_oid(repo: &Repository, oid: git2::Oid) -> Result<GitCommitIn
 }
 
 #[tauri::command]
-pub fn git_rebase_status(root: String) -> Result<GitRebaseStatus, String> {
+pub async fn git_rebase_status(root: String) -> Result<GitRebaseStatus, String> {
+    // refresh 链路的伴随查询：放 spawn_blocking，避免主线程读写 rebase 状态文件
+    let handle = tokio::task::spawn_blocking(move || git_rebase_status_blocking(root));
+    match tokio::time::timeout(Duration::from_secs(15), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("读取 rebase 状态任务失败: {join}")),
+        Err(_) => Err("读取 rebase 状态超时（15s）".into()),
+    }
+}
+
+fn git_rebase_status_blocking(root: String) -> Result<GitRebaseStatus, String> {
     let repo = open_repo(&root)?;
     let conflicted = repo.index().map(|i| i.has_conflicts()).unwrap_or(false);
     let miro = is_miro_rebase_in_progress(&root);
@@ -2367,6 +2635,8 @@ pub fn git_rebase_status(root: String) -> Result<GitRebaseStatus, String> {
 
 #[tauri::command]
 pub async fn git_rebase_continue(root: String) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || git_rebase_continue_blocking(root));
     match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
@@ -2428,6 +2698,8 @@ fn git_rebase_continue_blocking(root: String) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn git_rebase_abort(root: String) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || git_rebase_abort_blocking(root));
     match tokio::time::timeout(std::time::Duration::from_secs(60), handle).await {
         Ok(Ok(r)) => r,
@@ -2451,6 +2723,8 @@ fn git_rebase_abort_blocking(root: String) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn git_rebase_skip(root: String) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || git_rebase_skip_blocking(root));
     match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
@@ -2637,6 +2911,8 @@ pub async fn git_rebase_interactive(
     onto: String,
     steps: Vec<GitRebaseStep>,
 ) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     // 交互 Rebase 内部多次系统 git（rebase/cherry-pick/reset），无超时，须离主线程
     let handle =
         tokio::task::spawn_blocking(move || git_rebase_interactive_blocking(root, onto, steps));
@@ -2697,7 +2973,21 @@ fn git_rebase_interactive_blocking(
 
 /// 真正的 git revert（生成反向提交）
 #[tauri::command]
-pub fn git_revert_commit(root: String, commit_id: String) -> Result<String, String> {
+pub async fn git_revert_commit(root: String, commit_id: String) -> Result<String, String> {
+    // 走系统 git + 可能产生冲突合并，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || {
+        git_revert_commit_blocking(root, commit_id)
+    });
+    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("Revert 任务失败: {join}")),
+        Err(_) => Err("Revert 超时（120s）".into()),
+    }
+}
+
+fn git_revert_commit_blocking(root: String, commit_id: String) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     match run_git(
         &root,
         &["-c", "core.editor=true", "revert", "--no-edit", &commit_id],
@@ -2718,25 +3008,52 @@ pub fn git_revert_commit(root: String, commit_id: String) -> Result<String, Stri
 }
 
 #[tauri::command]
-pub fn git_create_branch_at(
+pub async fn git_create_branch_at(
     root: String,
     name: String,
     commit_id: String,
     checkout: bool,
 ) -> Result<(), String> {
-    let repo = open_repo(&root)?;
-    let oid = resolve_commit_oid(&repo, &commit_id)?;
-    let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
-    repo.branch(&name, &commit, false)
-        .map_err(|e| e.to_string())?;
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
+    let task_root = root.clone();
+    let task_name = name.clone();
+    let handle = tokio::task::spawn_blocking(move || {
+        let repo = open_repo(&task_root)?;
+        let oid = resolve_commit_oid(&repo, &commit_id)?;
+        let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+        repo.branch(&task_name, &commit, false)
+            .map_err(|e| e.to_string())?;
+        Ok::<(), String>(())
+    });
+    let branch_result = match tokio::time::timeout(Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => return Err(format!("创建分支任务失败: {join}")),
+        Err(_) => return Err("创建分支超时（30s）".into()),
+    };
+    branch_result?;
     if checkout {
-        git_checkout(root, name, Some(false))?;
+        git_checkout(root, name, Some(false)).await?;
     }
     Ok(())
 }
 
 #[tauri::command]
-pub fn git_checkout_commit(root: String, commit_id: String) -> Result<String, String> {
+pub async fn git_checkout_commit(root: String, commit_id: String) -> Result<String, String> {
+    // checkout_head 重写整个工作树，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || {
+        git_checkout_commit_blocking(root, commit_id)
+    });
+    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("检出提交任务失败: {join}")),
+        Err(_) => Err("检出提交超时（120s）".into()),
+    }
+}
+
+fn git_checkout_commit_blocking(root: String, commit_id: String) -> Result<String, String> {
+    // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
+    clear_status_cache();
     let repo = open_repo(&root)?;
     let oid = resolve_commit_oid(&repo, &commit_id)?;
     let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
@@ -2773,7 +3090,24 @@ fn git_delete_remote_branch_blocking(root: String, remote_ref: String) -> Result
 
 /// 对比两分支 tip 的文件树差异摘要（打开第一个差异文件的分栏用）
 #[tauri::command]
-pub fn git_branch_sides(
+pub async fn git_branch_sides(
+    root: String,
+    left_ref: String,
+    right_ref: String,
+    path: Option<String>,
+) -> Result<GitFileSides, String> {
+    // 全树 diff 可能较慢，放 spawn_blocking
+    let handle = tokio::task::spawn_blocking(move || {
+        git_branch_sides_blocking(root, left_ref, right_ref, path)
+    });
+    match tokio::time::timeout(Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("分支对比任务失败: {join}")),
+        Err(_) => Err("分支对比超时（30s）".into()),
+    }
+}
+
+fn git_branch_sides_blocking(
     root: String,
     left_ref: String,
     right_ref: String,

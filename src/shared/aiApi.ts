@@ -4,8 +4,6 @@
  * 封装与 Rust 侧 commands/ai.rs 的通信：
  * - 凭据：invoke 调用 ai_secret_get / ai_secret_set / ai_secret_remove
  * - 流式补全：invoke 发起 ai_complete_stream + listen 监听 ai://delta|done|error/{reqId} 事件
- *
- * 范式参考 features/lsp/transport.ts
  */
 
 import { invoke } from "@tauri-apps/api/core";

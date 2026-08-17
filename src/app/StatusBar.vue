@@ -1,30 +1,24 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { GitBranch, TerminalSquare } from "lucide-vue-next";
+import { GitBranch } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import BranchesPopup from "@/features/git/BranchesPopup.vue";
 import { THEME_LABELS, THEME_ORDER } from "@/features/editor/theme";
 import type { ThemeId } from "@/shared/types";
-import { formatShortcut } from "@/shared/platform";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
-import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
-import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useI18n } from "@/i18n";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
-const ui = useUiStore();
 const workspace = useWorkspaceStore();
 const editor = useEditorStore();
 const git = useGitStore();
-const sessions = useSessionsStore();
 const { editor: editorPrefs, theme } = storeToRefs(settings);
 const { activeTab } = storeToRefs(editor);
 const { snapshot } = storeToRefs(git);
-const { open: terminalOpen } = storeToRefs(sessions);
 
 const themeMenuOpen = ref(false);
 const branchesOpen = ref(false);
@@ -48,75 +42,6 @@ const syncLabel = computed(() => {
   return parts.join(" ");
 });
 const themeLabel = computed(() => THEME_LABELS[theme.value]);
-
-/** 状态栏终端开关：提示语随面板显隐变化 */
-const terminalTip = computed(
-  () =>
-    t(terminalOpen.value ? "status.hideTerminal" : "status.openTerminal") +
-    " · " +
-    formatShortcut("mod", "J"),
-);
-
-/** 未打开项目时终端 cwd 用 home 目录兜底（提供「先开终端再选项目」路径） */
-const homeDir = ref<string | null>(null);
-async function loadHomeDir() {
-  try {
-    const { homeDir: get } = await import("@tauri-apps/api/path");
-    homeDir.value = await get();
-  } catch {
-    homeDir.value = null;
-  }
-}
-
-async function loadHomeDirFallback(): Promise<string | null> {
-  await loadHomeDir();
-  return homeDir.value;
-}
-
-function toggleTerminal() {
-  if (terminalOpen.value) {
-    sessions.hideSessions();
-    return;
-  }
-  void (async () => {
-    let cwd = workspace.rootPath;
-    if (!cwd) {
-      cwd = homeDir.value ?? (await loadHomeDirFallback());
-    }
-    sessions.openSessions(cwd);
-  })();
-}
-
-// LSP 状态指示器
-const lspStatus = ref<string>("disabled");
-
-const lspStatusLabel = computed(() => {
-  if (!editorPrefs.value.lspEnabled) return "";
-  switch (lspStatus.value) {
-    case "ready":
-      return t("lsp.statusReady");
-    case "starting":
-    case "checking":
-      return t("lsp.statusStarting");
-    case "unavailable":
-    case "error":
-      return t("lsp.statusUnavailable");
-    default:
-      return "";
-  }
-});
-
-const lspStatusClass = computed(() => {
-  switch (lspStatus.value) {
-    case "ready":
-      return "lsp-ok";
-    case "unavailable":
-    case "error":
-      return "lsp-warn";
-    default:
-      return "lsp-info";
-  }
-});
 
 // AI 补全状态指示器
 const aiStatus = ref<string>("disabled");
@@ -170,11 +95,6 @@ function cycleTheme() {
   settings.setTheme(next);
 }
 
-/** 点击 LSP 指示器：打开设置面板的语言服务分区 */
-function openLsPanel() {
-  ui.openSettings("editor");
-}
-
 function toggleBranches(event: MouseEvent) {
   event.stopPropagation();
   if (!branch.value) return;
@@ -186,23 +106,12 @@ function onDocClick() {
   themeMenuOpen.value = false;
 }
 
-// LSP 状态订阅（替代每 2s 轮询）
-let unsubLsp: (() => void) | null = null;
+// AI 状态订阅
 let unsubAi: (() => void) | null = null;
 let disposed = false;
 
 onMounted(() => {
   window.addEventListener("click", onDocClick);
-  // 预取 home 目录，未打开项目时终端 cwd 用它兜底
-  void loadHomeDir();
-  void import("@/features/lsp/manager").then(({ lspManager }) => {
-    // import 完成前组件已卸载：不再订阅，否则退订函数无人调用、永久留在
-    // statusHandlers 数组
-    if (disposed) return;
-    unsubLsp = lspManager.onStatusChange((status) => {
-      lspStatus.value = status;
-    });
-  });
   void import("@/features/ai/manager").then(({ aiManager }) => {
     if (disposed) return;
     unsubAi = aiManager.onStatusChange((status) => {
@@ -214,8 +123,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposed = true;
   window.removeEventListener("click", onDocClick);
-  unsubLsp?.();
-  unsubLsp = null;
   unsubAi?.();
   unsubAi = null;
 });
@@ -224,17 +131,6 @@ onBeforeUnmount(() => {
 <template>
   <footer class="status-bar">
     <div class="left">
-      <button
-        type="button"
-        class="terminal-btn"
-        :class="{ active: terminalOpen }"
-        :title="terminalTip"
-        :aria-label="terminalTip"
-        :aria-pressed="terminalOpen"
-        @click="toggleTerminal"
-      >
-        <TerminalSquare :size="13" />
-      </button>
       <span class="root-name" :title="workspace.rootName">{{
         workspace.rootName
       }}</span>
@@ -264,15 +160,6 @@ onBeforeUnmount(() => {
       >
         {{ t("status.conflicts", { count: snapshot.conflictCount }) }}
       </button>
-      <button
-        v-if="lspStatusLabel"
-        type="button"
-        class="lsp-status"
-        :class="lspStatusClass"
-        :data-state="lspStatus"
-        :title="lspStatusLabel + ' · ' + t('lsp.statusClickHint')"
-        @click="openLsPanel"
-      >{{ lspStatusLabel }}</button>
       <span
         v-if="aiStatusLabel"
         class="ai-status"
@@ -361,28 +248,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* 左下角终端开关按钮：VS Code 风格，active 态高亮 */
-.terminal-btn {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  display: grid;
-  place-items: center;
-  color: var(--text-muted);
-  transition: color var(--transition-fast) var(--ease-out),
-    background var(--transition-fast) var(--ease-out);
-}
-
-.terminal-btn:hover {
-  color: var(--text-primary);
-  background: var(--accent-soft);
-}
-
-.terminal-btn.active {
-  color: var(--accent);
-}
-
 .branch-switch {
   position: relative;
   min-width: 0;
@@ -396,11 +261,10 @@ onBeforeUnmount(() => {
   max-width: 100%;
   min-width: 0;
   padding: 2px 6px;
-  margin: -2px 0;
   border-radius: 4px;
   color: var(--accent);
   font-weight: 500;
-  line-height: 1.2;
+  line-height: inherit;
 }
 
 .branch-btn:hover {
@@ -449,37 +313,6 @@ onBeforeUnmount(() => {
 
 .conflict:hover {
   text-decoration: underline;
-}
-
-.lsp-status {
-  font-size: 11px;
-  flex-shrink: 0;
-  padding: 1px 6px;
-  border-radius: 3px;
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.lsp-status:hover {
-  background: var(--accent-soft);
-}
-
-.lsp-ok {
-  color: var(--success, #22c55e);
-}
-
-.lsp-warn {
-  color: var(--warning, #f59e0b);
-  animation: lsp-pulse 2s ease-in-out infinite;
-}
-
-.lsp-info {
-  color: var(--text-muted);
-}
-
-@keyframes lsp-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
 }
 
 /* AI 补全状态指示器 */
@@ -566,15 +399,13 @@ onBeforeUnmount(() => {
   transform: scale(0.96) translateY(4px);
 }
 
-/* AI / LSP 状态点：颜色态切换平滑 + 启动中脉动 */
-.ai-status,
-.lsp-status {
+/* AI 状态点：颜色态切换平滑 + 请求中脉动 */
+.ai-status {
   transition: color var(--transition-medium) var(--ease-out),
     background var(--transition-fast) var(--ease-out);
 }
 
-/* 启动/请求中：短脉动（lsp-warn 的 2s 慢脉动太慢，starting/streaming 给 1.6s 快脉动） */
-.lsp-status[data-state="starting"],
+/* 请求中：短脉动 */
 .ai-status[data-state="requesting"],
 .ai-status[data-state="streaming"] {
   animation: miro-status-pulse 1.6s ease-in-out infinite;

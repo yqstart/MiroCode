@@ -3,7 +3,7 @@
 //! 职责：
 //! 1. 凭据存储：API Key 持久化到 ~/.mirocode/ai-credentials.json（0600），复刻 SSH 凭据模式
 //! 2. 流式补全：用 reqwest 向 AI 服务发起 FIM/completions 请求，tokio 读 SSE 流，
-//!    逐 chunk 通过 Tauri event 推送前端（复刻 LSP spawn_read_loop 模式）
+//!    逐 chunk 通过 Tauri event 推送前端
 //!
 //! 架构约束：不自研模型，仅作 HTTP transport 桥接。
 

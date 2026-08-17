@@ -49,8 +49,6 @@ export interface EditorPreferences {
   formatOnSave: boolean;
   /** 移动文件/文件夹后如何更新相对 import 引用 */
   updateImportsOnMove: UpdateImportsOnMove;
-  /** 启用 LSP 语言服务（TS/JS/Vue）。需宿主已安装 Node + language server */
-  lspEnabled: boolean;
   /** AI 行内智能补全配置 */
   aiCompletion: AiCompletionPrefs;
 }
@@ -80,7 +78,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  theme: "miro-dark",
+  theme: "cyberpunk",
   locale: "zh-CN",
   editor: {
     fontSize: 13,
@@ -92,7 +90,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     prettierEnabled: true,
     formatOnSave: false,
     updateImportsOnMove: "prompt",
-    lspEnabled: true,
     aiCompletion: {
       enabled: false,
       provider: "deepseek",

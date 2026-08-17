@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 use walkdir::WalkDir;
 
 use super::path_util::{ensure_inside_workspace, is_tree_ignored, normalize};
@@ -14,7 +15,23 @@ pub struct DirEntryInfo {
 }
 
 #[tauri::command]
-pub fn list_dir(
+pub async fn list_dir(
+    root: String,
+    path: String,
+    extra_ignores: Option<Vec<String>>,
+) -> Result<Vec<DirEntryInfo>, String> {
+    // 超大目录 read_dir + 排序放 spawn_blocking，避免主线程卡顿
+    let handle = tokio::task::spawn_blocking(move || {
+        list_dir_blocking(root, path, extra_ignores)
+    });
+    match tokio::time::timeout(Duration::from_secs(15), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("列出目录任务失败: {join}")),
+        Err(_) => Err("列出目录超时（15s）".into()),
+    }
+}
+
+fn list_dir_blocking(
     root: String,
     path: String,
     extra_ignores: Option<Vec<String>>,
@@ -55,7 +72,19 @@ pub fn list_dir(
 }
 
 #[tauri::command]
-pub fn read_text_file(root: String, path: String) -> Result<String, String> {
+pub async fn read_text_file(root: String, path: String) -> Result<String, String> {
+    // 20MB 级整读放 spawn_blocking，避免打开大文件时冻结 UI
+    let handle = tokio::task::spawn_blocking(move || {
+        read_text_file_blocking(root, path)
+    });
+    match tokio::time::timeout(Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("读取文件任务失败: {join}")),
+        Err(_) => Err("读取文件超时（30s）".into()),
+    }
+}
+
+fn read_text_file_blocking(root: String, path: String) -> Result<String, String> {
     const MAX_BYTES: u64 = 20 * 1024 * 1024; // 20MB（对齐 read_file_base64 的上限策略）
     let root_path = PathBuf::from(&root);
     let file = normalize(&path)?;
@@ -77,7 +106,19 @@ pub fn read_text_file(root: String, path: String) -> Result<String, String> {
 
 /// 读取工作区内二进制文件为 base64（图片预览）
 #[tauri::command]
-pub fn read_file_base64(root: String, path: String) -> Result<String, String> {
+pub async fn read_file_base64(root: String, path: String) -> Result<String, String> {
+    // 40MB 读取 + base64 编码（产出 ~53MB 字符串）放 spawn_blocking，避免冻结 UI
+    let handle = tokio::task::spawn_blocking(move || {
+        read_file_base64_blocking(root, path)
+    });
+    match tokio::time::timeout(Duration::from_secs(30), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("读取图片任务失败: {join}")),
+        Err(_) => Err("读取图片超时（30s）".into()),
+    }
+}
+
+fn read_file_base64_blocking(root: String, path: String) -> Result<String, String> {
     const MAX_BYTES: usize = 40 * 1024 * 1024; // 40MB
     let root_path = PathBuf::from(&root);
     let file = normalize(&path)?;
@@ -137,7 +178,17 @@ pub fn rename_entry(root: String, from: String, to: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub fn delete_entry(root: String, path: String) -> Result<(), String> {
+pub async fn delete_entry(root: String, path: String) -> Result<(), String> {
+    // 整目录递归删除（remove_dir_all）放 spawn_blocking，避免大目录删除冻结 UI
+    let handle = tokio::task::spawn_blocking(move || delete_entry_blocking(root, path));
+    match tokio::time::timeout(Duration::from_secs(60), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("删除任务失败: {join}")),
+        Err(_) => Err("删除超时（60s）".into()),
+    }
+}
+
+fn delete_entry_blocking(root: String, path: String) -> Result<(), String> {
     let root_path = PathBuf::from(&root);
     let target = normalize(&path)?;
     ensure_inside_workspace(&root_path, &target)?;
@@ -149,7 +200,17 @@ pub fn delete_entry(root: String, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn copy_entry(root: String, from: String, to: String) -> Result<(), String> {
+pub async fn copy_entry(root: String, from: String, to: String) -> Result<(), String> {
+    // 整目录递归复制（WalkDir）放 spawn_blocking，避免大目录复制冻结 UI
+    let handle = tokio::task::spawn_blocking(move || copy_entry_blocking(root, from, to));
+    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("复制任务失败: {join}")),
+        Err(_) => Err("复制超时（120s）".into()),
+    }
+}
+
+fn copy_entry_blocking(root: String, from: String, to: String) -> Result<(), String> {
     let root_path = PathBuf::from(&root);
     let from_path = normalize(&from)?;
     let to_path = PathBuf::from(&to);
@@ -193,4 +254,33 @@ pub fn path_exists(root: String, path: String) -> Result<bool, String> {
     let target = PathBuf::from(&path);
     ensure_inside_workspace(&root_path, &target)?;
     Ok(target.exists())
+}
+
+/// 读取全局用户 snippets 目录（~/.mirocode/snippets/*.json），返回（文件名, 内容）列表。
+/// 与应用级 SSH/AI 凭据同模式（home 目录不受工作区边界限制）；目录不存在返回空。
+#[tauri::command]
+pub fn snippets_read_global() -> Result<Vec<(String, String)>, String> {
+    const MAX_BYTES: u64 = 512 * 1024; // 单文件 512KB 上限（snippet 文件足够）
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .ok_or_else(|| "无法确定用户主目录".to_string())?;
+    let dir = PathBuf::from(home).join(".mirocode").join("snippets");
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".json") {
+            continue;
+        }
+        let meta = entry.metadata().map_err(|e| e.to_string())?;
+        if meta.len() > MAX_BYTES {
+            continue;
+        }
+        let content = fs::read_to_string(entry.path()).map_err(|e| e.to_string())?;
+        out.push((name, content));
+    }
+    Ok(out)
 }

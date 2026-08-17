@@ -154,6 +154,7 @@ class MiroFindPanel implements Panel {
   private wordBtn: HTMLButtonElement;
   private showReplace = false;
   private inputTimer: number | undefined;
+  private destroyed = false;
 
   constructor(view: EditorView) {
     this.view = view;
@@ -469,12 +470,20 @@ class MiroFindPanel implements Panel {
     this.searchField.focus();
     this.searchField.select();
     if (this.query.search.trim()) {
-      revealFirstFromCursor(this.view, this.query);
-      this.refreshMatchCount();
+      // CM 在 update 事务内调用 mount，期间禁止 dispatch（会抛
+      // “Calls to EditorView.update are not allowed while an update is in progress”，
+      // 插件创建失败——表现为搜索过一次后关闭，再 ⌘F 打不开面板）。
+      // 自动选中首个匹配延迟到下一帧执行。
+      requestAnimationFrame(() => {
+        if (this.destroyed) return;
+        revealFirstFromCursor(this.view, this.query);
+        this.refreshMatchCount();
+      });
     }
   }
 
   destroy() {
+    this.destroyed = true;
     window.clearTimeout(this.inputTimer);
     panelByView.delete(this.view);
   }

@@ -17,11 +17,6 @@
 - 许可证：MIT
 - 用途：Git 冲突对比分栏（CompareView）
 
-### vscode-languageserver-protocol（LSP 协议类型）
-- 仓库：https://github.com/microsoft/vscode-languageserver-node
-- 许可证：MIT
-- 用途：前端 LSP 客户端消息结构
-
 ### Vue
 - 仓库：https://github.com/vuejs/core
 - 许可证：MIT

@@ -16,7 +16,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { storeToRefs } from "pinia";
 import { writeClipboard } from "@/shared/clipboard";
 import FileTypeIcon from "@/shared/FileTypeIcon.vue";
-import { basename, dirname, normalizeAbsPath, relativeToRoot } from "@/shared/fs";
+import { basename, dirname, normalizeAbsPath, relativeToRoot, toAbsolutePath } from "@/shared/fs";
 import { isRasterImagePath } from "@/shared/media";
 import {
   applyImportPatches,
@@ -29,6 +29,7 @@ import { formatShortcut } from "@/shared/platform";
 import { revealInOsExplorer } from "@/shared/revealInOs";
 import { useI18n } from "@/i18n";
 import { useEditorStore } from "@/stores/editor";
+import { aggregateDirDirtyCounts } from "@/stores/gitDirtyAggregate";
 import { useGitStore } from "@/stores/git";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
@@ -79,6 +80,24 @@ const gitStatusByPath = computed(() => {
     if (node.isDir) continue;
     const entry = git.statusEntry(node.path);
     if (entry) map.set(node.path, entry);
+  }
+  return map;
+});
+/** entries 按目录聚合（仅随 git 状态刷新重算，不随树的展开/折叠变化） */
+const gitDirDirtyAgg = computed(() => aggregateDirDirtyCounts(git.snapshot.entries));
+/** 目录 → { count, firstAbs }，key 为节点绝对路径；折叠目录据此渲染改动数量徽章 */
+const gitDirtyDirMap = computed(() => {
+  const map = new Map<string, { count: number; firstAbs: string }>();
+  const root = rootPath.value;
+  if (!root) return map;
+  const byDir = gitDirDirtyAgg.value;
+  for (const node of flatTree.value) {
+    if (!node.isDir) continue;
+    const rel = relativeToRoot(root, node.path).replace(/\\/g, "/");
+    const rec = byDir.get(rel);
+    if (rec) {
+      map.set(node.path, { count: rec.count, firstAbs: toAbsolutePath(root, rec.first) });
+    }
   }
   return map;
 });
@@ -510,6 +529,12 @@ async function onContext(event: MouseEvent, path: string, isDir: boolean) {
   };
 }
 
+/** 点击目录改动徽章：自动逐级展开（含懒加载目录）并高亮定位到该目录下第一个改动文件 */
+async function revealDirFirstChanged(node: { path: string }) {
+  const rec = gitDirtyDirMap.value.get(node.path);
+  if (rec) await workspace.revealPath(rec.firstAbs);
+}
+
 async function locateActiveFile() {
   if (!activePath.value) {
     workspace.showNotice(t("notice.noActiveFile"));
@@ -834,6 +859,13 @@ defineExpose({ locateActiveFile });
                 :class="git.statusClass(gitStatusByPath.get(node.path)!.status)"
                 :title="git.statusTitle(gitStatusByPath.get(node.path)!.status)"
               >{{ git.statusLabel(gitStatusByPath.get(node.path)!.status) }}</span>
+            </template>
+            <template v-else-if="gitDirtyDirMap.get(node.path)">
+              <span
+                class="git-badge st-modified dir-dirty"
+                :title="t('explorer.dirDirtyTitle', { count: gitDirtyDirMap.get(node.path)!.count })"
+                @click.stop.prevent="revealDirFirstChanged(node)"
+              >{{ gitDirtyDirMap.get(node.path)!.count }}</span>
             </template>
             <span v-if="dirtySet.has(node.path)" class="dirty-dot" />
           </button>
@@ -1483,6 +1515,8 @@ defineExpose({ locateActiveFile });
 .git-badge.st-deleted  { background: var(--danger);  color: var(--accent-fg); }
 .git-badge.st-renamed  { background: var(--accent);  color: var(--accent-fg); }
 .git-badge.st-conflict { background: var(--danger);  color: var(--accent-fg); }
+.git-badge.dir-dirty { cursor: pointer; }
+.git-badge.dir-dirty:hover { filter: brightness(1.12); }
 
 .dirty-dot {
   margin-left: 4px;

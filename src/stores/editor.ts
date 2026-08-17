@@ -16,8 +16,6 @@ import { useGitStore } from "@/stores/git";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
-import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n";
 
 export interface EditorTab {
   id: string;
@@ -31,6 +29,8 @@ export interface EditorTab {
   previewNonce: number;
   /** 固定标签：关闭其它/左/右/全部时保留 */
   pinned: boolean;
+  /** 相对磁盘有无未保存改动：setContent 时 O(1) 维护，供 dirtyPaths 增量更新 */
+  dirty: boolean;
 }
 
 export const useEditorStore = defineStore("editor", () => {
@@ -62,14 +62,28 @@ export const useEditorStore = defineStore("editor", () => {
     () => tabs.value.find((t) => t.path === activePath.value) ?? null,
   );
 
-  const dirtyPaths = computed(
-    () =>
-      new Set(
-        tabs.value
-          .filter((t) => !isRasterImagePath(t.path) && t.content !== t.original)
-          .map((t) => t.path),
-      ),
-  );
+  // dirty 集合缓存：只在集合内容真正变化时替换 Set 引用。dirty 由 setContent
+  // O(1) 维护（不读 content 字符串），连续输入时引用不变，资源树/状态栏等
+  // 下游组件不会每键整树重渲染；脏标签从干净→脏或反之才触发一次替换
+  let cachedDirtySet: Set<string> | null = null;
+  const dirtyPaths = computed(() => {
+    const next = new Set<string>();
+    for (const t of tabs.value) {
+      if (!isRasterImagePath(t.path) && t.dirty) next.add(t.path);
+    }
+    if (cachedDirtySet && cachedDirtySet.size === next.size) {
+      let same = true;
+      for (const p of next) {
+        if (!cachedDirtySet.has(p)) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return cachedDirtySet;
+    }
+    cachedDirtySet = next;
+    return next;
+  });
 
   function isDirty(path: string) {
     return dirtyPaths.value.has(path);
@@ -123,7 +137,6 @@ export const useEditorStore = defineStore("editor", () => {
       markExternalUpdate(path);
       workspace.selectPath(path);
       workspace.revealPath(path);
-      maybeHintVueLanguageService();
       return;
     }
 
@@ -145,57 +158,16 @@ export const useEditorStore = defineStore("editor", () => {
         cursor: { line: 1, column: 1 },
         previewNonce: Date.now(),
         pinned: false,
+        dirty: false,
       });
       activePath.value = path;
       workspace.selectPath(path);
       workspace.revealPath(path);
-      maybeHintVueLanguageService();
     } catch (error) {
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
       );
-    }
-  }
-
-  /** 保存后通知 LSP server（didSave），触发 server 侧保存后诊断/编译刷新 */
-  function notifyLspDidSave(path: string, text: string): void {
-    void import("@/features/lsp/manager").then(({ lspManager }) => {
-      void lspManager.didSave(path, text);
-    });
-  }
-
-  /** 同会话内 Vue 文件提示只弹一次（避免重复打扰） */
-  let vueLsHintShown = false;
-
-  /**
-   * 打开 Vue 文件且语言服务未就绪时，提示用户一键安装。
-   * 条件：当前 tab 是 Vue && LSP 已启用 && Vue 语言服务未安装 && 宿主无 volar。
-   * 同会话只提示一次。
-   */
-  async function maybeHintVueLanguageService() {
-    if (vueLsHintShown) return;
-    const tab = activeTab.value;
-    if (!tab || tab.language !== "Vue") return;
-    const settings = useSettingsStore();
-    if (!settings.editor.lspEnabled) return;
-    try {
-      const { lsInstaller } = await import("@/features/lsp/installer");
-      // Vue 语言服务已安装则无需提示
-      if (lsInstaller.getState("vue").status?.installedVersion) return;
-      const { detectRuntime } = await import("@/features/lsp/nodeDetector");
-      const rt = await detectRuntime();
-      // 宿主已装 volar 也无需提示
-      if (rt.volar) return;
-      vueLsHintShown = true;
-      const ui = useUiStore();
-      const workspace = useWorkspaceStore();
-      workspace.showNotice(t("lsp.vueFileHint"), 0, {
-        label: t("lsp.install"),
-        onClick: () => ui.openSettings("editor"),
-      });
-    } catch {
-      // 检测失败静默忽略（非 Tauri 环境等）
     }
   }
 
@@ -216,6 +188,7 @@ export const useEditorStore = defineStore("editor", () => {
     const tab = tabs.value.find((t) => t.path === path);
     if (!tab) return;
     tab.content = content;
+    tab.dirty = content !== tab.original;
   }
 
   /** 磁盘内容已更新（如 import 批量替换），同步缓冲区且保持干净状态 */
@@ -225,6 +198,7 @@ export const useEditorStore = defineStore("editor", () => {
     markExternalUpdate(path);
     tab.content = content;
     tab.original = content;
+    tab.dirty = false;
   }
 
   /** 外部磁盘变更：干净标签自动重载；脏标签询问是否覆盖 */
@@ -261,6 +235,7 @@ export const useEditorStore = defineStore("editor", () => {
         const disk = await readTextFile(workspace.rootPath, path);
         if (disk === tab.content) {
           tab.original = disk;
+          tab.dirty = false;
           tab.previewNonce = Date.now();
           continue;
         }
@@ -269,6 +244,7 @@ export const useEditorStore = defineStore("editor", () => {
           markExternalUpdate(path);
           tab.content = disk;
           tab.original = disk;
+          tab.dirty = false;
           tab.previewNonce = Date.now();
           workspace.showNotice(`「${tab.name}」已从磁盘重新加载`);
           continue;
@@ -281,10 +257,12 @@ export const useEditorStore = defineStore("editor", () => {
           markExternalUpdate(path);
           tab.content = disk;
           tab.original = disk;
+          tab.dirty = false;
           tab.previewNonce = Date.now();
           workspace.showNotice(`「${tab.name}」已用磁盘版本覆盖`);
         } else {
           tab.original = disk;
+          tab.dirty = true;
           workspace.showNotice(`「${tab.name}」外部已变更，已保留本地编辑`, 3200);
         }
       } catch (error) {
@@ -327,6 +305,7 @@ export const useEditorStore = defineStore("editor", () => {
         markExternalUpdate(abs);
         tab.content = disk;
         tab.original = disk;
+        tab.dirty = false;
         tab.previewNonce = Date.now();
       } catch (error) {
         workspace.showNotice(
@@ -426,6 +405,7 @@ export const useEditorStore = defineStore("editor", () => {
       if (formatted !== tab.content) {
         markExternalUpdate(tab.path);
         tab.content = formatted;
+        tab.dirty = true;
         if (!options?.quiet) workspace.showNotice(`已格式化 ${tab.name}`);
       } else if (!options?.quiet) {
         workspace.showNotice("无需格式化");
@@ -465,18 +445,16 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     let content = tab.content;
-    if (content === tab.original) return;
+    if (!tab.dirty) return;
     try {
       workspace.markSelfWrite(tab.path);
       await writeTextFile(workspace.rootPath, tab.path, content);
       tab.original = content;
+      tab.dirty = false;
       if (!options?.quiet) {
         workspace.showNotice(`已保存 ${tab.name}`);
       }
       void git.refresh();
-      // LSP 文档同步：通知 server 文件已保存（didSave 定义后此前从未被调用，
-      // 导致 server 依赖保存通知的诊断/编译刷新不触发）
-      void notifyLspDidSave(tab.path, content);
     } catch (error) {
       if (!options?.quiet) {
         workspace.showNotice(
@@ -490,9 +468,7 @@ export const useEditorStore = defineStore("editor", () => {
   async function saveAll(options?: { quiet?: boolean }) {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
-    const dirty = tabs.value.filter(
-      (t) => !isRasterImagePath(t.path) && t.content !== t.original,
-    );
+    const dirty = tabs.value.filter((t) => !isRasterImagePath(t.path) && t.dirty);
     if (!dirty.length) return;
     try {
       let saved = 0;
@@ -506,7 +482,7 @@ export const useEditorStore = defineStore("editor", () => {
         workspace.markSelfWrite(tab.path);
         await writeTextFile(workspace.rootPath, tab.path, tab.content);
         tab.original = tab.content;
-        void notifyLspDidSave(tab.path, tab.content);
+        tab.dirty = false;
         saved += 1;
       }
       if (!options?.quiet && saved > 0) {
@@ -528,7 +504,7 @@ export const useEditorStore = defineStore("editor", () => {
   async function closeTab(path: string) {
     const tab = tabs.value.find((t) => t.path === path);
     if (!tab) return;
-    if (tab.content !== tab.original && !isRasterImagePath(tab.path)) {
+    if (tab.dirty) {
       const ok = window.confirm(`「${tab.name}」有未保存更改，仍要关闭？`);
       if (!ok) return;
     }
@@ -638,7 +614,7 @@ export const useEditorStore = defineStore("editor", () => {
     // 脏标签汇总确认（与 closeTab / 切换工作区一致）：
     // 删除目录可能连带关闭含未保存改动的文件，静默丢弃不可接受
     const dirty = victims.filter(
-      (t) => !isRasterImagePath(t.path) && t.content !== t.original,
+      (t) => !isRasterImagePath(t.path) && t.dirty,
     );
     if (dirty.length > 0) {
       const ok = window.confirm(
@@ -659,7 +635,7 @@ export const useEditorStore = defineStore("editor", () => {
   /** 切换工作区前：有未保存更改则确认是否丢弃 */
   function confirmDiscardForWorkspaceSwitch(): boolean {
     const dirty = tabs.value.filter(
-      (t) => !isRasterImagePath(t.path) && t.content !== t.original,
+      (t) => !isRasterImagePath(t.path) && t.dirty,
     );
     if (!dirty.length) return true;
     return window.confirm(

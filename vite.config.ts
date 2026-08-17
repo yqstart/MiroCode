@@ -1,15 +1,91 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+import replace from "@rollup/plugin-replace";
+import { transformSync } from "esbuild";
 import { fileURLToPath, URL } from "node:url";
 
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig(async () => ({
-  plugins: [vue()],
+  plugins: [
+    // typescript 编译器 UMD 内的 node 引用替换为浏览器兼容值（类型服务 chunk 专用；
+    // 项目源码无 process 引用，精确子串替换安全）
+    replace({
+      preventAssignment: true,
+      values: {
+        "process.platform": JSON.stringify("browser"),
+        "process.cwd()": "(() => '/')()",
+        "process.nextTick(": "((fn, ...args) => setTimeout(() => fn(...args), 0))(",
+        "process.memoryUsage()": "(() => ({ rss: 0, heapTotal: 0, heapUsed: 0 }))()",
+        "process.env": "({})",
+        "process.pid": "0",
+        "process.execArgv": "[]",
+        "process.argv": "[]",
+        "process.exit(": "((code) => { throw new Error('process.exit(' + code + ')'); })(",
+        "process.stdout": "({ write: () => {}, isTTY: false })",
+        "process.recordreplay": "undefined",
+        "process.browser": "true",
+      },
+    }),
+    // rollup 无法静态分析 typescript.js 巨型 IIFE-UMD 的导出（dev 的 esbuild
+    // 预构建正常，build 会丢 API）→ build 阶段用 esbuild 把 UMD 转 ESM
+    {
+      name: "typescript-umd-to-esm",
+      apply: "build",
+      enforce: "pre",
+      transform(code, id) {
+        if (id.includes("/typescript/lib/typescript.js")) {
+          const out = transformSync(code, {
+            format: "esm",
+            platform: "browser",
+            target: "es2020",
+          });
+          return { code: out.code, map: null };
+        }
+        return null;
+      },
+    },
+    vue(),
+  ],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        // 稳定大依赖拆独立 vendor chunk：入口只含业务代码，冷启动解析量更小、
+        // vendor 变更不触发全量缓存失效；语言服务/类型服务等已走动态 import 独立 chunk
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (
+            id.includes("@codemirror") ||
+            id.includes("@lezer") ||
+            id.includes("style-mod") ||
+            id.includes("crelt") ||
+            id.includes("w3c-keyname")
+          ) {
+            return "cm-vendor";
+          }
+          if (
+            id.includes("vue") ||
+            id.includes("pinia") ||
+            id.includes("@vue")
+          ) {
+            return "vue-vendor";
+          }
+          if (id.includes("xterm")) {
+            return "xterm-vendor";
+          }
+          if (id.includes("typescript")) {
+            return "typescript-vendor";
+          }
+          return undefined;
+        },
+      },
+    },
+    chunkSizeWarningLimit: 1200,
   },
   clearScreen: false,
   server: {
