@@ -9,6 +9,15 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      platform:
+        description: "手动补包时选择目标平台"
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - linux
 
 permissions:
   contents: write
@@ -35,7 +44,7 @@ jobs:
             args: ""
             rust_targets: ""
           - name: Linux x64
-            platform: ubuntu-22.04
+            platform: ubuntu-24.04
             args: ""
             rust_targets: ""
           - name: Windows x64
@@ -46,13 +55,34 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
+      - name: Select build target
+        id: select
+        shell: bash
+        env:
+          RELEASE_EVENT: ${{ github.event_name }}
+          REQUESTED_PLATFORM: ${{ inputs.platform }}
+          MATRIX_NAME: ${{ matrix.name }}
+        run: |
+          if [[ "$RELEASE_EVENT" != "workflow_dispatch" || "$REQUESTED_PLATFORM" == "all" || ("$REQUESTED_PLATFORM" == "linux" && "$MATRIX_NAME" == "Linux x64") ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v5
+        if: steps.select.outputs.run == 'true'
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: steps.select.outputs.run == 'true' && matrix.platform == 'ubuntu-24.04'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          timeout 180s sudo apt-get update \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30
+          timeout 300s sudo apt-get install -y \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
@@ -60,30 +90,36 @@ jobs:
             xdg-utils
 
       - uses: pnpm/action-setup@v5
+        if: steps.select.outputs.run == 'true'
         with:
           version: 9
 
       - uses: actions/setup-node@v5
+        if: steps.select.outputs.run == 'true'
         with:
           node-version: 22
           cache: pnpm
 
       - name: Install Rust stable
+        if: steps.select.outputs.run == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_targets }}
 
       - uses: Swatinem/rust-cache@v2
+        if: steps.select.outputs.run == 'true'
         with:
           workspaces: src-tauri -> target
           key: ${{ matrix.platform }}
 
       - name: Install frontend dependencies
+        if: steps.select.outputs.run == 'true'
         run: pnpm install --frozen-lockfile
 
       # 从 CHANGELOG.md 生成 Release 正文（变更项 + 安装说明），与应用内「新功能」同源
       - name: Prepare release notes
         id: notes
+        if: steps.select.outputs.run == 'true'
         shell: bash
         run: |
           VERSION=$(node -p "require('./package.json').version")
@@ -97,7 +133,7 @@ jobs:
 
       # 可选：配置 Windows 代码签名证书后，Release 构建会自动 Authenticode 签名，消除 SmartScreen「不安全」提示
       - name: Import Windows code signing certificate
-        if: matrix.platform == 'windows-latest'
+        if: steps.select.outputs.run == 'true' && matrix.platform == 'windows-latest'
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
@@ -127,7 +163,7 @@ jobs:
           "WINDOWS_CERTIFICATE_THUMBPRINT=$env:WINDOWS_CERTIFICATE_THUMBPRINT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Enable Windows code signing in tauri.conf.json
-        if: matrix.platform == 'windows-latest' && env.WINDOWS_SIGNING_ENABLED == 'true'
+        if: steps.select.outputs.run == 'true' && matrix.platform == 'windows-latest' && env.WINDOWS_SIGNING_ENABLED == 'true'
         shell: node
         run: |
           const fs = require('fs');
@@ -144,6 +180,7 @@ jobs:
       # 若该 tag 已有 Release（如已手建的 v0.1.0），会把产物挂上去；
       # 若没有，则自动创建同名 Release。
       - name: Build and upload to Release
+        if: steps.select.outputs.run == 'true'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
