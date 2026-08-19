@@ -9,8 +9,10 @@ import {
   gitCheckoutRemote,
   gitCherryPick,
   gitCommit,
+  gitCreateTag,
   gitCreateBranch,
   gitCreateBranchAt,
+  gitDeleteTag,
   gitDeleteBranch,
   gitDeleteRemoteBranch,
   gitDiff,
@@ -41,6 +43,8 @@ import {
   gitStashDrop,
   gitStashList,
   gitStashPop,
+  gitPushTag,
+  gitTags,
   gitStatus,
   gitUndoCommit,
   gitUnstage,
@@ -54,6 +58,7 @@ import {
   type GitStashEntry,
   type GitStatusEntry,
   type GitStatusSnapshot,
+  type GitTagInfo,
 } from "@/shared/gitApi";
 import { t } from "@/i18n";
 import { relativeToRoot } from "@/shared/fs";
@@ -63,6 +68,7 @@ const EMPTY: GitStatusSnapshot = {
   initialized: false,
   branch: null,
   upstream: null,
+  head: null,
   ahead: 0,
   behind: 0,
   entries: [],
@@ -80,6 +86,7 @@ const EMPTY_REBASE: GitRebaseStatus = {
 export const useGitStore = defineStore("git", () => {
   const snapshot = ref<GitStatusSnapshot>({ ...EMPTY });
   const branches = ref<GitBranchInfo[]>([]);
+  const tags = ref<GitTagInfo[]>([]);
   const log = ref<GitCommitInfo[]>([]);
   const stashes = ref<GitStashEntry[]>([]);
   const logLimit = ref(80);
@@ -180,6 +187,7 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath) {
       snapshot.value = { ...EMPTY };
       branches.value = [];
+      tags.value = [];
       stashes.value = [];
       conflictFiles.value = [];
       checkedMap.value = {};
@@ -201,15 +209,17 @@ export const useGitStore = defineStore("git", () => {
         snapshot.value = next;
         if (snapshot.value.initialized) {
           // 与 gitStatus 结果相互独立的 3 项查询并行化，缩短整体阻塞
-          const [branchesRes, stashesRes, rebaseRes] = await Promise.all([
+          const [branchesRes, stashesRes, rebaseRes, tagsRes] = await Promise.all([
             gitBranches(workspace.rootPath),
             gitStashList(workspace.rootPath).catch(() => []),
             gitRebaseStatus(workspace.rootPath).catch(() => ({
               ...EMPTY_REBASE,
             })),
+            gitTags(workspace.rootPath).catch(() => []),
           ]);
           if (seq !== refreshSeq) return;
           branches.value = branchesRes;
+          tags.value = tagsRes;
           stashes.value = stashesRes as typeof stashes.value;
           rebaseStatus.value = rebaseRes;
           // 冲突文件直接从 status 快照派生（entries 已带 conflicted 标记），
@@ -222,6 +232,7 @@ export const useGitStore = defineStore("git", () => {
               : [];
         } else {
           branches.value = [];
+          tags.value = [];
           stashes.value = [];
           conflictFiles.value = [];
           rebaseStatus.value = { ...EMPTY_REBASE };
@@ -780,6 +791,7 @@ export const useGitStore = defineStore("git", () => {
   function clearForWorkspaceSwitch() {
     snapshot.value = { ...EMPTY };
     branches.value = [];
+    tags.value = [];
     log.value = [];
     stashes.value = [];
     logLimit.value = 80;
@@ -1069,6 +1081,58 @@ export const useGitStore = defineStore("git", () => {
     }
   }
 
+  async function createTagAt(
+    name: string,
+    commitId: string,
+    message?: string,
+  ) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    try {
+      await gitCreateTag(workspace.rootPath, name, commitId, message);
+      workspace.showNotice(t("git.tagCreated", { name }));
+      await refresh();
+      await loadLog();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function deleteTag(name: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    if (!window.confirm(t("git.deleteTagConfirm", { name }))) return;
+    try {
+      await gitDeleteTag(workspace.rootPath, name);
+      workspace.showNotice(t("git.tagDeleted", { name }));
+      await refresh();
+      await loadLog();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+
+  async function pushTag(name: string, remote?: string) {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    const target = remote ?? snapshot.value.upstream?.split("/")[0] ?? "origin";
+    try {
+      const message = await gitPushTag(workspace.rootPath, target, name);
+      workspace.showNotice(message);
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        4800,
+      );
+    }
+  }
+
   async function checkoutCommit(commitId: string) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
@@ -1305,6 +1369,7 @@ export const useGitStore = defineStore("git", () => {
   return {
     snapshot,
     branches,
+    tags,
     log,
     stashes,
     logLimit,
@@ -1374,6 +1439,9 @@ export const useGitStore = defineStore("git", () => {
     deleteRemoteBranch,
     compareBranchWithCurrent,
     createBranchAt,
+    createTagAt,
+    deleteTag,
+    pushTag,
     checkoutCommit,
     checkoutRemote,
     cherryPick,

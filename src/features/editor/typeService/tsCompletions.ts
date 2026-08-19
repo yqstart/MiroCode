@@ -3,7 +3,7 @@
 // 类型感知：obj. 成员来自真实类型推断；未导入符号附带自动导入（VS Code Auto Import）。
 
 import type { Completion, CompletionContext, CompletionSource } from "@codemirror/autocomplete";
-import { ensureTypeService, syncOpenedFile, tsService } from "./index";
+import { ensureTypeScriptProgram, tsService } from "./index";
 import { buildAutoImportApply, type TsCompletionEntry } from "./tsService";
 
 /** ts.CompletionEntry.kind（TS 字符串枚举）→ CM6 type */
@@ -36,116 +36,34 @@ function buildApply(
 }
 
 /**
- * import spec → 解析结果缓存：磁盘布局跨补全激活稳定，避免每次激活
- * 对每个 spec 重复发起 pathExists IPC（单个 spec 最坏 12 次串行）。
- * 未命中（null）短 TTL 兜底，文件稍后创建时能重新解析。
+ * 创建类型服务补全源（JS/TS/Vue script 使用）
  */
-interface SpecResolveEntry {
-  resolved: string | null;
-  at: number;
-}
-const specResolveCache = new Map<string, SpecResolveEntry>();
-const NULL_RESOLVE_TTL_MS = 15_000;
-
-function cachedResolveImportPath(
-  root: string,
+export function createTsCompletionSource(
   filePath: string,
-  spec: string,
-): Promise<string | null> {
-  const key = `${filePath}\u0000${spec}`;
-  const hit = specResolveCache.get(key);
-  if (hit && (hit.resolved !== null || Date.now() - hit.at < NULL_RESOLVE_TTL_MS)) {
-    return Promise.resolve(hit.resolved);
-  }
-  return (async () => {
-    const { resolveImportPath } = await import("@/shared/importReferences");
-    const resolved = await resolveImportPath(root, filePath, spec);
-    if (specResolveCache.size >= 400) {
-      const oldest = specResolveCache.keys().next().value;
-      if (oldest !== undefined) specResolveCache.delete(oldest);
-    }
-    specResolveCache.set(key, { resolved, at: Date.now() });
-    return resolved;
-  })();
-}
-
-/** 把已打开 tabs + 当前文件直接 import 链目标注册进类型服务程序 */
-async function ensureProgramFiles(filePath: string, docText: string): Promise<void> {
-  // 已打开文件全部注册（跨文件类型可见）。setFile 对内容未变的文件
-  // 不再递增版本（见 tsService.setFile），此处实际只更新有编辑的文件
-  try {
-    const { useEditorStore } = await import("@/stores/editor");
-    for (const tab of useEditorStore().tabs) {
-      if (!/\.vue$/i.test(tab.path)) {
-        tsService.setFile(tab.path, tab.content);
-      }
-    }
-  } catch {
-    // store 不可用：跳过（当前文件仍在）
-  }
-  // 当前文件直接 import spec → 解析目标并注册（递归一层足够日常）
-  try {
-    const { useWorkspaceStore } = await import("@/stores/workspace");
-    const root = useWorkspaceStore().rootPath;
-    if (!root) return;
-    const { IMPORT_RE } = await import("@/shared/importReferences");
-    const re = new RegExp(IMPORT_RE.source, "g");
-    const specs: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(docText))) {
-      const spec = m[1];
-      if ((spec.startsWith(".") || spec.startsWith("@/")) && !specs.includes(spec)) {
-        specs.push(spec);
-      }
-    }
-    for (const spec of specs) {
-      try {
-        const resolved = await cachedResolveImportPath(root, filePath, spec);
-        if (resolved) await tsService.ensureFile(resolved);
-      } catch {
-        // 单文件失败不影响整体
-      }
-    }
-  } catch {
-    // 无工作区：仅当前文件
-  }
-}
-
-/**
- * 创建类型服务补全源（仅非 .vue 的 script 文件使用）
- */
-export function createTsCompletionSource(filePath: string): CompletionSource {
+  sourceOptions?: {
+    serviceFilePath?: string;
+    serviceText?: (document: string) => string;
+  },
+): CompletionSource {
   return async (context: CompletionContext) => {
     const docText = context.state.doc.toString();
     const pos = context.pos;
+    const serviceFilePath = sourceOptions?.serviceFilePath ?? filePath;
+    const serviceText = sourceOptions?.serviceText?.(docText) ?? docText;
 
-    // 1. 确保类型服务就绪（惰性加载 typescript；未就绪返回 null 降级）
-    if (!tsService.ready) {
-      try {
-        const { useWorkspaceStore } = await import("@/stores/workspace");
-        const root = useWorkspaceStore().rootPath;
-        if (!root) return null;
-        const ok = await ensureTypeService(root);
-        if (!ok) return null;
-      } catch {
-        return null;
-      }
-    }
-
-    // 2. 当前文件入程序（版本递增触发增量编译）
-    syncOpenedFile(filePath, docText);
-
-    // 3. 程序文件（已打开 + import 链目标）
+    // 准备当前文件与 import 闭包；未就绪/加载失败时回退轻量语义补全。
     try {
-      await ensureProgramFiles(filePath, docText);
+      const { useWorkspaceStore } = await import("@/stores/workspace");
+      const root = useWorkspaceStore().rootPath;
+      if (!root || !(await ensureTypeScriptProgram(root, serviceFilePath, serviceText))) return null;
     } catch {
-      // 程序文件不完整也可查询（仅当前文件）
+      return null;
     }
 
-    // 4. 查询补全（同步；异常降级）
+    // 查询补全（同步；异常降级）
     let entries: TsCompletionEntry[];
     try {
-      entries = tsService.completionsAt(filePath, pos);
+      entries = tsService.completionsAt(serviceFilePath, pos);
     } catch {
       return null;
     }
@@ -154,7 +72,7 @@ export function createTsCompletionSource(filePath: string): CompletionSource {
     const word = context.matchBefore(/[\w$]*/);
     const wordFrom = word?.from ?? pos;
 
-    // 5. 转换（最多 60 项；sortText 透传 CM 排序；文档懒加载）
+    // 转换（最多 60 项；sortText 透传 CM 排序；文档懒加载）
     const options: Completion[] = entries.slice(0, 60).map((e) => {
       const cm: Completion = {
         label: e.name,
@@ -172,7 +90,7 @@ export function createTsCompletionSource(filePath: string): CompletionSource {
         const el = document.createElement("div");
         el.className = "miro-completion-doc";
         try {
-          const details = tsService.completionDetails(filePath, pos, e.name);
+          const details = tsService.completionDetails(serviceFilePath, pos, e.name);
           el.textContent = details?.documentation || e.kindModifiers || e.name;
           if (details?.detail) {
             const d = document.createElement("div");

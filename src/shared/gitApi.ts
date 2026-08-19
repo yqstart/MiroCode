@@ -57,6 +57,8 @@ export interface GitStatusSnapshot {
   initialized: boolean;
   branch: string | null;
   upstream: string | null;
+  /** 当前 HEAD 提交短 id（无提交 / detached 场景为空） */
+  head: string | null;
   ahead: number;
   behind: number;
   entries: GitStatusEntry[];
@@ -74,11 +76,31 @@ export interface GitCommitInfo {
   id: string;
   summary: string;
   author: string;
+  authorEmail: string;
+  committer: string;
+  committerEmail: string;
   time: string;
+  body: string;
   files: string[];
+  changes: GitFileChange[];
   parents: string[];
   refs: string[];
   unpushed: boolean;
+}
+
+export interface GitFileChange {
+  path: string;
+  oldPath: string | null;
+  status: "added" | "deleted" | "modified" | "renamed" | "copied" | "typechange" | string;
+}
+
+export interface GitTagInfo {
+  name: string;
+  target: string;
+  annotated: boolean;
+  tagger: string | null;
+  time: string | null;
+  message: string | null;
 }
 
 export interface GitDiffResult {
@@ -165,6 +187,46 @@ export async function gitLog(
   return ipc("git_log", { root, limit });
 }
 
+export async function gitTags(root: string): Promise<GitTagInfo[]> {
+  return ipc("git_tags", { root });
+}
+
+export async function gitCommitFiles(
+  root: string,
+  leftRef: string,
+  rightRef: string,
+): Promise<GitFileChange[]> {
+  return ipc("git_commit_files", { root, leftRef, rightRef });
+}
+
+export async function gitCreateTag(
+  root: string,
+  name: string,
+  commitId: string,
+  message?: string,
+  force?: boolean,
+): Promise<void> {
+  return ipc("git_create_tag", {
+    root,
+    name,
+    commitId,
+    message: message ?? null,
+    force: force ?? false,
+  });
+}
+
+export async function gitDeleteTag(root: string, name: string): Promise<void> {
+  return ipc("git_delete_tag", { root, name });
+}
+
+export async function gitPushTag(
+  root: string,
+  remote: string,
+  name: string,
+): Promise<string> {
+  return ipc("git_push_tag", { root, remote, name });
+}
+
 export async function gitDiff(
   root: string,
   path?: string,
@@ -202,6 +264,11 @@ export async function gitConflictSides(
   path: string,
 ): Promise<GitConflictSides> {
   return ipc("git_conflict_sides", { root, path });
+}
+
+/** 取 HEAD 中该文件的文本（未跟踪/不存在返回空串），供编辑器行内改动条逐行 diff */
+export async function gitHeadText(root: string, path: string): Promise<string> {
+  return ipc("git_head_text", { root, path });
 }
 
 export async function gitPull(

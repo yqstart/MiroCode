@@ -1,46 +1,72 @@
-// ==================== Rename Symbol（LSP 简化版 v1） ====================
-// 跨文件 rename symbol：基于 findReferences + 编辑器 StateEffect。
-// 流程：
-// 1. 光标落在 word 上 → 调 findReferences
-// 2. 按行倒序替换（避免行号偏移）
-// 3. 替换完成后 saveAll
-// 4. 刷新工作区符号缓存
-//
-// F2 键触发；冲突防护：单词必须匹配 [A-Za-z_$][\w$]*
+// ==================== Rename Symbol ====================
+// JS/TS 优先使用 TypeScript LanguageService 的精确引用位置；Vue script 段
+// 使用等长虚拟 TS 文件映射，其他语言/模板场景保留轻量索引兜底。
 
 import type { EditorView } from "@codemirror/view";
-import { workspaceSymbols } from "@/features/editor/workspaceSymbols";
 import { findReferences, type ReferenceLocation } from "@/features/editor/findReferences";
 import { wordAt } from "@/features/editor/documentSymbols";
+import { workspaceSymbols } from "@/features/editor/workspaceSymbols";
+import { readTextFile, writeTextFile } from "@/shared/fs";
 import { useEditorStore } from "@/stores/editor";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const WORD_RE = /^[A-Za-z_$][\w$]*$/;
 
-/** CodeMirror 视图内按行倒序替换 */
+function lineColumnToOffset(text: string, line: number, column: number): number | null {
+  if (line < 1 || column < 1) return null;
+  let lineStart = 0;
+  let currentLine = 1;
+  while (currentLine < line) {
+    const next = text.indexOf("\n", lineStart);
+    if (next < 0) return null;
+    lineStart = next + 1;
+    currentLine += 1;
+  }
+  const offset = lineStart + column - 1;
+  return offset <= text.length ? offset : null;
+}
+
 function applyEditsInView(
   view: EditorView,
   edits: Array<{ from: number; to: number; insert: string }>,
 ): void {
-  if (edits.length === 0) return;
-  // 按 from 倒序，CodeMirror dispatch 单次事务
-  const sorted = [...edits].sort((a, b) => b.from - a.from);
+  if (!edits.length) return;
   view.dispatch({
-    changes: sorted,
+    changes: [...edits].sort((a, b) => b.from - a.from),
     userEvent: "rename.symbol",
   });
 }
 
-/** 加载文件内容（优先用编辑器中已打开的版本） */
-function getFileContent(
-  editorStore: ReturnType<typeof useEditorStore>,
+async function loadFileContent(
+  root: string,
   path: string,
-): string | null {
-  const tab = editorStore.tabs.find((t) => t.path === path);
-  return tab?.content ?? null;
+  editorStore: ReturnType<typeof useEditorStore>,
+): Promise<string | null> {
+  const tab = editorStore.tabs.find((item) => item.path === path);
+  if (tab) return tab.content;
+  try {
+    return await readTextFile(root, path);
+  } catch {
+    return null;
+  }
 }
 
-/** 主入口：执行 rename。返回替换处数；返回 -1 表示取消 / 错误 */
+function buildReplacement(
+  content: string,
+  refs: ReferenceLocation[],
+  oldName: string,
+  newName: string,
+): Array<{ from: number; to: number; insert: string }> {
+  const edits: Array<{ from: number; to: number; insert: string }> = [];
+  for (const ref of refs) {
+    const from = lineColumnToOffset(content, ref.line, ref.column);
+    if (from === null || content.slice(from, from + oldName.length) !== oldName) continue;
+    edits.push({ from, to: from + oldName.length, insert: newName });
+  }
+  return edits;
+}
+
+/** 主入口：跨文件语义重命名；返回替换处数，cancelled 表示取消/无效输入。 */
 export async function renameSymbol(
   view: EditorView,
   newName: string,
@@ -48,109 +74,111 @@ export async function renameSymbol(
   sourceFile: string,
 ): Promise<{ replaced: number; cancelled: boolean }> {
   if (!WORD_RE.test(newName)) {
+    useWorkspaceStore().showNotice("符号名只能包含字母、数字、下划线或 $", 2600);
     return { replaced: 0, cancelled: true };
   }
-  const doc = view.state.doc.toString();
+  const sourceContent = view.state.doc.toString();
   const pos = view.state.selection.main.head;
-  const hit = wordAt(doc, pos);
-  if (!hit) return { replaced: 0, cancelled: true };
-
-  const oldName = hit.word;
-  if (oldName === newName) return { replaced: 0, cancelled: true };
+  const hit = wordAt(sourceContent, pos);
+  if (!hit || hit.word === newName) return { replaced: 0, cancelled: true };
 
   const editorStore = useEditorStore();
-
-  // 1) 找全部引用（包括定义点）
-  const refs = await findReferences(oldName, sourceFile, doc, root);
-
-  // 2) 加载每个引用文件的最新内容
-  const fileContents = new Map<string, string>();
-  for (const r of refs) {
-    if (fileContents.has(r.path)) continue;
-    const content = getFileContent(editorStore, r.path);
-    fileContents.set(r.path, content ?? "");
+  const refs = await findReferences(hit.word, sourceFile, sourceContent, root, {
+    position: pos,
+    maxDepth: 8,
+    forRename: true,
+  });
+  if (!refs.length) {
+    useWorkspaceStore().showNotice(`未找到「${hit.word}」的可重命名引用`, 2600);
+    return { replaced: 0, cancelled: false };
   }
 
-  // 3) 按文件分组，按行倒序计算 edit
   const byFile = new Map<string, ReferenceLocation[]>();
-  for (const r of refs) {
-    const list = byFile.get(r.path) ?? [];
-    list.push(r);
-    byFile.set(r.path, list);
+  for (const ref of refs) {
+    const list = byFile.get(ref.path) ?? [];
+    list.push(ref);
+    byFile.set(ref.path, list);
   }
-  for (const list of byFile.values()) {
-    list.sort((a, b) => b.line - a.line || b.column - a.column);
+  const previewFiles = [...byFile.keys()].map((path) => path.split(/[/\\]/).pop() ?? path);
+  if (
+    !window.confirm(
+      `将把「${hit.word}」重命名为「${newName}」，影响 ${refs.length} 处、${byFile.size} 个文件。\n\n${previewFiles.join("\n")}\n\n继续？`,
+    )
+  ) {
+    return { replaced: 0, cancelled: true };
   }
 
-  // 4) 对每个文件构造替换 edit（offset 由 line/column + 行长度累加算出）
+  const workspace = useWorkspaceStore();
+  const editedOpenFiles = new Set<string>();
+  const filesToWrite = new Map<string, string>();
   let totalReplaced = 0;
-  const editedFiles = new Set<string>();
-  for (const [file, list] of byFile.entries()) {
-    const text = fileContents.get(file) ?? "";
-    const lines = text.split("\n");
-    // 当前文件若是 editor 打开的：用 view.dispatch 直接改
-    if (file === sourceFile) {
-      const edits: Array<{ from: number; to: number; insert: string }> = [];
-      for (const ref of list) {
-        const lineIdx = ref.line - 1;
-        if (lineIdx < 0 || lineIdx >= lines.length) continue;
-        const lineText = lines[lineIdx];
-        // 列号 → 字符 index
-        const colIdx = ref.column - 1;
-        // 校验：from..to 必须是 oldName
-        const slice = lineText.slice(colIdx, colIdx + oldName.length);
-        if (slice !== oldName) continue;
-        // 转为 view state offset：state.doc 的 line/column 与 lines 数组一致
-        const fromPos = view.state.doc.line(ref.line).from + colIdx;
-        const toPos = fromPos + oldName.length;
-        edits.push({ from: fromPos, to: toPos, insert: newName });
-        totalReplaced += 1;
-      }
-      applyEditsInView(view, edits);
-      editedFiles.add(file);
+
+  // 当前视图直接 dispatch，保留 CodeMirror 历史/选区语义。
+  const sourceRefs = byFile.get(sourceFile) ?? [];
+  const sourceEdits = buildReplacement(sourceContent, sourceRefs, hit.word, newName);
+  applyEditsInView(view, sourceEdits);
+  if (sourceEdits.length) {
+    totalReplaced += sourceEdits.length;
+    editedOpenFiles.add(sourceFile);
+  }
+
+  for (const [file, fileRefs] of byFile) {
+    if (file === sourceFile) continue;
+    const content = await loadFileContent(root, file, editorStore);
+    if (content === null) continue;
+    const edits = buildReplacement(content, fileRefs, hit.word, newName);
+    if (!edits.length) continue;
+    const sorted = [...edits].sort((a, b) => b.from - a.from);
+    let next = content;
+    for (const edit of sorted) {
+      next = next.slice(0, edit.from) + edit.insert + next.slice(edit.to);
+    }
+    totalReplaced += edits.length;
+    const tab = editorStore.tabs.find((item) => item.path === file);
+    if (tab) {
+      editorStore.markExternalUpdate(file);
+      editorStore.setContent(file, next);
+      editedOpenFiles.add(file);
     } else {
-      // 其他文件：记下要替换的 (line, col) + 旧/新名
-      // 真实写入留给 saveAll 阶段（用户必须先打开 / 已打开才会被替换）
-      // v1 简化：仅处理当前已打开的标签页；其他文件跳过（提示用户打开）
-      const tab = editorStore.tabs.find((t) => t.path === file);
-      if (!tab) continue; // 跳过未打开
-      // 在 tab.content 上做文本替换（按行倒序）
-      const linesArr = tab.content.split("\n");
-      const newLines = [...linesArr];
-      let fileReplaced = 0;
-      for (const ref of list) {
-        const lineIdx = ref.line - 1;
-        if (lineIdx < 0 || lineIdx >= linesArr.length) continue;
-        const lineText = newLines[lineIdx];
-        const colIdx = ref.column - 1;
-        const slice = lineText.slice(colIdx, colIdx + oldName.length);
-        if (slice !== oldName) continue;
-        newLines[lineIdx] = lineText.slice(0, colIdx) + newName + lineText.slice(colIdx + oldName.length);
-        fileReplaced += 1;
-      }
-      if (fileReplaced > 0) {
-        const newContent = newLines.join("\n");
-        // rename 是外部修改（非用户在 CM 内输入），标记后 watcher 才会同步到 CM
-        editorStore.markExternalUpdate(file);
-        editorStore.setContent(file, newContent);
-        totalReplaced += fileReplaced;
-        editedFiles.add(file);
-      }
+      filesToWrite.set(file, next);
     }
   }
 
-  // 5) 失效被编辑文件的缓存（避免索引与新内容不一致）
-  for (const f of editedFiles) {
-    workspaceSymbols.invalidate(f);
+  // 未打开文件直接写盘，不再要求用户手动逐个打开；打开标签只保存本次编辑的文件。
+  for (const [file, content] of filesToWrite) {
+    try {
+      workspace.markSelfWrite(file);
+      await writeTextFile(root, file, content);
+    } catch (error) {
+      workspace.showNotice(
+        `写入 ${file} 失败：${error instanceof Error ? error.message : String(error)}`,
+        3600,
+      );
+    }
   }
 
-  // 6) 保存所有被改动的文件
-  if (editedFiles.size > 0) {
-    await editorStore.saveAll({ quiet: true });
-    const workspace = useWorkspaceStore();
+  for (const file of editedOpenFiles) {
+    const tab = editorStore.tabs.find((item) => item.path === file);
+    if (!tab) continue;
+    try {
+      workspace.markSelfWrite(file);
+      await writeTextFile(root, file, tab.content);
+      editorStore.syncFromDisk(file, tab.content);
+    } catch (error) {
+      workspace.showNotice(
+        `写入 ${file} 失败：${error instanceof Error ? error.message : String(error)}`,
+        3600,
+      );
+    }
+  }
+
+  for (const file of [...editedOpenFiles, ...filesToWrite.keys()]) {
+    workspaceSymbols.invalidate(file);
+  }
+  if (totalReplaced > 0) {
     workspace.showNotice(
-      `已重命名 ${oldName} → ${newName}，共 ${totalReplaced} 处（${editedFiles.size} 个文件）`,
-      3000,
+      `已重命名 ${hit.word} → ${newName}，共 ${totalReplaced} 处（${byFile.size} 个文件）`,
+      3200,
     );
   }
   return { replaced: totalReplaced, cancelled: false };

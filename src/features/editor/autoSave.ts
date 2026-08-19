@@ -1,6 +1,7 @@
-import { watch, type WatchStopHandle } from "vue";
+import { nextTick, watch, type WatchStopHandle } from "vue";
 import { useEditorStore } from "@/stores/editor";
 import { useSettingsStore } from "@/stores/settings";
+import { useSessionsStore } from "@/stores/sessions";
 
 /**
  * 自动保存：
@@ -10,9 +11,11 @@ import { useSettingsStore } from "@/stores/settings";
 export function setupAutoSave(): () => void {
   const settings = useSettingsStore();
   const editor = useEditorStore();
+  const sessions = useSessionsStore();
 
   let delayTimer: number | undefined;
-  let flushing = false;
+  let flushPromise: Promise<void> | null = null;
+  let closePromise: Promise<void> | null = null;
   const stops: WatchStopHandle[] = [];
   const cleanups: Array<() => void> = [];
 
@@ -30,20 +33,26 @@ export function setupAutoSave(): () => void {
     const delay = Math.max(200, settings.editor.autoSaveDelayMs || 1000);
     delayTimer = window.setTimeout(() => {
       delayTimer = undefined;
-      void editor.saveAll({ quiet: true });
+      void flushNow();
     }, delay);
   }
 
   async function flushNow() {
+    if (flushPromise) {
+      await flushPromise;
+      return;
+    }
     if (!settings.editor.autoSave) return;
-    if (flushing) return;
     if (!editor.dirtyPaths.size) return;
-    flushing = true;
     clearDelay();
+    const current = editor.saveAll({ quiet: true });
+    flushPromise = current;
     try {
-      await editor.saveAll({ quiet: true });
+      await current;
     } finally {
-      flushing = false;
+      if (flushPromise === current) {
+        flushPromise = null;
+      }
     }
   }
 
@@ -91,10 +100,24 @@ export function setupAutoSave(): () => void {
       const win = getCurrentWindow();
       closeUnlisten = await win.onCloseRequested(async (event) => {
         event.preventDefault();
-        await flushNow();
-        closeUnlisten?.();
-        closeUnlisten = undefined;
-        await win.destroy();
+        // macOS 红点关闭可能在清理期间重复触发；复用同一个 Promise，
+        // 避免多个 close handler 同时保存、销毁同一个窗口。
+        if (closePromise) return;
+        closePromise = (async () => {
+          // 先卸载本窗口的终端组件，让 PTY kill 尽早发出；常驻终端不能
+          // 继续占用运行时线程，否则保存和 destroy 也会被拖住。
+          await sessions.closeSessions();
+          await nextTick();
+          await flushNow();
+          closeUnlisten?.();
+          closeUnlisten = undefined;
+          await win.destroy();
+        })();
+        try {
+          await closePromise;
+        } finally {
+          closePromise = null;
+        }
       });
     } catch {
       // 纯浏览器预览无 Tauri

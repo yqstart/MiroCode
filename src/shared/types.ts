@@ -5,35 +5,6 @@ export type SidePanelId = "explorer" | "commit";
 
 export type UpdateImportsOnMove = "always" | "prompt" | "never";
 
-// ==================== AI 行内智能补全 ====================
-
-/** AI 补全 provider 预设 id */
-export type AiProviderId = "deepseek" | "custom";
-
-/** AI 补全配置（非敏感项，随 AppSettings 持久化到 localStorage） */
-export interface AiCompletionPrefs {
-  /** 总开关 */
-  enabled: boolean;
-  /** provider 预设 id */
-  provider: AiProviderId;
-  /** API 基地址（选择预设时自动填充，可覆盖） */
-  apiBase: string;
-  /** 模型名 */
-  model: string;
-  /** 防抖延迟（毫秒） */
-  debounceMs: number;
-  /** 流式首字提示延迟（毫秒）：超时后先展示已有内容，不等整行生成完 */
-  showWhateverMs: number;
-  /** prompt token 预算上限 */
-  maxPromptTokens: number;
-  /** 生成 max_tokens */
-  maxTokens: number;
-  /** 温度 */
-  temperature: number;
-  /** 多行补全策略：auto | always | never */
-  multiline: "auto" | "always" | "never";
-}
-
 export interface EditorPreferences {
   fontSize: number;
   tabSize: 2 | 4;
@@ -49,8 +20,8 @@ export interface EditorPreferences {
   formatOnSave: boolean;
   /** 移动文件/文件夹后如何更新相对 import 引用 */
   updateImportsOnMove: UpdateImportsOnMove;
-  /** AI 行内智能补全配置 */
-  aiCompletion: AiCompletionPrefs;
+  /** 显示代码缩略图，便于在长文件中快速定位 */
+  minimap: boolean;
 }
 
 /** 历史兼容：曾用底栏 Git Log 高度；现 Git Log 为编辑区标签，open 不再驱动布局 */
@@ -90,18 +61,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     prettierEnabled: true,
     formatOnSave: false,
     updateImportsOnMove: "prompt",
-    aiCompletion: {
-      enabled: false,
-      provider: "deepseek",
-      apiBase: "https://api.deepseek.com/beta",
-      model: "deepseek-v4-pro",
-      debounceMs: 350,
-      showWhateverMs: 300,
-      maxPromptTokens: 1024,
-      maxTokens: 256,
-      temperature: 0.2,
-      multiline: "auto",
-    },
+    minimap: true,
   },
   layout: {
     sidebarCollapsed: false,

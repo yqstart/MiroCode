@@ -43,8 +43,9 @@ const gitLog = useGitLogStore();
 const workspace = useWorkspaceStore();
 const git = useGitStore();
 const settings = useSettingsStore();
-const { tabs, activePath, activeTab } = storeToRefs(editor);
+const { tabs, activePath, activeTab, blameVisible } = storeToRefs(editor);
 const { rootPath } = storeToRefs(workspace);
+const { snapshot: gitSnapshot } = storeToRefs(git);
 const { isFocused: sessionsFocused } = storeToRefs(sessions);
 const {
   open: sshOpen,
@@ -399,7 +400,9 @@ const canDiscardActive = computed(
   () => Boolean(editorCtxGitEntry.value) && !editorCtxGitEntry.value?.conflicted,
 );
 
-const hasGitMenu = computed(() => canDiscardActive.value);
+// Git 段（Diff / Blame 列开关）只要处于已初始化的 git 仓库即可见；
+// 「丢弃更改」仅在当前文件有可丢弃改动时显示（canDiscardActive）。
+const hasGitMenu = computed(() => gitSnapshot.value.initialized);
 
 const formatDocumentDisabled = computed(
   () => !settings.editor.prettierEnabled,
@@ -482,6 +485,11 @@ async function showDiffFromEditor() {
   editorCtx.value = null;
   if (!rel) return;
   await git.showDiff(rel, false);
+}
+
+function toggleBlameFromEditor() {
+  editorCtx.value = null;
+  editor.toggleBlame();
 }
 
 onMounted(() => window.addEventListener("mousedown", onDocMouseDown, true));
@@ -740,7 +748,15 @@ onBeforeUnmount(() =>
         <template v-if="hasGitMenu">
           <hr />
           <button type="button" @click="showDiffFromEditor">{{ t("editor.showDiff") }}</button>
-          <button type="button" class="danger" @click="discardFromEditor">
+          <button type="button" @click="toggleBlameFromEditor">
+            {{ blameVisible ? t("editor.blameHide") : t("editor.blameShow") }}
+          </button>
+          <button
+            v-if="canDiscardActive"
+            type="button"
+            class="danger"
+            @click="discardFromEditor"
+          >
             {{ t("editor.discardChanges") }}
           </button>
         </template>

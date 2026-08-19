@@ -9,7 +9,13 @@ import {
   writeTextFile,
 } from "@/shared/fs";
 import { isRasterImagePath } from "@/shared/media";
+import {
+  loadEditorSession,
+  saveEditorSession,
+  type EditorSession,
+} from "@/shared/editorSession";
 import { formatDocumentContent } from "@/features/editor/formatting";
+import { wordAt } from "@/features/editor/documentSymbols";
 import type { EditorFindRequest, EditorJumpTarget, EditorOpenAt } from "@/shared/types";
 import { useCompareStore } from "@/stores/compare";
 import { useGitStore } from "@/stores/git";
@@ -33,6 +39,13 @@ export interface EditorTab {
   dirty: boolean;
 }
 
+export interface EditorReferenceResult {
+  path: string;
+  line: number;
+  column: number;
+  isDefinition?: boolean;
+}
+
 export const useEditorStore = defineStore("editor", () => {
   const tabs = ref<EditorTab[]>([]);
   const activePath = ref<string | null>(null);
@@ -42,6 +55,14 @@ export const useEditorStore = defineStore("editor", () => {
   // 查找面板打开信号（原生菜单 ⌘F -> store -> 编辑器 watcher 消费）
   const findRequest = ref<EditorFindRequest | null>(null);
   let findRequestSeq = 0;
+  // 行内 git blame 常驻列开关（会话级，不持久化；hover 悬浮始终开启）
+  const blameVisible = ref(false);
+  const referencesVisible = ref(false);
+  const referenceWord = ref("");
+  const referenceResults = ref<EditorReferenceResult[]>([]);
+  let referencesRequestSeq = 0;
+  let sessionTimer: ReturnType<typeof setTimeout> | null = null;
+  let restoringSession = false;
 
   /**
    * 外部修改标记：当 syncFromDisk / reloadAfterDiscard / formatDocument /
@@ -118,6 +139,113 @@ export const useEditorStore = defineStore("editor", () => {
   function requestFind() {
     findRequestSeq += 1;
     findRequest.value = { path: activePath.value, requestId: findRequestSeq };
+  }
+
+  async function openReferences(path: string, content: string, position: number) {
+    const root = useWorkspaceStore().rootPath;
+    const word = wordAt(content, position)?.word ?? "";
+    if (!root || !word) return;
+    const requestId = ++referencesRequestSeq;
+    referenceWord.value = word;
+    referencesVisible.value = true;
+    referenceResults.value = [];
+    try {
+      const { findReferences } = await import("@/features/editor/findReferences");
+      const results = await findReferences(word, path, content, root, {
+        position,
+        maxDepth: 8,
+      });
+      if (requestId !== referencesRequestSeq) return;
+      referenceResults.value = results;
+    } catch (error) {
+      if (requestId !== referencesRequestSeq) return;
+      referencesVisible.value = false;
+      useWorkspaceStore().showNotice(
+        `查找引用失败：${error instanceof Error ? error.message : String(error)}`,
+        3200,
+      );
+    }
+  }
+
+  function closeReferences() {
+    referencesRequestSeq += 1;
+    referencesVisible.value = false;
+  }
+
+  /** 切换行内 git blame 常驻列 */
+  function toggleBlame() {
+    blameVisible.value = !blameVisible.value;
+  }
+
+  /** 立即写入当前工作区的编辑器会话，供切换工作区/退出前调用。 */
+  function persistSession(root?: string | null) {
+    if (sessionTimer !== null) {
+      clearTimeout(sessionTimer);
+      sessionTimer = null;
+    }
+    const sessionRoot = root ?? useWorkspaceStore().rootPath;
+    if (!sessionRoot) return;
+    const session: EditorSession = {
+      tabs: tabs.value.map((tab) => ({
+        path: tab.path,
+        cursor: tab.cursor,
+        pinned: tab.pinned,
+        dirty: tab.dirty,
+        content: tab.content,
+        original: tab.original,
+      })),
+      activePath: activePath.value,
+    };
+    saveEditorSession(sessionRoot, session);
+  }
+
+  function schedulePersistSession() {
+    if (restoringSession || sessionTimer !== null) return;
+    if (!useWorkspaceStore().rootPath) return;
+    sessionTimer = setTimeout(() => {
+      sessionTimer = null;
+      persistSession();
+    }, 180);
+  }
+
+  /**
+   * 恢复工作区上次打开的标签、活动标签、光标和固定状态。
+   * 磁盘版本发生变化时不覆盖当前磁盘文件，避免把过期恢复快照误当成新文件。
+   */
+  async function restoreSession(root: string) {
+    if (restoringSession || !root || tabs.value.length) return;
+    const saved = loadEditorSession(root);
+    if (!saved?.tabs.length) return;
+
+    restoringSession = true;
+    try {
+      for (const savedTab of saved.tabs) {
+        if (!(await pathExists(root, savedTab.path))) continue;
+        await openFile(savedTab.path);
+        const tab = tabs.value.find((item) => item.path === savedTab.path);
+        if (!tab) continue;
+
+        tab.pinned = savedTab.pinned;
+        tab.cursor = savedTab.cursor;
+        if (
+          savedTab.dirty === true &&
+          typeof savedTab.content === "string" &&
+          typeof savedTab.original === "string" &&
+          savedTab.original === tab.original
+        ) {
+          markExternalUpdate(tab.path);
+          tab.content = savedTab.content;
+          tab.dirty = savedTab.content !== tab.original;
+        }
+      }
+      const active = saved.activePath && tabs.value.some((tab) => tab.path === saved.activePath)
+        ? saved.activePath
+        : tabs.value[0]?.path ?? null;
+      if (active) activate(active);
+      persistSession(root);
+    } finally {
+      restoringSession = false;
+    }
   }
 
   async function openFile(path: string) {
@@ -679,6 +807,14 @@ export const useEditorStore = defineStore("editor", () => {
 
   // ==================== macOS Dock 菜单：当前文件同步 ====================
   // 切 tab / 关 tab / 切换工作区都会改 activePath，watch 统一同步到 Dock 菜单
+  watch(
+    [tabs, activePath],
+    () => {
+      schedulePersistSession();
+    },
+    { deep: true },
+  );
+
   watch(activePath, () => {
     void useWorkspaceStore().syncDockMenu();
   });
@@ -691,11 +827,20 @@ export const useEditorStore = defineStore("editor", () => {
     jumpStack,
     openAt,
     findRequest,
+    blameVisible,
     isDirty,
     pushJump,
     popJump,
     requestOpenAt,
     requestFind,
+    referencesVisible,
+    referenceWord,
+    referenceResults,
+    openReferences,
+    closeReferences,
+    toggleBlame,
+    persistSession,
+    restoreSession,
     openFile,
     openFileAt,
     setContent,

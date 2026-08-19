@@ -70,6 +70,8 @@ pub struct GitStatusSnapshot {
     pub initialized: bool,
     pub branch: Option<String>,
     pub upstream: Option<String>,
+    /// 当前 HEAD 提交短 id（无提交 / detached 场景为空）
+    pub head: Option<String>,
     /// 本地领先上游的提交数
     pub ahead: usize,
     /// 本地落后上游的提交数
@@ -93,14 +95,40 @@ pub struct GitCommitInfo {
     pub id: String,
     pub summary: String,
     pub author: String,
+    pub author_email: String,
+    pub committer: String,
+    pub committer_email: String,
     pub time: String,
+    /// 提交说明正文（不含首行 summary）。
+    pub body: String,
     pub files: Vec<String>,
+    pub changes: Vec<GitFileChange>,
     /// 父提交完整 id
     pub parents: Vec<String>,
     /// 指向该提交的本地/远程 refs（短名）
     pub refs: Vec<String>,
     /// 是否尚未推送到上游（位于 ahead 区间内）
     pub unpushed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileChange {
+    pub path: String,
+    pub old_path: Option<String>,
+    /// added / deleted / modified / renamed / copied / typechange
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitTagInfo {
+    pub name: String,
+    pub target: String,
+    pub annotated: bool,
+    pub tagger: Option<String>,
+    pub time: Option<String>,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -193,6 +221,7 @@ fn git_status_blocking(root: String) -> Result<GitStatusSnapshot, String> {
                 initialized: false,
                 branch: None,
                 upstream: None,
+                head: None,
                 ahead: 0,
                 behind: 0,
                 entries: vec![],
@@ -205,6 +234,11 @@ fn git_status_blocking(root: String) -> Result<GitStatusSnapshot, String> {
         .head()
         .ok()
         .and_then(|h| h.shorthand().ok().map(|s| s.to_string()));
+
+    let head_oid = repo.head().ok().and_then(|h| h.target()).map(|oid| {
+        let s = oid.to_string();
+        s[..7.min(s.len())].to_string()
+    });
 
     let upstream = (|| {
         let head = repo.head().ok()?;
@@ -279,6 +313,7 @@ fn git_status_blocking(root: String) -> Result<GitStatusSnapshot, String> {
         initialized: true,
         branch: head_name,
         upstream,
+        head: head_oid,
         ahead,
         behind,
         entries,
@@ -601,6 +636,155 @@ pub fn git_rename_branch(root: String, from: String, to: String) -> Result<(), S
     Ok(())
 }
 
+// ==================== 提交详情与文件变更 ====================
+
+fn diff_status_label(status: git2::Delta) -> &'static str {
+    match status {
+        git2::Delta::Added | git2::Delta::Untracked => "added",
+        git2::Delta::Deleted => "deleted",
+        git2::Delta::Renamed => "renamed",
+        git2::Delta::Copied => "copied",
+        git2::Delta::Typechange => "typechange",
+        _ => "modified",
+    }
+}
+
+fn diff_file_changes(
+    repo: &Repository,
+    old_tree: Option<&git2::Tree<'_>>,
+    new_tree: Option<&git2::Tree<'_>>,
+) -> Vec<GitFileChange> {
+    let Ok(diff) = repo.diff_tree_to_tree(old_tree, new_tree, None) else {
+        return vec![];
+    };
+    let mut changes = Vec::new();
+    let _ = diff.foreach(
+        &mut |delta, _| {
+            let path = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|p| p.to_string_lossy().to_string());
+            let Some(path) = path else {
+                return true;
+            };
+            let old_path = delta
+                .old_file()
+                .path()
+                .map(|p| p.to_string_lossy().to_string())
+                .filter(|old| old != &path);
+            changes.push(GitFileChange {
+                path,
+                old_path,
+                status: diff_status_label(delta.status()).to_string(),
+            });
+            true
+        },
+        None,
+        None,
+        None,
+    );
+    changes
+}
+
+fn commit_info_from_commit(
+    repo: &Repository,
+    commit: &git2::Commit<'_>,
+    refs: Vec<String>,
+    unpushed: bool,
+    include_changes: bool,
+) -> GitCommitInfo {
+    let time = Local
+        .timestamp_opt(commit.time().seconds(), 0)
+        .single()
+        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_default();
+    let parents: Vec<String> = (0..commit.parent_count())
+        .filter_map(|i| commit.parent_id(i).ok())
+        .map(|id| id.to_string())
+        .collect();
+    let full_message = commit.message().unwrap_or("").trim_end().to_string();
+    let body = full_message
+        .lines()
+        .skip(1)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+    let changes = if include_changes {
+        let old_tree = commit.parent(0).ok().and_then(|parent| parent.tree().ok());
+        let new_tree = commit.tree().ok();
+        diff_file_changes(repo, old_tree.as_ref(), new_tree.as_ref())
+    } else {
+        vec![]
+    };
+    let files = changes.iter().map(|change| change.path.clone()).collect();
+
+    GitCommitInfo {
+        id: commit.id().to_string(),
+        summary: commit
+            .summary()
+            .ok()
+            .flatten()
+            .unwrap_or("")
+            .to_string(),
+        author: commit.author().name().unwrap_or("").to_string(),
+        author_email: commit.author().email().unwrap_or("").to_string(),
+        committer: commit.committer().name().unwrap_or("").to_string(),
+        committer_email: commit.committer().email().unwrap_or("").to_string(),
+        time,
+        body,
+        files,
+        changes,
+        parents,
+        refs,
+        unpushed,
+    }
+}
+
+fn tag_info_from_reference(repo: &Repository, reference: &git2::Reference<'_>) -> Option<GitTagInfo> {
+    let name = reference
+        .name()
+        .ok()
+        .and_then(|raw| raw.strip_prefix("refs/tags/"))?
+        .to_string();
+    let target = reference.peel_to_commit().ok()?.id().to_string();
+    let tag = reference
+        .target()
+        .and_then(|oid| repo.find_tag(oid).ok());
+    let annotated = tag.is_some();
+    let tagger = tag
+        .as_ref()
+        .and_then(|value| value.tagger())
+        .and_then(|sig| sig.name().ok().map(ToString::to_string));
+    let time = tag.as_ref().and_then(|value| {
+        value.tagger().and_then(|sig| {
+            Local
+                .timestamp_opt(sig.when().seconds(), 0)
+                .single()
+                .map(|date| date.format("%Y-%m-%d %H:%M").to_string())
+        })
+    });
+    let message = tag
+        .as_ref()
+        .and_then(|value| {
+            value
+                .message()
+                .ok()
+                .flatten()
+                .map(|text| text.trim().to_string())
+        })
+        .filter(|text| !text.is_empty());
+    Some(GitTagInfo {
+        name,
+        target,
+        annotated,
+        tagger,
+        time,
+        message,
+    })
+}
+
 #[tauri::command]
 pub async fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>, String> {
     // 每个 commit 都做全树 diff，大仓库耗时明显，须离开主线程
@@ -615,7 +799,22 @@ pub async fn git_log(root: String, limit: Option<usize>) -> Result<Vec<GitCommit
 fn git_log_blocking(root: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>, String> {
     let repo = open_repo(&root)?;
     let mut revwalk = repo.revwalk().map_err(|e| e.to_string())?;
-    revwalk.push_head().map_err(|e| e.to_string())?;
+    // Git Graph 的「全部分支」必须包含没有被当前 HEAD 祖先链覆盖的提交。
+    // 从所有可解析为提交的 refs 入队，重复提交由 revwalk 自动去重；
+    // 没有 refs 的异常仓库再回退到 HEAD。
+    let mut pushed_ref = false;
+    if let Ok(references) = repo.references() {
+        for reference in references.flatten() {
+            if let Ok(commit) = reference.peel_to_commit() {
+                if revwalk.push(commit.id()).is_ok() {
+                    pushed_ref = true;
+                }
+            }
+        }
+    }
+    if !pushed_ref {
+        revwalk.push_head().map_err(|e| e.to_string())?;
+    }
     // TOPOLOGICAL 便于绘制父子关系图；TIME 作次要排序
     revwalk
         .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
@@ -633,7 +832,11 @@ fn git_log_blocking(root: String, limit: Option<usize>) -> Result<Vec<GitCommitI
             if name == "HEAD" {
                 continue;
             }
-            if let Some(oid) = reference.target() {
+            let oid = reference
+                .peel_to_commit()
+                .ok()
+                .map(|commit| commit.id());
+            if let Some(oid) = oid {
                 ref_map
                     .entry(oid.to_string())
                     .or_default()
@@ -684,53 +887,131 @@ fn git_log_blocking(root: String, limit: Option<usize>) -> Result<Vec<GitCommitI
         }
         let oid = oid.map_err(|e| e.to_string())?;
         let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
-        let time = Local
-            .timestamp_opt(commit.time().seconds(), 0)
-            .single()
-            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_default();
-
-        let mut files = Vec::new();
-        if let Ok(parent) = commit.parent(0) {
-            if let (Ok(a), Ok(b)) = (parent.tree(), commit.tree()) {
-                if let Ok(diff) = repo.diff_tree_to_tree(Some(&a), Some(&b), None) {
-                    let _ = diff.foreach(
-                        &mut |delta, _| {
-                            if let Some(path) =
-                                delta.new_file().path().or_else(|| delta.old_file().path())
-                            {
-                                files.push(path.to_string_lossy().to_string());
-                            }
-                            true
-                        },
-                        None,
-                        None,
-                        None,
-                    );
-                }
-            }
-        }
-
         let id = oid.to_string();
-        let parents: Vec<String> = (0..commit.parent_count())
-            .filter_map(|i| commit.parent_id(i).ok())
-            .map(|pid| pid.to_string())
-            .collect();
         let refs = ref_map.get(&id).cloned().unwrap_or_default();
         let unpushed = unpushed_ids.contains(&id);
-
-        commits.push(GitCommitInfo {
-            id,
-            summary: commit.summary().ok().flatten().unwrap_or("").to_string(),
-            author: commit.author().name().unwrap_or("").to_string(),
-            time,
-            files,
-            parents,
+        commits.push(commit_info_from_commit(
+            &repo,
+            &commit,
             refs,
             unpushed,
-        });
+            true,
+        ));
     }
     Ok(commits)
+}
+
+#[tauri::command]
+pub async fn git_tags(root: String) -> Result<Vec<GitTagInfo>, String> {
+    let handle = tokio::task::spawn_blocking(move || git_tags_blocking(root));
+    match tokio::time::timeout(Duration::from_secs(15), handle).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(join)) => Err(format!("读取标签任务失败: {join}")),
+        Err(_) => Err("读取标签超时（15s）".into()),
+    }
+}
+
+fn git_tags_blocking(root: String) -> Result<Vec<GitTagInfo>, String> {
+    let repo = open_repo(&root)?;
+    let mut tags = Vec::new();
+    let references = repo.references().map_err(|e| e.to_string())?;
+    for reference in references.flatten() {
+        if let Some(tag) = tag_info_from_reference(&repo, &reference) {
+            tags.push(tag);
+        }
+    }
+    tags.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(tags)
+}
+
+#[tauri::command]
+pub async fn git_commit_files(
+    root: String,
+    left_ref: String,
+    right_ref: String,
+) -> Result<Vec<GitFileChange>, String> {
+    let handle = tokio::task::spawn_blocking(move || {
+        let repo = open_repo(&root)?;
+        let old_commit = if left_ref.trim().is_empty() {
+            None
+        } else {
+            let oid = resolve_commit_oid(&repo, &left_ref)?;
+            Some(repo.find_commit(oid).map_err(|e| e.to_string())?)
+        };
+        let old_tree = old_commit
+            .as_ref()
+            .map(|commit| commit.tree())
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        let right_oid = resolve_commit_oid(&repo, &right_ref)?;
+        let right_commit = repo.find_commit(right_oid).map_err(|e| e.to_string())?;
+        let right_tree = right_commit.tree().map_err(|e| e.to_string())?;
+        Ok::<Vec<GitFileChange>, String>(diff_file_changes(
+            &repo,
+            old_tree.as_ref(),
+            Some(&right_tree),
+        ))
+    });
+    match tokio::time::timeout(Duration::from_secs(30), handle).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(join)) => Err(format!("读取提交文件任务失败: {join}")),
+        Err(_) => Err("读取提交文件超时（30s）".into()),
+    }
+}
+
+#[tauri::command]
+pub fn git_create_tag(
+    root: String,
+    name: String,
+    commit_id: String,
+    message: Option<String>,
+    force: Option<bool>,
+) -> Result<(), String> {
+    clear_status_cache();
+    let repo = open_repo(&root)?;
+    if name.trim().is_empty() {
+        return Err("标签名不能为空".into());
+    }
+    let oid = resolve_commit_oid(&repo, &commit_id)?;
+    let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+    let force = force.unwrap_or(false);
+    if let Some(text) = message.filter(|value| !value.trim().is_empty()) {
+        let signature = repo
+            .signature()
+            .map_err(|e| format!("创建附注标签需要 Git 用户名与邮箱: {e}"))?;
+        repo.tag(&name, commit.as_object(), &signature, &text, force)
+            .map_err(|e| format!("创建标签失败: {e}"))?;
+    } else {
+        repo.tag_lightweight(&name, commit.as_object(), force)
+            .map_err(|e| format!("创建标签失败: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn git_delete_tag(root: String, name: String) -> Result<(), String> {
+    clear_status_cache();
+    let repo = open_repo(&root)?;
+    repo.tag_delete(&name)
+        .map_err(|e| format!("删除标签失败: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn git_push_tag(
+    root: String,
+    remote: String,
+    name: String,
+) -> Result<String, String> {
+    let handle = tokio::task::spawn_blocking(move || {
+        run_git(&root, &["push", &remote, &name])
+            .map(|_| format!("已推送标签 {name} 到 {remote}"))
+    });
+    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(join)) => Err(format!("推送标签任务失败: {join}")),
+        Err(_) => Err("推送标签超时（120s）".into()),
+    }
 }
 
 /// 丢弃工作区指定路径的未提交变更（已跟踪还原到 HEAD；未跟踪则删除）。
@@ -939,6 +1220,21 @@ fn head_file_text(repo: &Repository, path: &str) -> Result<String, String> {
             Ok(String::from_utf8_lossy(blob.content()).to_string())
         }
         Err(_) => Ok(String::new()),
+    }
+}
+
+/// 取 HEAD 中该文件的文本内容（未跟踪 / 不存在时返回空串），
+/// 供前端行内改动条（buffer 与 HEAD 逐行 diff）使用。
+#[tauri::command]
+pub async fn git_head_text(root: String, path: String) -> Result<String, String> {
+    let handle = tokio::task::spawn_blocking(move || {
+        let repo = open_repo(&root)?;
+        head_file_text(&repo, &path)
+    });
+    match tokio::time::timeout(Duration::from_secs(10), handle).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join)) => Err(format!("读取 HEAD 文本任务失败: {join}")),
+        Err(_) => Err("读取 HEAD 文本超时（10s）".into()),
     }
 }
 
@@ -2053,26 +2349,13 @@ fn git_unpushed_commits_blocking(
     for oid in walk.take(max) {
         let oid = oid.map_err(|e| e.to_string())?;
         let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
-        let id_str = oid.to_string();
-        let time = Local
-            .timestamp_opt(commit.time().seconds(), 0)
-            .single()
-            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_default();
-        let parents: Vec<String> = (0..commit.parent_count())
-            .filter_map(|i| commit.parent_id(i).ok())
-            .map(|id| id.to_string())
-            .collect();
-        commits.push(GitCommitInfo {
-            id: id_str,
-            summary: commit.summary().ok().flatten().unwrap_or("").to_string(),
-            author: commit.author().name().unwrap_or("").to_string(),
-            time,
-            files: vec![],
-            parents,
-            refs: vec![],
-            unpushed: true,
-        });
+        commits.push(commit_info_from_commit(
+            &repo,
+            &commit,
+            vec![],
+            true,
+            false,
+        ));
     }
 
     // 写入缓存
@@ -2143,6 +2426,9 @@ fn git_fetch_blocking(
     let url = remote_url(&remote);
     let mut opts = git2::FetchOptions::new();
     opts.remote_callbacks(make_callbacks(username.clone(), password.clone()));
+    // fetch 后清理远端已删除的分支（本地 refs/remotes/<remote>/*），
+    // 否则分支列表仍会展示已在远端删除的远程分支
+    opts.prune(git2::FetchPrune::On);
     remote
         .fetch(&[] as &[&str], Some(&mut opts), None)
         .map_err(|e| format_remote_error("Fetch", e, &url))?;
@@ -2559,27 +2845,13 @@ fn clear_miro_rebase(root: &str) {
 
 fn commit_info_from_oid(repo: &Repository, oid: git2::Oid) -> Result<GitCommitInfo, String> {
     let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
-    let time = Local
-        .timestamp_opt(commit.time().seconds(), 0)
-        .single()
-        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
-        .unwrap_or_default();
-    let parents: Vec<String> = (0..commit.parent_count())
-        .filter_map(|i| commit.parent_id(i).ok())
-        .map(|id| id.to_string())
-        .collect();
-    let author = commit.author().name().unwrap_or("").to_string();
-    let summary = commit.summary().ok().flatten().unwrap_or("").to_string();
-    Ok(GitCommitInfo {
-        id: oid.to_string(),
-        summary,
-        author,
-        time,
-        files: vec![],
-        parents,
-        refs: vec![],
-        unpushed: false,
-    })
+    Ok(commit_info_from_commit(
+        repo,
+        &commit,
+        vec![],
+        false,
+        false,
+    ))
 }
 
 #[tauri::command]
@@ -3114,38 +3386,35 @@ fn git_branch_sides_blocking(
     path: Option<String>,
 ) -> Result<GitFileSides, String> {
     let repo = open_repo(&root)?;
-    let left_oid = resolve_commit_oid(&repo, &left_ref)?;
     let right_oid = resolve_commit_oid(&repo, &right_ref)?;
-    let left_commit = repo.find_commit(left_oid).map_err(|e| e.to_string())?;
     let right_commit = repo.find_commit(right_oid).map_err(|e| e.to_string())?;
-    let left_tree = left_commit.tree().map_err(|e| e.to_string())?;
     let right_tree = right_commit.tree().map_err(|e| e.to_string())?;
+    let left_commit = if left_ref.trim().is_empty() {
+        None
+    } else {
+        let left_oid = resolve_commit_oid(&repo, &left_ref)?;
+        Some(repo.find_commit(left_oid).map_err(|e| e.to_string())?)
+    };
+    let left_tree = left_commit
+        .as_ref()
+        .map(|commit| commit.tree())
+        .transpose()
+        .map_err(|e| e.to_string())?;
 
     let rel = if let Some(p) = path.filter(|s| !s.is_empty()) {
         p
     } else {
-        let mut first = None;
-        if let Ok(diff) = repo.diff_tree_to_tree(Some(&left_tree), Some(&right_tree), None) {
-            let _ = diff.foreach(
-                &mut |delta, _| {
-                    if first.is_none() {
-                        if let Some(path) =
-                            delta.new_file().path().or_else(|| delta.old_file().path())
-                        {
-                            first = Some(path.to_string_lossy().to_string());
-                        }
-                    }
-                    true
-                },
-                None,
-                None,
-                None,
-            );
-        }
-        first.ok_or_else(|| "两个分支 tip 无文件差异".to_string())?
+        diff_file_changes(&repo, left_tree.as_ref(), Some(&right_tree))
+            .into_iter()
+            .next()
+            .map(|change| change.path)
+            .ok_or_else(|| "两个分支 tip 无文件差异".to_string())?
     };
 
-    let blob_text = |tree: &git2::Tree, path: &str| -> String {
+    let blob_text = |tree: Option<&git2::Tree>, path: &str| -> String {
+        let Some(tree) = tree else {
+            return String::new();
+        };
         let Ok(entry) = tree.get_path(Path::new(path)) else {
             return String::new();
         };
@@ -3160,9 +3429,13 @@ fn git_branch_sides_blocking(
 
     Ok(GitFileSides {
         path: rel.clone(),
-        left: blob_text(&left_tree, &rel),
-        right: blob_text(&right_tree, &rel),
-        left_label: left_ref,
+        left: blob_text(left_tree.as_ref(), &rel),
+        right: blob_text(Some(&right_tree), &rel),
+        left_label: if left_ref.trim().is_empty() {
+            "空树".into()
+        } else {
+            left_ref
+        },
         right_label: right_ref,
     })
 }
@@ -3350,6 +3623,39 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         let result = read_unpushed_cache(tmp.to_str().unwrap());
         assert!(result.is_none(), "非 git 目录应返回 None；实际 {result:?}");
+    }
+
+    #[test]
+    fn git_log_includes_non_head_refs_and_tag_details() {
+        let temp = tempfile::tempdir().expect("temp repo");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+
+        std::fs::write(root.join("main.txt"), "main\n").expect("write main");
+        run_git_ok(root, &["add", "."]);
+        run_git_ok(root, &["commit", "-m", "main commit"]);
+        run_git_ok(root, &["switch", "-c", "feature/graph"]);
+        std::fs::write(root.join("feature.txt"), "feature\n").expect("write feature");
+        run_git_ok(root, &["add", "."]);
+        run_git_ok(root, &["commit", "-m", "feature-only commit"]);
+        run_git_ok(root, &["tag", "-a", "v1.0.0", "-m", "first release"]);
+        run_git_ok(root, &["switch", "main"]);
+
+        let commits = git_log_blocking(root.to_string_lossy().to_string(), Some(20))
+            .expect("read graph");
+        let feature = commits
+            .iter()
+            .find(|commit| commit.summary == "feature-only commit")
+            .expect("all refs 的日志应包含非 HEAD 分支提交");
+        assert!(feature.files.iter().any(|path| path == "feature.txt"));
+        assert!(feature.changes.iter().any(|change| change.status == "added"));
+
+        let tags = git_tags_blocking(root.to_string_lossy().to_string()).expect("read tags");
+        let tag = tags.iter().find(|tag| tag.name == "v1.0.0").expect("tag");
+        assert!(tag.annotated);
+        assert_eq!(tag.message.as_deref(), Some("first release"));
     }
 
     /// 真机冒烟的等效证据：模拟"push 长时间占用 blocking pool"期间，

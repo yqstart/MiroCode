@@ -47,7 +47,6 @@ function loadSettings(): AppSettings {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return structuredClone(DEFAULT_SETTINGS);
     const parsed = JSON.parse(raw) as Partial<AppSettings> & {
-      ai?: unknown;
       layout?: Partial<AppSettings["layout"]> & {
         gitToolWindow?: {
           open?: boolean;
@@ -108,6 +107,13 @@ function loadSettings(): AppSettings {
       (rawTheme as ThemeId | undefined) ||
       DEFAULT_SETTINGS.theme;
 
+    // 旧版本把 AI 配置写在 editor.aiCompletion 中。不要把这部分历史配置
+    // 继续带入响应式设置，避免用户以为应用仍然会联网请求 AI。
+    const editorOverrides = {
+      ...(parsed.editor ?? {}),
+    } as Partial<EditorPreferences> & { aiCompletion?: unknown };
+    delete editorOverrides.aiCompletion;
+
     return {
       theme:
         theme === "dawn" ||
@@ -119,12 +125,7 @@ function loadSettings(): AppSettings {
       locale: parsed.locale ?? DEFAULT_SETTINGS.locale,
       editor: {
         ...DEFAULT_SETTINGS.editor,
-        ...parsed.editor,
-        // aiCompletion 嵌套对象深合并：旧配置可能只有部分字段
-        aiCompletion: {
-          ...DEFAULT_SETTINGS.editor.aiCompletion,
-          ...(parsed.editor?.aiCompletion ?? {}),
-        },
+        ...editorOverrides,
       },
       layout,
       autoCheckUpdates:

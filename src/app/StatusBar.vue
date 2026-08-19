@@ -43,37 +43,6 @@ const syncLabel = computed(() => {
 });
 const themeLabel = computed(() => THEME_LABELS[theme.value]);
 
-// AI 补全状态指示器
-const aiStatus = ref<string>("disabled");
-
-const aiStatusLabel = computed(() => {
-  if (!editorPrefs.value.aiCompletion.enabled) return "";
-  switch (aiStatus.value) {
-    case "requesting":
-    case "streaming":
-      return t("status.aiThinking");
-    case "error":
-      return t("status.aiError");
-    case "idle":
-      return t("status.aiReady");
-    default:
-      return "";
-  }
-});
-
-const aiStatusClass = computed(() => {
-  switch (aiStatus.value) {
-    case "streaming":
-      return "ai-active";
-    case "error":
-      return "ai-warn";
-    case "idle":
-      return "ai-info";
-    default:
-      return "ai-info";
-  }
-});
-
 const themeOptions = computed(() =>
   THEME_ORDER.map((id) => ({ id, label: THEME_LABELS[id] })),
 );
@@ -106,25 +75,12 @@ function onDocClick() {
   themeMenuOpen.value = false;
 }
 
-// AI 状态订阅
-let unsubAi: (() => void) | null = null;
-let disposed = false;
-
 onMounted(() => {
   window.addEventListener("click", onDocClick);
-  void import("@/features/ai/manager").then(({ aiManager }) => {
-    if (disposed) return;
-    unsubAi = aiManager.onStatusChange((status) => {
-      aiStatus.value = status;
-    });
-  });
 });
 
 onBeforeUnmount(() => {
-  disposed = true;
   window.removeEventListener("click", onDocClick);
-  unsubAi?.();
-  unsubAi = null;
 });
 </script>
 
@@ -160,13 +116,6 @@ onBeforeUnmount(() => {
       >
         {{ t("status.conflicts", { count: snapshot.conflictCount }) }}
       </button>
-      <span
-        v-if="aiStatusLabel"
-        class="ai-status"
-        :class="aiStatusClass"
-        :data-state="aiStatus"
-        :title="aiStatusLabel"
-      >{{ aiStatusLabel }}</span>
     </div>
     <div class="right">
       <span>Ln {{ cursor.line }}, Col {{ cursor.column }}</span>
@@ -315,26 +264,6 @@ onBeforeUnmount(() => {
   text-decoration: underline;
 }
 
-/* AI 补全状态指示器 */
-.ai-status {
-  font-size: 11px;
-  flex-shrink: 0;
-  padding: 0 4px;
-  border-radius: 3px;
-}
-
-.ai-active {
-  color: var(--accent, #6366f1);
-}
-
-.ai-warn {
-  color: var(--warning, #f59e0b);
-}
-
-.ai-info {
-  color: var(--text-muted);
-}
-
 .theme-switch {
   position: relative;
 }
@@ -397,18 +326,6 @@ onBeforeUnmount(() => {
 .popover-leave-to {
   opacity: 0;
   transform: scale(0.96) translateY(4px);
-}
-
-/* AI 状态点：颜色态切换平滑 + 请求中脉动 */
-.ai-status {
-  transition: color var(--transition-medium) var(--ease-out),
-    background var(--transition-fast) var(--ease-out);
-}
-
-/* 请求中：短脉动 */
-.ai-status[data-state="requesting"],
-.ai-status[data-state="streaming"] {
-  animation: miro-status-pulse 1.6s ease-in-out infinite;
 }
 
 .ok {

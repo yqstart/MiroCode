@@ -13,6 +13,9 @@ import {
   indexDocumentSymbols,
   wordAt,
 } from "@/features/editor/documentSymbols";
+import { ensureTypeScriptProgram, tsService } from "@/features/editor/typeService";
+import { createVueScriptContext, isInVueScript } from "@/features/editor/vueScript";
+import { readTextFile } from "@/shared/fs";
 
 export interface NavTarget {
   path: string;
@@ -24,6 +27,54 @@ export interface NavTarget {
 /** 是否为本地模块 spec（相对路径或 `@/` 路径别名），可参与磁盘跳转 */
 function isLocalImportSpec(spec: string | null | undefined): spec is string {
   return !!spec && (spec.startsWith(".") || spec.startsWith("@/"));
+}
+
+function offsetToLineColumn(text: string, offset: number): { line: number; column: number } {
+  const safe = Math.max(0, Math.min(text.length, offset));
+  let line = 1;
+  let lineStart = 0;
+  for (let i = 0; i < safe; i += 1) {
+    if (text[i] === "\n") {
+      line += 1;
+      lineStart = i + 1;
+    }
+  }
+  return { line, column: safe - lineStart + 1 };
+}
+
+async function findTypeScriptDefinition(
+  doc: string,
+  pos: number,
+  root: string,
+  currentFile: string,
+): Promise<NavTarget | null> {
+  const hit = wordAt(doc, pos);
+  if (!hit || pos < hit.from || pos > hit.to) return null;
+  const isVue = /\.vue$/i.test(currentFile);
+  const inVueScript = isVue && isInVueScript(doc, pos);
+  if (isVue && !inVueScript) return null;
+  const virtual = inVueScript ? createVueScriptContext(currentFile, doc) : null;
+  const serviceFile = virtual?.fileName ?? currentFile;
+  const serviceText = virtual?.text ?? doc;
+  if (!(await ensureTypeScriptProgram(root, serviceFile, serviceText))) return null;
+  const definitions = tsService.definitionsAt(serviceFile, pos);
+  for (const definition of definitions) {
+    const path = definition.fileName === serviceFile ? currentFile : definition.fileName;
+    const normalizedRoot = root.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    const normalizedPath = path.replace(/\\/g, "/").toLowerCase();
+    if (!(normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`))) continue;
+    let targetText = path === currentFile ? doc : null;
+    if (targetText === null) {
+      try {
+        targetText = await readTextFile(root, path);
+      } catch {
+        continue;
+      }
+    }
+    const location = offsetToLineColumn(targetText, definition.textSpan.start);
+    return { path, line: location.line, column: location.column, kind: "symbol" };
+  }
+  return null;
 }
 
 function findImportSpecAtPos(doc: string, pos: number): string | null {
@@ -249,6 +300,21 @@ export async function findTargetAtPosAsync(
     const resolved = await resolveImportPath(workspaceRoot, currentFile, spec);
     if (resolved) {
       return { path: resolved, line: 1, column: 1, kind: "import" };
+    }
+  }
+
+  // JS/TS/Vue script 优先走真实 TypeScript definition；失败后再走正则符号索引。
+  if (workspaceRoot) {
+    try {
+      const semantic = await findTypeScriptDefinition(
+        doc,
+        pos,
+        workspaceRoot,
+        currentFile,
+      );
+      if (semantic) return semantic;
+    } catch {
+      // 类型服务懒加载/解析失败时继续使用轻量路径和符号索引。
     }
   }
 

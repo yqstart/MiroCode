@@ -1,6 +1,7 @@
 import { linter, type Diagnostic } from "@codemirror/lint";
 import type { EditorView } from "@codemirror/view";
 import { basename } from "@/shared/fs";
+import { createVueScriptContext } from "@/features/editor/vueScript";
 
 function envDuplicateDiagnostics(text: string): Diagnostic[] {
   const diags: Diagnostic[] = [];
@@ -54,7 +55,45 @@ export function createDiagnosticsExtension(filePath: string) {
   const isJson = name.endsWith(".json");
   const isEnv = name === ".env" || name.startsWith(".env.");
 
-  if (!isJson && !isEnv) return [];
+  const isScript = /\.(?:[cm]?ts|tsx|jsx|js|vue)$/i.test(filePath);
+  if (!isJson && !isEnv && !isScript) return [];
+
+  if (isScript) {
+    return [
+      linter(async (view: EditorView) => {
+        try {
+          const { useWorkspaceStore } = await import("@/stores/workspace");
+          const root = useWorkspaceStore().rootPath;
+          if (!root) return [];
+          const source = view.state.doc.toString();
+          const isVue = /\.vue$/i.test(filePath);
+          const virtual = isVue ? createVueScriptContext(filePath, source) : null;
+          const serviceFile = virtual?.fileName ?? filePath;
+          const serviceText = virtual?.text ?? source;
+          const { ensureTypeScriptProgram, tsService } = await import(
+            "@/features/editor/typeService"
+          );
+          if (!(await ensureTypeScriptProgram(root, serviceFile, serviceText))) return [];
+          return tsService
+            .diagnosticsFor(serviceFile)
+            .filter((item) => {
+              if (!virtual) return true;
+              return virtual.blocks.some(
+                (block) => item.start >= block.start && item.start <= block.end,
+              );
+            })
+            .map((item) => ({
+              from: Math.max(0, item.start),
+              to: Math.min(source.length, item.start + Math.max(1, item.length)),
+              severity: item.severity,
+              message: `${item.message} (TS${item.code})`,
+            }));
+        } catch {
+          return [];
+        }
+      }),
+    ];
+  }
 
   return [
     linter((view: EditorView) => {

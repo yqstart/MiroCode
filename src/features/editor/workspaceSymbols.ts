@@ -265,12 +265,13 @@ class WorkspaceSymbolCache {
     word: string,
     sourceFile: string,
     sourceContent: string,
+    maxDepth = 5,
   ): Promise<Array<{ path: string; line: number; column: number }>> {
     const result: Array<{ path: string; line: number; column: number }> = [];
     // 1) 同文件内的所有 word 出现
     pushOccurrences(result, sourceFile, sourceContent, word);
     // 2) 反向 import 链：哪些文件 import 了 sourceFile？
-    const reverseChain = await this.findReverseImportChain(root, sourceFile, 5);
+    const reverseChain = await this.findReverseImportChain(root, sourceFile, maxDepth);
     for (const importer of reverseChain) {
       try {
         const text = await readTextFile(root, importer);
@@ -280,7 +281,7 @@ class WorkspaceSymbolCache {
       }
     }
     // 3) 也扫一次所有 import 链（symbol import 来的文件可能直接引用 word）
-    const forwardChain = await this.loadImportChain(root, sourceFile, 5);
+    const forwardChain = await this.loadImportChain(root, sourceFile, maxDepth);
     for (const target of forwardChain) {
       try {
         const text = await readTextFile(root, target);

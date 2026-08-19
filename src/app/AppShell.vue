@@ -15,6 +15,7 @@ import SettingsModal from "@/features/settings/SettingsModal.vue";
 import ChoiceDialog from "@/shared/ChoiceDialog.vue";
 import GitAuthDialog from "@/shared/GitAuthDialog.vue";
 import PromptDialog from "@/shared/PromptDialog.vue";
+import ReferencesPanel from "@/features/editor/ReferencesPanel.vue";
 import MoveReferencesDialog from "@/shared/MoveReferencesDialog.vue";
 import ToastHost from "@/shared/ToastHost.vue";
 import UpdateProgressDialog from "@/shared/UpdateProgressDialog.vue";
@@ -222,9 +223,14 @@ function onWindowFocus() {
   void workspace.refreshFromDisk([], { quiet: true });
 }
 
+function onBeforeUnload() {
+  editor.persistSession();
+}
+
 onMounted(async () => {
   window.addEventListener("keydown", onKeydown);
   window.addEventListener("focus", onWindowFocus);
+  window.addEventListener("beforeunload", onBeforeUnload);
   teardownAutoSave = setupAutoSave();
   // macOS：启动后立即把主窗口拉前（解决自动更新后需手动点 dock 才能前置的问题）。
   // 不能在 Rust setup 闭包里调 NSApp.setActivationPolicy()，会跟 tao 0.35
@@ -284,6 +290,8 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
   window.removeEventListener("focus", onWindowFocus);
+  window.removeEventListener("beforeunload", onBeforeUnload);
+  editor.persistSession();
   teardownAutoSave?.();
   workspace.stopWatch();
   unlistenMenu?.();
@@ -313,6 +321,7 @@ onUnmounted(() => {
     <QuickOpen />
     <FindInFilesDialog />
     <PromptDialog />
+    <ReferencesPanel />
     <MoveReferencesDialog />
     <ChoiceDialog />
     <UpdateProgressDialog />

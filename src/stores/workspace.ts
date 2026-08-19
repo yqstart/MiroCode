@@ -347,6 +347,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (isWorkspaceSwitch) {
         const editor = useEditorStore();
         if (!editor.confirmDiscardForWorkspaceSwitch()) return false;
+        // 在 rootPath 改变前先落盘旧工作区的标签/光标/未保存快照，
+        // 否则 clearForWorkspaceSwitch 后无法再找回旧会话。
+        editor.persistSession(previousRoot);
       }
 
       // 先把所有会抛错的异步操作（list_dir、reset stores）跑完并吞错。
@@ -404,6 +407,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         const { usePackageScriptsStore } = await import("@/stores/packageScripts");
         usePackageScriptsStore().clear();
       }
+
+      // 工作区状态已提交后再恢复该根目录自己的编辑器会话；恢复失败不影响
+      // 打开项目主流程，只在开发日志中保留原因。
+      await safeCall("editor session", () =>
+        useEditorStore().restoreSession(selected),
+      );
 
       // 首次恢复工作区时也要加载已勾选的脚本，供终端顶栏直接展示。
       const { usePackageScriptsStore } = await import("@/stores/packageScripts");

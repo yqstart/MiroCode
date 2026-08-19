@@ -17,7 +17,8 @@ import {
   StateField,
   type Extension,
 } from "@codemirror/state";
-import { tsService } from "@/features/editor/typeService";
+import { ensureTypeScriptProgram, tsService } from "@/features/editor/typeService";
+import { createVueScriptContext, isInVueScript } from "@/features/editor/vueScript";
 import {
   lineHasOpenParen,
   type TsSignatureHelp,
@@ -111,7 +112,6 @@ function createSignaturePlugin(filePath: string): Extension {
     private async query(u: ViewUpdate): Promise<void> {
       this.timer = null;
       if (this.disposed) return;
-      if (!tsService.ready) return; // 类型服务未就绪：不显示
       const view = u.view;
       const state = view.state;
       const head = state.selection.main.head;
@@ -120,7 +120,16 @@ function createSignaturePlugin(filePath: string): Extension {
       if (existing && existing.pos === head) return;
 
       try {
-        const help = tsService.signatureHelpAt(filePath, head);
+        const source = state.doc.toString();
+        const isVue = /\.vue$/i.test(filePath);
+        if (isVue && !isInVueScript(source, head)) return;
+        const virtual = isVue ? createVueScriptContext(filePath, source) : null;
+        const serviceFile = virtual?.fileName ?? filePath;
+        const serviceText = virtual?.text ?? source;
+        const { useWorkspaceStore } = await import("@/stores/workspace");
+        const root = useWorkspaceStore().rootPath;
+        if (!root || !(await ensureTypeScriptProgram(root, serviceFile, serviceText))) return;
+        const help = tsService.signatureHelpAt(serviceFile, head);
         if (help) {
           view.dispatch({
             effects: setSignatureEffect.of({
@@ -171,7 +180,7 @@ function dismissSignature(view: EditorView): boolean {
 }
 
 /**
- * 创建签名帮助扩展（script 非 vue 文件使用；类型服务未就绪静默）
+ * 创建签名帮助扩展（JS/TS/Vue script 使用；类型服务未就绪静默）
  */
 export function createSignatureExtension(filePath: string): Extension {
   return [

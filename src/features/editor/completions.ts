@@ -24,6 +24,7 @@ import { relativeImportSpec, nodeModulesPath } from "@/features/editor/completio
 import { createSnippetApply } from "@/features/editor/completion/adapters";
 import type { UserSnippet } from "@/features/editor/completion/userSnippets";
 import { createSignatureExtension } from "@/features/editor/typeService/tsSignatures";
+import { createVueScriptContext, isInVueScript } from "@/features/editor/vueScript";
 
 const JS_KEYWORDS = [
   "const",
@@ -852,7 +853,20 @@ export function sourcesForPath(filePath: string): CompletionSource[] {
       // 3) 轻量语义兜底（.vue script 段直接用轻量层）
       if (/\.vue$/i.test(filePath)) {
         return importPathSource(context, filePath).then(
-          (r) => r ?? scriptSemanticSource(context, filePath),
+          async (r) => {
+            if (r) return r;
+            const doc = context.state.doc.toString();
+            if (!isInVueScript(doc, context.pos)) return scriptSemanticSource(context, filePath);
+            const virtual = createVueScriptContext(filePath, doc);
+            const { createTsCompletionSource } = await import(
+              "@/features/editor/typeService/tsCompletions"
+            );
+            const typed = await createTsCompletionSource(filePath, {
+              serviceFilePath: virtual.fileName,
+              serviceText: (source) => createVueScriptContext(filePath, source).text,
+            })(context);
+            return typed ?? scriptSemanticSource(context, filePath);
+          },
         );
       }
       return importPathSource(context, filePath).then(async (r) => {
@@ -905,7 +919,7 @@ export function sourcesForPath(filePath: string): CompletionSource[] {
 export function createCompletionExtension(filePath: string): Extension {
   const sources = sourcesForPath(filePath);
   const lang = languageFromPath(filePath);
-  const isScriptFile = /\.(ts|tsx|js|jsx|mjs|cjs)$/i.test(filePath);
+  const isScriptFile = /\.(ts|tsx|js|jsx|mjs|cjs|vue)$/i.test(filePath);
   return [
     autocompletion({
       activateOnTyping: true,

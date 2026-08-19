@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { defineStore } from "pinia";
 
 export interface LocalTerminalSession {
@@ -113,6 +113,8 @@ export const useSessionsStore = defineStore("sessions", () => {
     open.value = false;
     focused.value = false;
     dormant.value = false;
+    // 等 Vue 卸载 LocalTerminal，确保 PTY kill 已经发出后再返回。
+    await nextTick();
     return true;
   }
 
@@ -149,6 +151,10 @@ export const useSessionsStore = defineStore("sessions", () => {
     // 旧终端全部销毁，其待注入命令作废
     pendingLocalWrite.value = null;
     dormant.value = false;
+
+    // 先卸载旧工作区的终端，再创建新 cwd 的终端，避免切换项目时短暂
+    // 同时保留两组 PTY 读/等待任务。
+    await nextTick();
 
     if (keepUiOpen || wasDormant || hadLocal) {
       ensureDefaultLocal(cwd);

@@ -34,9 +34,7 @@ import {
 } from "@codemirror/view";
 import { storeToRefs } from "pinia";
 import { createCompletionExtension } from "@/features/editor/completions";
-import { createAiGhostTextExtension } from "@/features/editor/aiCompletion/ghostTextExtension";
 import { expandEmmetAt, matchEmmetAbbreviation } from "@/features/editor/completion/emmet";
-import { aiManager } from "@/features/ai/manager";
 import { createDiagnosticsExtension } from "@/features/editor/diagnostics";
 import { languageExtensionForPath } from "@/features/editor/languages";
 import {
@@ -48,7 +46,11 @@ import { editorThemeExtensions } from "@/features/editor/theme";
 import { createMiroFindPanel, openFindPanel, openFindReplacePanel } from "@/features/editor/findPanel";
 import { wordAt } from "@/features/editor/documentSymbols";
 import { renameSymbol } from "@/features/editor/renameSymbol";
+import { createTypeScriptHoverExtension } from "@/features/editor/typeService/tsHover";
 import { promptInput } from "@/shared/promptDialog";
+import { gitChangesExtension } from "@/features/editor/gitChanges";
+import { gitBlameExtension } from "@/features/editor/gitBlame";
+import { relativeToRoot } from "@/shared/fs";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
@@ -60,18 +62,20 @@ const props = defineProps<{
 }>();
 
 const host = ref<HTMLDivElement | null>(null);
+const minimapCanvas = ref<HTMLCanvasElement | null>(null);
 const editorStore = useEditorStore();
 const settings = useSettingsStore();
 const workspace = useWorkspaceStore();
 const git = useGitStore();
 const { theme, editor } = storeToRefs(settings);
-const { openAt, findRequest } = storeToRefs(editorStore);
+const { openAt, findRequest, blameVisible } = storeToRefs(editorStore);
+const { snapshot: gitSnapshot } = storeToRefs(git);
 
 let view: EditorView | null = null;
 const themeComp = new Compartment();
 const langComp = new Compartment();
 const prefsComp = new Compartment();
-const aiComp = new Compartment();
+const gitComp = new Compartment();
 let applyingExternal = false;
 
 const navHandlers = {
@@ -140,6 +144,85 @@ function scrollTo(line: number, column: number) {
   emitCursor(view);
 }
 
+let minimapRaf: number | null = null;
+
+function scheduleMinimapDraw() {
+  if (!editor.value.minimap || !view || !minimapCanvas.value) return;
+  if (minimapRaf !== null) return;
+  minimapRaf = requestAnimationFrame(() => {
+    minimapRaf = null;
+    drawMinimap();
+  });
+}
+
+/** 绘制轻量代码缩略图：不做语法高亮解析，只使用文本长度和当前视口，保证大文件不卡。 */
+function drawMinimap() {
+  const canvas = minimapCanvas.value;
+  if (!canvas || !view || !editor.value.minimap) return;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.floor(rect.width);
+  const height = Math.floor(rect.height);
+  if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+  }
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const styles = getComputedStyle(canvas);
+  const muted = styles.getPropertyValue("--text-muted").trim() || "#8b8b98";
+  const accent = styles.getPropertyValue("--accent").trim() || "#8b5cf6";
+  const lines = view.state.doc.lines;
+  const maxRows = Math.max(1, Math.floor(height / 2));
+  const stride = Math.max(1, Math.ceil(lines / maxRows));
+  const maxWidth = Math.max(4, width - 8);
+
+  ctx.fillStyle = muted;
+  ctx.globalAlpha = 0.6;
+  for (let lineNumber = 1; lineNumber <= lines; lineNumber += stride) {
+    const line = view.state.doc.line(lineNumber);
+    const textWidth = Math.min(
+      maxWidth,
+      Math.max(2, Math.ceil(line.length * 1.05)),
+    );
+    const y = ((lineNumber - 0.5) / Math.max(1, lines)) * height;
+    ctx.fillRect(4, Math.max(0, y), textWidth, 1);
+  }
+
+  const firstLine = view.state.doc.lineAt(view.viewport.from).number;
+  const lastLine = view.state.doc.lineAt(view.viewport.to).number;
+  const viewportTop = ((firstLine - 1) / Math.max(1, lines)) * height;
+  const viewportHeight = Math.max(
+    12,
+    ((lastLine - firstLine + 1) / Math.max(1, lines)) * height,
+  );
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = accent;
+  ctx.fillRect(0, viewportTop, width, Math.min(height - viewportTop, viewportHeight));
+  ctx.globalAlpha = 0.85;
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, viewportTop + 0.5, Math.max(1, width - 1), Math.max(10, viewportHeight - 1));
+  ctx.globalAlpha = 1;
+}
+
+function onMinimapPointerDown(event: PointerEvent) {
+  if (!view || !minimapCanvas.value) return;
+  const rect = minimapCanvas.value.getBoundingClientRect();
+  if (rect.height <= 0) return;
+  const ratio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+  const lineNumber = Math.max(1, Math.min(view.state.doc.lines, Math.ceil(ratio * view.state.doc.lines)));
+  const pos = view.state.doc.line(lineNumber).from;
+  view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "center" }) });
+  view.focus();
+  scheduleMinimapDraw();
+}
+
 /** 字体大小调节：10-24；wheel deltaY 归一化到「格」浮点累积（一格≈100px），
  *  每满 1 格调 1px。浮点累积适配 deltaY 单位差异：标准鼠标一格 100 正好 1 步，
  *  精细设备（触控板/部分驱动每事件仅 ±1~±20）多滚几下也能触发，快速滚动不丢步。
@@ -171,9 +254,30 @@ function wheelFontSize(event: WheelEvent): boolean {
   return true;
 }
 
+/** 行内 git 扩展：改动条（始终）+ blame（hover 悬浮始终、常驻列可开关） */
+function buildGitExtensions(path: string): Extension[] {
+  const root = workspace.rootPath;
+  if (!root) return [];
+  const relPath = relativeToRoot(root, path);
+  const exts: Extension[] = [
+    gitChangesExtension({
+      root,
+      relPath,
+      openDiff: () => {
+        void git.showDiff(relPath, false);
+      },
+    }),
+    gitBlameExtension({
+      root,
+      relPath,
+      showGutter: blameVisible.value,
+    }),
+  ];
+  return exts;
+}
+
 /** 构建编辑器扩展集（按当前 props.path / 设置；标签切换时按需重建） */
-function buildExtensions(): Extension[] {
-  return [
+function buildExtensions(): Extension[] {  return [
     highlightSpecialChars(),
     history(),
     foldGutter(),
@@ -185,6 +289,7 @@ function buildExtensions(): Extension[] {
     bracketMatching(),
     closeBrackets(),
     createCompletionExtension(props.path),
+    createTypeScriptHoverExtension(props.path),
     ...createDiagnosticsExtension(props.path),
     createNavigationExtension(navHandlers),
     // 勿用 domEventHandlers 处理 contextmenu：
@@ -212,7 +317,7 @@ function buildExtensions(): Extension[] {
       ...completionKeymap,
       ...goToDefinitionKeymap(navHandlers),
       goBackKeymap(navHandlers),
-      // F2：重命名符号（本地正则方案；跨文件，基于 v1 符号索引）
+      // F2：重命名符号（TypeScript 语义服务优先，工作区索引兜底）
       {
         key: "F2",
         run: (v) => {
@@ -237,6 +342,18 @@ function buildExtensions(): Extension[] {
             if (view !== v) return;
             void renameSymbol(v, newName, root, props.path);
           });
+          return true;
+        },
+      },
+      // Shift+F12：查找当前符号的全部引用（JS/TS 走真实类型服务）。
+      {
+        key: "Shift-F12",
+        run: (v) => {
+          void editorStore.openReferences(
+            props.path,
+            v.state.doc.toString(),
+            v.state.selection.main.head,
+          );
           return true;
         },
       },
@@ -294,12 +411,7 @@ function buildExtensions(): Extension[] {
       ]),
     ),
     langComp.of([]),
-    // AI 行内智能补全（ghost text）；开关由 aiComp 热更新
-    aiComp.of(
-      editor.value.aiCompletion.enabled
-        ? [createAiGhostTextExtension(props.path)]
-        : [],
-    ),
+    gitComp.of(buildGitExtensions(props.path)),
     themeComp.of(editorThemeExtensions(theme.value)),
     prefsComp.of(buildPrefs()),
     EditorView.updateListener.of((update) => {
@@ -309,6 +421,9 @@ function buildExtensions(): Extension[] {
       }
       if (update.selectionSet || update.docChanged) {
         emitCursor(view);
+      }
+      if (update.docChanged || update.viewportChanged || update.geometryChanged) {
+        scheduleMinimapDraw();
       }
     }),
   ];
@@ -370,20 +485,16 @@ function switchDocument(path: string, content: string): void {
     loadLanguage(path);
   }
 
-  // 4. 主题/偏好/AI 开关以当前设置为准（缓存状态可能携带旧配置）。
-  // ghost 插件仅响应 doc 变化触发请求，重配不会引发多余请求
+  // 4. 主题与编辑偏好以当前设置为准（缓存状态可能携带旧配置）。
   view.dispatch({
     effects: [
       themeComp.reconfigure(editorThemeExtensions(theme.value)),
       prefsComp.reconfigure(buildPrefs()),
-      aiComp.reconfigure(
-        editor.value.aiCompletion.enabled
-          ? [createAiGhostTextExtension(path)]
-          : [],
-      ),
+      gitComp.reconfigure(buildGitExtensions(path)),
     ],
   });
   emitCursor(view);
+  scheduleMinimapDraw();
 }
 
 function createEditor() {
@@ -397,8 +508,10 @@ function createEditor() {
       extensions: buildExtensions(),
     }),
   });
+  view.scrollDOM.addEventListener("scroll", scheduleMinimapDraw, { passive: true });
   loadLanguage(props.path);
   emitCursor(view);
+  scheduleMinimapDraw();
 }
 
 onMounted(() => {
@@ -412,6 +525,11 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(cursorRaf);
     cursorRaf = null;
   }
+  if (minimapRaf !== null) {
+    cancelAnimationFrame(minimapRaf);
+    minimapRaf = null;
+  }
+  view?.scrollDOM.removeEventListener("scroll", scheduleMinimapDraw);
   view?.destroy();
   view = null;
 });
@@ -507,37 +625,74 @@ watch(
   { deep: true },
 );
 
-// AI 补全开关热更新（Compartment reconfigure）
 watch(
-  () => editor.value.aiCompletion.enabled,
-  (enabled) => {
-    aiManager.setEnabled(enabled);
-    view?.dispatch({
-      effects: aiComp.reconfigure(
-        enabled ? [createAiGhostTextExtension(props.path)] : [],
-      ),
-    });
+  () => editor.value.minimap,
+  () => {
+    requestAnimationFrame(scheduleMinimapDraw);
   },
 );
 
-// 组件挂载时同步 AI 开关状态到 manager
-onMounted(() => {
-  aiManager.setEnabled(editor.value.aiCompletion.enabled);
+// 行内 blame 常驻列开关热更新（gitComp reconfigure）
+watch(blameVisible, () => {
+  view?.dispatch({
+    effects: gitComp.reconfigure(buildGitExtensions(props.path)),
+  });
 });
+
+// HEAD 提交变化（commit / checkout / reset 后）时重载改动条与 blame，
+// 否则相对 HEAD 的逐行 diff 与 blame 会停留在旧提交，需重开标签才更新。
+watch(
+  () => gitSnapshot.value.head,
+  () => {
+    view?.dispatch({
+      effects: gitComp.reconfigure(buildGitExtensions(props.path)),
+    });
+  },
+);
 
 defineExpose({ scrollTo });
 </script>
 
 <template>
-  <div ref="host" class="cm-host" />
+  <div class="editor-shell">
+    <div ref="host" class="cm-host" />
+    <canvas
+      v-if="editor.minimap"
+      ref="minimapCanvas"
+      class="minimap"
+      role="img"
+      aria-label="Code minimap"
+      @pointerdown="onMinimapPointerDown"
+    />
+  </div>
 </template>
 
 <style scoped>
-.cm-host {
-  position: relative;
+.editor-shell {
+  display: flex;
   height: 100%;
   width: 100%;
+  min-width: 0;
   overflow: hidden;
+}
+
+.cm-host {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  width: auto;
+  overflow: hidden;
+}
+
+.minimap {
+  flex: 0 0 112px;
+  width: 112px;
+  height: 100%;
+  display: block;
+  border-left: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  cursor: pointer;
 }
 
 .cm-host :deep(.cm-editor) {
@@ -583,6 +738,29 @@ defineExpose({ scrollTo });
 
 .cm-host :deep(.cm-completionIcon) {
   opacity: 0.7;
+}
+
+.cm-host :deep(.miro-hover-info) {
+  max-width: 560px;
+  padding: 2px 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cm-host :deep(.miro-hover-signature) {
+  padding: 3px 10px 5px;
+  color: var(--accent);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  white-space: pre-wrap;
+}
+
+.cm-host :deep(.miro-hover-doc) {
+  max-width: 520px;
+  padding: 5px 10px 3px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
 }
 
 /* ===== 签名帮助（VS Code 风格） ===== */

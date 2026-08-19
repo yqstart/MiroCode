@@ -5,10 +5,10 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 ## 产品阶段与方向
 
 - **定位**：轻量级、快速、顺滑的跨平台桌面代码编辑器
-- **当前阶段**：功能**定版**（2026-08-10）——核心功能集（资源树 / 编辑 / 搜索 / Git / 终端·SSH / 主题 / AI 行内补全）全部收敛，进入**优化迭代期**
+- **当前阶段**：功能**定版**（2026-08-10）——核心功能集（资源树 / 编辑 / 搜索 / Git / 终端·SSH / 主题 / 本地语言智能）全部收敛，进入**优化迭代期**
 - **后续方向**：围绕性能、流畅度、交互体验持续打磨，不再扩展大功能模块
-- **已落地**：AI 行内智能补全（ghost text 形态，编辑器内补全，非独立面板）
-- **明确不做**：AI 对话面板、AI Agent、MCP / Skills 生态、插件市场
+- **已落地**：离线代码补全、JS/TS 类型服务、Vue SFC script/template 辅助、会话恢复、Minimap
+- **明确不做**：任何 AI/模型联网补全、AI 对话面板、AI Agent、MCP / Skills 生态、插件市场
 
 ## 文档索引
 
@@ -31,8 +31,7 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 
 - 桌面壳：Tauri 2
 - 前端：Vue 3 + TypeScript + Vite + Pinia
-- 编辑器内核：CodeMirror 6（高亮/折叠/诊断/补全/跳转；补全：HTML/CSS 走 VS Code 同源语言服务 `vscode-html/css-languageservice`（动态按需加载），JS/TS 轻量语义（作用域变量/import 绑定/跨文件符号索引/`obj.` 成员联想），Vue 指令 data + `<script setup>` 绑定注入 template 表达式，静态表兜底；JSON/.env 诊断；正则跳转·引用·重命名）
-- AI 补全：Rust reqwest 流式 + SSE 推送，ghost text 渲染（DeepSeek / 自定义 provider）
+- 编辑器内核：CodeMirror 6（高亮/折叠/诊断/补全/跳转；HTML/CSS 走 `vscode-html/css-languageservice`，JS/TS 走浏览器内嵌 TypeScript LanguageService，支持类型成员补全、自动导入、签名帮助、hover、诊断、定义/引用/重命名；Vue 使用等长 SFC script 虚拟文件 + template 绑定注入；服务失败时降级本地语义层；Minimap 为轻量 Canvas）
 - 搜索：Rust walk + 模糊/内容检索/替换（async + LRU 缓存）
 - Git：Rust `git2` + 系统 Git（状态/提交/冲突走 `git2`；push/rebase/delete-remote 等远端/兼容性敏感操作按需走系统 Git）
 - 主题：`miro-dark` / `dawn` / `midnight` / `cyberpunk`
@@ -43,24 +42,22 @@ Miro Code（米罗编辑器）：基于 Tauri + Vue3 的轻量化桌面代码编
 ```
 src/
   app/                 # AppShell、TitleBar、ActivityBar、SideBar、EditorArea、StatusBar
-  features/            # explorer / git / search / editor / settings / sessions / ssh / ai
+  features/            # explorer / git / search / editor / settings / sessions / ssh
   stores/              # settings / workspace / ui / editor / git / search / sessions / ssh
   styles/              # tokens、themes、global
   shared/
-src-tauri/             # Tauri 后端、Git/搜索命令、PTY 插件、AI 流式补全
+src-tauri/             # Tauri 后端、Git/搜索命令、PTY 插件、窗口与文件能力
 .github/               # CI、Issue / PR 模板
 ```
 
-Git（`features/git`）对标 **VS Code Source Control + Git Graph**：左侧 Commit（暂存的更改 / 更改分组 + 行内暂存·回滚 + 点选打开编辑区 Diff + Rebase Continue/Abort）；编辑区标签 **Git Log**（与普通文件标签一致，不固定右侧；过滤 / 详情侧栏 / Revert / Cherry-pick / Checkout / New Branch / Diff / Interactive Rebase）；Branches 弹层（Compare/Upstream/删远程）；冲突分栏（Base/导航）；⌘K 打开 Commit；活动栏 Project / Commit / History，底区 Package / 终端 / 设置。
+Git（`features/git`）对标 **VS Code Source Control + Git Graph**：左侧 Commit（暂存的更改 / 更改分组 + 行内暂存·回滚 + 点选打开编辑区 Diff + Rebase Continue/Abort）；编辑区标签 **Git Log**（真实多车道 SVG 提交拓扑，覆盖全部 refs；分支/标签/贮藏筛选；搜索、自动加载更多、HEAD/贮藏快捷定位、可见列设置；提交正文 / 父提交 / 变更状态详情；Cmd/Ctrl 点击两提交比较、文件 Diff / 当前版本 / 路径复制 / 代码评审勾选；提交右键 Checkout / New Branch / Tag / Copy / Diff / HEAD 对比 / Cherry-pick / Revert / Interactive Rebase / Reset；ref 右键 Checkout / Merge / Rebase / Compare / Rename / Delete / Push Tag）；Branches 弹层（Compare/Upstream/删远程）；冲突分栏（Base/导航）；⌘K 打开 Commit；活动栏 Project / Commit / History，底区 Package / 终端 / 设置。
 
 格式化（`features/editor/formatting`）**开箱即用**：内置 Prettier standalone 引擎（前端动态 import 按需分包，零配置/零依赖/离线，覆盖 JS/TS/JSON/CSS/SCSS/Less/HTML/Vue/Markdown/YAML/GraphQL），三级策略：项目本地 prettier（后端 `format_with_prettier`，`npx --no-install`）优先 → 内置引擎兜底（`prettierRuntime.ts` 扩展名→parser 映射 + `prettierConfig.ts` 读取项目 JSON 形式 .prettierrc）→ 均失败抛中文错误（`UnsupportedLanguageError`「暂不支持格式化该语言」）。入口：⌥⇧F 快捷键 / 编辑区右键 / 文件树右键；「保存时格式化」设置（默认关，`saveActive`/`saveAll` 保存前静默格式化，失败不阻塞保存）；`prettierEnabled` 默认开（原依赖项目安装，现内置引擎兜底后默认开启）。
 
-AI 行内补全（`features/ai` + `features/editor/aiCompletion`）：ghost text 形态，类似 GitHub Copilot。Rust 层（`src-tauri/src/commands/ai.rs`）用 reqwest 流式请求 AI 服务，tokio 读 SSE 逐 chunk `app.emit("ai://delta/{req_id}")`；前端 `ai/manager.ts` 单例状态机 + 防抖取消；`aiCompletion/ghostTextExtension.ts` 用 CodeMirror 6 `Decoration.widget` + `WidgetType` 渲染 ghost text（CM6 无原生 inline API）+ Tab 接受 / Esc 取消 keymap（`Prec.highest` 抢占，补全 popup 打开时不拦截）；多 provider 预设（DeepSeek `deepseek-v4-pro` / 自定义），FIM 模式走标准 `/completions` 端点（prompt+suffix，API 服务器内部处理 FIM token，前端不拼 `<|fim_begin|>` 等 token）；API Key 存 `~/.mirocode/ai-credentials.json`（0600，复刻 SSH 凭据模式），不进 localStorage；设置面板 AI 配置分区 + 状态栏 AI 指示器。
-
-下拉补全（`features/editor/completion/` + `completions.ts` 分派链）对齐 VS Code 分层：**语言服务出候选 + 编辑器触发/过滤/排序**。HTML/Vue template → `vscode-html-languageservice`（标签/属性/值/实体/结束标签，Vue 模式注入指令 custom data）；CSS/SCSS/Less → `vscode-css-languageservice`（含颜色 swatch 预览）；**JS/TS/JSX/TSX → 完整类型系统**（`typeService/`：浏览器内嵌 typescript 编译器 API 与 tsserver 同引擎，动态 import 拆独立 chunk，首次 JS/TS 补全才加载；真类型感知成员补全、真自动导入（sourceDisplay→import 语句）、签名帮助（CM6 自研 tooltip，输入 `(` 触发 / Esc 关闭）；lib.es2022+dom 标准库 `?raw` 内嵌独立 chunk；vite 构建用 esbuild 转 typescript UMD→ESM + rollup-replace 替换 process 引用；未就绪/失败降级轻量语义层）；Vue template 表达式（`{{ }}` / `:attr=` / `@event=`）→ `vueBindings.ts` 提取 `<script setup>` 顶层绑定注入。三个服务库均动态 import 拆独立 chunk，加载/运行失败降级静态表（关键词/snippet/HTML 表/CSS 表/Tailwind）。**交互对齐**：`adapters.ts` LSP→CM 转换（commitCharacters 透传、snippet 占位光标定位、markdown 文档渲染）；`completionMemory.ts` 最近使用记忆（localStorage，boost 加权）；`docCache.ts` parse 缓存（内容 hash 未变不重 parse，大文件不卡）；**能力对齐**：import 路径补全（`from './` 列文件/目录，相对路径 + `@/` 别名，`pathUtils.ts` 纯函数）、自动导入（未导入跨文件符号接受时自动插入 import 语句，`relativeImportSpec` 计算相对 spec）、Emmet 缩写 Tab 展开（`emmet.ts`，emmet 库动态加载，仅 html/css/vue 文件启用，按行缩进对齐）。自测：`pnpm test:completion`（`completion-selfcheck.ts` 纯函数 + `completion-service-selfcheck.ts` 真实语言服务 + `type-service-selfcheck.ts` 真实 typescript 引擎）。
+下拉补全（`features/editor/completion/` + `completions.ts` 分派链）对齐 VS Code 分层：**语言服务出候选 + 编辑器触发/过滤/排序**。HTML/CSS 继续使用 VS Code 同源语言服务；JS/TS/JSX/TSX 使用浏览器内嵌 TypeScript 编译器 API（动态加载、标准库内嵌、类型成员补全、自动导入、签名帮助、hover、诊断、定义/引用/重命名）；Vue script 使用等长虚拟 TS 文件，template 使用 `vueBindings.ts` 注入 `<script setup>` 顶层绑定，模板标签/属性由 HTML 服务提供。所有服务失败都降级到关键词/snippet/文档词与符号索引。会话恢复保存在 `mirocode.editor-session.v2:*`，恢复标签、活动文件、光标、固定状态和受限未保存快照；Minimap 使用 Canvas 按帧绘制并支持点击定位。自测：`pnpm test:completion`、`pnpm test:editor-session`。
 
 会话视图：本地终端（`features/sessions`，**底部面板**，入口：状态栏左下角终端按钮 / 活动栏 Package 与设置之间的终端图标 / ⌘J）与 SSH 远程（`features/sessions/SshView.vue` + `stores/ssh.ts`，独立编辑区标签）**已拆分解耦**。
-- 本地终端（`TerminalPanel.vue` 底部面板 + `SessionsView.vue`）：面板在 AppShell 中位于 `.center`（EditorArea 下方），**仅占编辑区列**，资源管理器（ActivityBar+SideBar）保持整列全高；随工作区切换重建（cwd = 项目根）；面板高度可拖拽并持久化（`settings.layout.terminalPanelHeight`）；面板收起（⌘J / 顶栏 ▼）时会话与 PTY 保活（v-show 隐藏），仅关闭全部终端 subtab 或切换工作区时销毁；打开面板不打断画布（SSH/GitLog/Compare）聚焦；新建终端挂载即聚焦（无需手动点击）
+- 本地终端（`TerminalPanel.vue` 底部面板 + `SessionsView.vue`）：面板在 AppShell 中位于 `.center`（EditorArea 下方），**仅占编辑区列**，资源管理器（ActivityBar+SideBar）保持整列全高；随工作区切换重建（cwd = 项目根）；面板高度可拖拽并持久化（`settings.layout.terminalPanelHeight`）；面板收起（⌘J / 顶栏 ▼）时会话与 PTY 保活（v-show 隐藏），仅关闭全部终端 subtab 或切换工作区时销毁；打开面板不打断画布（SSH/GitLog/Compare）聚焦；新建终端挂载即聚焦（无需手动点击）；`tauri-plugin-pty` 0.3.1 使用本地补丁，PTY 阻塞 IO 统一走 `spawn_blocking`，避免常驻终端占满 Tauri 异步运行时
 - package.json scripts：活动栏 Package 入口（点击后在本地终端注入 `pnpm/npm/yarn/bun run …`）；Scripts 弹层可逐条**勾选**，勾选的脚本以芯片形式常驻终端顶栏右侧（`shared/pinnedScripts.ts` 按项目持久化勾选集合，`PackageScriptsMenu` compact 变体渲染 `pinnedScripts` 子集）；点击芯片时若活动终端正在运行任务（shell 未停在提示符）则自动**新开终端**执行——忙/闲由 `features/sessions/terminalIdle.ts` 解析 PTY 输出流判定（行尾提示符特征 + 稳定窗口），状态存 `stores/sessions.ts` 的 `localIdle`
 - SSH 远程：独立编辑区标签，含主机列表 / 远程终端；关闭 SSH 标签不影响本地终端，反之亦然
 - SSH 主机配置：应用级全局（`~/.mirocode/ssh-profiles.json`），与项目/窗口无关；可选「记住密码」写入 `~/.mirocode/ssh-credentials.json`（0600）

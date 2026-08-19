@@ -253,8 +253,7 @@ Midnight / Cyberpunk 各自维护完整 `HighlightStyle`（青蓝 / 霓虹粉青
 
 ### 7.1 设置弹层信息架构（左导航 4 区）
 
-- **编辑器**：外观主题（四宫格）/ 布局（字号、Tab 2/4、自动换行、行号）/ 文件保存（自动保存开关 + 延迟）/ Tooling（ESLint、Prettier、移动文件时更新 import）/ 语言（中文 / English）/ 补全提示
-- **AI 行内补全**：开关 / provider / API Key / 地址 / 模型 / 多行策略 / 防抖 / 首字提示 / token 预算 / 温度 / 测试连接
+- **编辑器**：外观主题（四宫格）/ 布局（字号、Tab 2/4、自动换行、行号、Minimap）/ 文件保存（自动保存开关 + 延迟）/ Tooling（Prettier、移动文件时更新 import）/ 语言（中文 / English）/ 补全提示
 - **快捷键**：快捷键对照表
 - **系统**：关于 / 启动时自动检查更新 / 检查更新 / License
 
@@ -266,7 +265,7 @@ Midnight / Cyberpunk 各自维护完整 `HighlightStyle`（青蓝 / 霓虹粉青
 | 数字输入 | 右对齐或居中数字，窄宽度 |
 | 下拉 | 右 chevron，菜单同圆角体系 |
 | 主题卡 | 迷你代码窗缩略 + 名称；选中描边 + ✓ |
-| 状态栏指示器 | AI 用小圆点 + 文案，状态色区分（就绪 / 思考中 / 错误） |
+| 状态栏状态 | Git 同步 / 冲突 / 未保存使用简短文案与语义色，不显示模型或联网状态 |
 
 ### 7.3 主界面（编辑壳）
 
@@ -335,7 +334,7 @@ Midnight / Cyberpunk 各自维护完整 `HighlightStyle`（青蓝 / 霓虹粉青
 - 面板展开 / 折叠、弹层过渡、标签动画、树 Chevron 旋转、Toast：**140–280ms**，纯 CSS
 - 主题切换允许短暂交叉淡入，避免整页闪白
 - 对比度：正文与背景满足可读；错误色不仅依赖颜色，需配合图标 / 下划线
-- CodeMirror 交互反馈（tooltip/completion/ghost text/bracket match）要**克制**：辅助感，不要干扰编码
+- CodeMirror 交互反馈（tooltip/completion/Minimap/bracket match）要**克制**：辅助感，不要干扰编码
 
 ---
 

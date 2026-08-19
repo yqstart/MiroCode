@@ -41,9 +41,7 @@ export async function readDiskContent(path: string): Promise<string | null> {
 
 /** 浏览器文件源（openedContent 异步获取：ensureFile 时先查已打开 tab） */
 const dynamicSource: FileContentSource = {
-  openedContent() {
-    return undefined;
-  },
+  openedContent,
   readDisk: readDiskContent,
 };
 
@@ -52,7 +50,7 @@ export const tsService = new TsLanguageService();
 
 /** 确保类型服务就绪（返回 true 表示可继续查询） */
 export async function ensureTypeService(root: string): Promise<boolean> {
-  if (tsService.ready) return true;
+  if (tsService.ready && tsService.currentRoot === root) return true;
   try {
     const [tsMod, { LIB_FILES }] = await Promise.all([
       loadTypeScript(),
@@ -72,5 +70,59 @@ export async function ensureTypeService(root: string): Promise<boolean> {
 export function syncOpenedFile(path: string, content: string): boolean {
   if (!tsService.ready) return false;
   tsService.setFile(path, content);
+  return true;
+}
+
+/**
+ * 准备一个 JS/TS 文件及其相对 import 闭包，供补全、hover、定义、引用、
+ * 诊断和重命名共用。只注册 JS/TS 家族文件，Vue SFC 由 Vue 适配层处理，
+ * 不把整份 HTML 模板误交给 TypeScript parser。
+ */
+export async function ensureTypeScriptProgram(
+  root: string,
+  filePath: string,
+  content: string,
+  maxDepth = 8,
+): Promise<boolean> {
+  if (!(await ensureTypeService(root))) return false;
+  tsService.setFile(filePath, content);
+
+  try {
+    const { useEditorStore } = await import("@/stores/editor");
+    for (const tab of useEditorStore().tabs) {
+      if (/\.(?:[cm]?ts|tsx|jsx|js)$/i.test(tab.path)) {
+        tsService.setFile(tab.path, tab.content);
+      }
+    }
+  } catch {
+    // 没有 Pinia 上下文时至少保留当前文件。
+  }
+
+  const { IMPORT_RE, resolveImportPath } = await import("@/shared/importReferences");
+  const visited = new Set<string>([filePath]);
+  const queue: Array<{ path: string; text: string; depth: number }> = [
+    { path: filePath, text: content, depth: 0 },
+  ];
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || current.depth >= maxDepth) continue;
+    const re = new RegExp(IMPORT_RE.source, "g");
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(current.text))) {
+      const spec = match[1];
+      if (!(spec.startsWith(".") || spec.startsWith("@/"))) continue;
+      const resolved = await resolveImportPath(root, current.path, spec).catch(() => null);
+      if (!resolved || visited.has(resolved) || !/\.(?:[cm]?ts|tsx|jsx|js)$/i.test(resolved)) {
+        continue;
+      }
+      visited.add(resolved);
+      await tsService.ensureFile(resolved);
+      const opened = await openedContent(resolved);
+      const text = opened ?? (await readDiskContent(resolved));
+      if (text !== null && text !== undefined) {
+        queue.push({ path: resolved, text, depth: current.depth + 1 });
+      }
+    }
+  }
   return true;
 }

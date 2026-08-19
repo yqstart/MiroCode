@@ -7,8 +7,8 @@
 // - 程序 = 已打开文件 + 显式 ensureFile 的 import 链（按需，不扫描全项目）
 // - 补全/签名帮助走 LanguageService（增量编译，只重编变化文件）
 //
-// 范围：类型感知成员补全、真自动导入（sourceDisplay）、签名帮助；
-// 诊断/重构/hover 不做（与轻量定位无关的增值项后续再说）。
+// 范围：类型感知成员补全、真自动导入（sourceDisplay）、签名帮助、
+// hover、定义/引用、语义诊断和跨文件符号重命名。
 
 import type ts from "typescript";
 import type { Completion } from "@codemirror/autocomplete";
@@ -107,6 +107,42 @@ export interface TsSignatureHelp {
   applicableSpan: { start: number; length: number };
 }
 
+export interface TsTextSpan {
+  start: number;
+  length: number;
+}
+
+export interface TsDefinitionLocation {
+  fileName: string;
+  textSpan: TsTextSpan;
+  kind: string;
+  name: string;
+  containerName: string;
+}
+
+export interface TsReferenceLocation {
+  fileName: string;
+  textSpan: TsTextSpan;
+  isDefinition: boolean;
+}
+
+export interface TsQuickInfo {
+  kind: string;
+  kindModifiers: string;
+  textSpan: TsTextSpan;
+  displayString: string;
+  documentation: string;
+}
+
+export interface TsDiagnostic {
+  fileName: string;
+  start: number;
+  length: number;
+  message: string;
+  severity: "error" | "warning" | "info";
+  code: number;
+}
+
 /** 浏览器单例（由 typeService 入口管理） */
 export class TsLanguageService {
   private ts: TsModule | null = null;
@@ -121,6 +157,10 @@ export class TsLanguageService {
 
   get ready(): boolean {
     return this.service !== null;
+  }
+
+  get currentRoot(): string {
+    return this.root;
   }
 
   /**
@@ -296,5 +336,134 @@ export class TsLanguageService {
         length: items.applicableSpan.length,
       },
     };
+  }
+
+  /** 悬浮信息：返回 TS 的真实类型签名和文档。 */
+  quickInfoAt(fileName: string, pos: number): TsQuickInfo | null {
+    const service = this.service;
+    const tsMod = this.ts;
+    if (!service || !tsMod) return null;
+    const info = service.getQuickInfoAtPosition(fileName, pos);
+    if (!info) return null;
+    const display = info.displayParts?.map((part) => part.text).join("") ?? "";
+    const documentation = info.documentation
+      ? typeof info.documentation === "string"
+        ? info.documentation
+        : info.documentation.map((part) => part.text).join("")
+      : "";
+    return {
+      kind: info.kind,
+      kindModifiers: info.kindModifiers ?? "",
+      textSpan: { start: info.textSpan.start, length: info.textSpan.length },
+      displayString: display,
+      documentation,
+    };
+  }
+
+  /** 跳转定义：使用 TypeScript 的解析结果，保留跨文件定位能力。 */
+  definitionsAt(fileName: string, pos: number): TsDefinitionLocation[] {
+    const service = this.service;
+    if (!service) return [];
+    return (service.getDefinitionAtPosition(fileName, pos) ?? []).map((item) => ({
+      fileName: item.fileName,
+      textSpan: { start: item.textSpan.start, length: item.textSpan.length },
+      kind: item.kind,
+      name: item.name,
+      containerName: item.containerName ?? "",
+    }));
+  }
+
+  /** 引用位置：TS 返回引用集合；definition 单独标记，供 UI/重命名区分。 */
+  referencesAt(fileName: string, pos: number): TsReferenceLocation[] {
+    const service = this.service;
+    if (!service) return [];
+    const references = service.getReferencesAtPosition(fileName, pos) ?? [];
+    const definitions = service.getDefinitionAtPosition(fileName, pos) ?? [];
+    const definitionKeys = new Set(
+      definitions.map((item) => `${item.fileName}:${item.textSpan.start}:${item.textSpan.length}`),
+    );
+    const out: TsReferenceLocation[] = [];
+    for (const definition of definitions) {
+      out.push({
+        fileName: definition.fileName,
+        textSpan: {
+          start: definition.textSpan.start,
+          length: definition.textSpan.length,
+        },
+        isDefinition: true,
+      });
+    }
+    for (const reference of references) {
+      out.push({
+        fileName: reference.fileName,
+        textSpan: {
+          start: reference.textSpan.start,
+          length: reference.textSpan.length,
+        },
+        isDefinition: definitionKeys.has(
+          `${reference.fileName}:${reference.textSpan.start}:${reference.textSpan.length}`,
+        ),
+      });
+    }
+    const seen = new Set<string>();
+    return out.filter((item) => {
+      const key = `${item.fileName}:${item.textSpan.start}:${item.textSpan.length}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  /** 重命名位置：findRenameLocations 会把定义和所有引用一次性返回。 */
+  renameLocationsAt(
+    fileName: string,
+    pos: number,
+    findInStrings = false,
+    findInComments = false,
+  ): TsReferenceLocation[] {
+    const service = this.service;
+    if (!service) return [];
+    return (service.findRenameLocations(fileName, pos, findInStrings, findInComments) ?? []).map(
+      (item) => ({
+        fileName: item.fileName,
+        textSpan: { start: item.textSpan.start, length: item.textSpan.length },
+        isDefinition: item.fileName === fileName && item.textSpan.start === pos,
+      }),
+    );
+  }
+
+  /** 当前文件语义诊断；UI 可按需把结果映射成 CodeMirror Diagnostic。 */
+  diagnosticsFor(fileName: string): TsDiagnostic[] {
+    const service = this.service;
+    const tsMod = this.ts;
+    if (!service || !tsMod) return [];
+    const all = [
+      ...service.getSyntacticDiagnostics(fileName),
+      ...service.getSemanticDiagnostics(fileName),
+    ];
+    const seen = new Set<string>();
+    const result: TsDiagnostic[] = [];
+    for (const diagnostic of all) {
+      const start = diagnostic.start ?? 0;
+      const length = diagnostic.length ?? 1;
+      const key = `${start}:${length}:${diagnostic.code}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const severity =
+        diagnostic.category === tsMod.DiagnosticCategory.Error
+          ? "error"
+          : diagnostic.category === tsMod.DiagnosticCategory.Warning
+            ? "warning"
+            : "info";
+      result.push({
+        fileName,
+        start,
+        length,
+        message: tsMod.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
+        severity,
+        code: diagnostic.code,
+      });
+    }
+    return result;
   }
 }

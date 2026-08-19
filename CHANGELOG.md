@@ -2,6 +2,21 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循语义化版本。
 
+## [Unreleased]
+
+## [0.16.0] - 2026-08-19
+
+### 新增
+
+- **Git Log 对齐 Git Graph 核心交互**：后端日志从全部 refs 构建提交拓扑；编辑区 Git Log 改为多车道 SVG 图，支持分支 / 标签 / 贮藏筛选、搜索与自动加载、提交正文与文件状态详情、Cmd/Ctrl 双提交比较、文件 Diff / 当前版本 / 路径复制 / 代码评审、提交与 ref 右键 Git 操作、标签创建 / 删除 / 推送，以及 HEAD / 贮藏快捷定位；新增 `git-graph-selfcheck` 车道布局自测
+- **编辑器行内 Git 改动条 + Blame**：左侧 gutter 实时显示相对 HEAD 的增 / 改 / 删改动条（纯前端 Myers 行级 diff，输入 250ms 防抖重算），改动行淡背景高亮、点击改动条打开该文件 Diff；hover 任意行悬浮显示该行最后提交（摘要 / 作者 / 短 hash / 日期），可开关常驻 blame 列（编辑器右键菜单）；新增 Rust `git_head_text` 命令 + 前端 `gitHeadText` 封装，配套 `scripts/line-diff-selfcheck.ts`（`pnpm test:line-diff`）
+- **编辑器会话恢复与 Minimap**：按工作区恢复打开标签、活动文件、光标、固定状态和受限未保存快照；新增无依赖 Canvas Minimap，支持点击定位与设置开关
+- **本地语言智能增强**：JS/TS/JSX/TSX 接入 TypeScript hover、诊断、定义、引用、跨文件重命名；Vue script 使用等长虚拟 TS 文件，Shift+F12 新增引用结果面板，未打开文件也可重命名写盘
+
+### 变更
+
+- **移除 AI 功能链路**：删除 AI ghost text、provider/API Key 设置、状态栏指示器、前端请求与 Rust 流式命令；代码补全保持本地、离线、无模型依赖
+
 ## [0.15.0] - 2026-08-17
 
 ### 变更
@@ -817,6 +832,7 @@ CLI shell **物理无法**驱动 macOS WKWebView 的鼠标事件循环——macO
 - 开源社区文件：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`
 - GitHub Issue / PR 模板与 CI（前端构建 + Rust check）
 
+[0.16.0]: https://github.com/yqstart/MiroCode/compare/v0.15.0...v0.16.0
 [0.13.7]: https://github.com/yqstart/MiroCode/compare/v0.13.6...v0.13.7
 [0.15.0]: https://github.com/yqstart/MiroCode/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/yqstart/MiroCode/compare/v0.14.0...v0.14.1

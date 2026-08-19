@@ -14,16 +14,16 @@
 | 技术栈 | Tauri 2 + Vue 3 + TypeScript + Pinia + CodeMirror 6 |
 | 平台 | Windows / macOS / Linux |
 | 阶段 | **功能定版**：核心功能集已收敛，进入优化迭代期（性能 / 流畅度 / 交互体验） |
-| 明确不做 | AI 对话面板、AI Agent、MCP / Skills 生态、插件市场、Monaco 替换 CM6 |
+| 明确不做 | AI/模型联网补全、AI 对话面板、AI Agent、MCP / Skills 生态、插件市场、Monaco 替换 CM6 |
 
-已落地能力：资源树、多标签编辑、全局搜索 / 替换、Git（Commit / Log / Branches / Rebase / 冲突）、本地终端、SSH 远程 Shell、四主题、中英文界面、**AI 行内补全（ghost text）**、应用内更新。
+已落地能力：资源树、多标签编辑、全局搜索 / 替换、Git（Commit / Log / Branches / Rebase / 冲突）、本地终端、SSH 远程 Shell、四主题、中英文界面、本地语言智能、会话恢复、Minimap、应用内更新。
 
 ---
 
 ## 2. 设计原则
 
 1. **轻量优先**：进程少、内存低、启动快；能用系统能力 / 成熟库解决的不自研（胶水原则）。
-2. **Rust 干重活**：文件 IO、Git、搜索遍历、SSH、AI 流式请求全部下沉 Rust；前端只做布局、交互与呈现。
+2. **Rust 干重活**：文件 IO、Git、搜索遍历、SSH 全部下沉 Rust；前端负责编辑器、布局、语言服务与交互呈现。
 3. **视觉一体**：主题以 CSS 变量驱动，UI 与编辑器高亮同源切换，避免两套皮肤割裂。
 4. **布局可记忆**：分栏尺寸、侧栏状态、打开标签、主题与编辑器偏好持久化。
 5. **优化优先于扩张**：优化项须有可感知效果或可量化指标（启动耗时 / 帧率 / 内存 / 操作延迟），「修一个验一个」。
@@ -48,8 +48,7 @@
 | Git | **Rust `git2` + 系统 Git** | 状态/提交/冲突以 `git2` 为主；push/rebase/delete-remote 等远端或兼容性敏感路径按需走系统 Git |
 | 搜索 | **Rust walkdir + ignore + 正则** | async + `spawn_blocking` + LRU 文件列表缓存 |
 | SSH | **Rust `ssh2`（libssh2，vendored）** | 主机列表、凭据、远程 Shell |
-| AI 补全 | **Rust `reqwest` 流式请求 + tokio** | SSE 逐 chunk 推送前端，取消在途请求 |
-| 终端 | **`@xterm/xterm` + `tauri-plugin-pty`** | 本地 PTY；SSH 走 ssh2 原生通道 |
+| 终端 | **`@xterm/xterm` + `tauri-plugin-pty` 0.3.1（本地阻塞 IO 补丁）** | 本地 PTY；同步读写/等待/终止操作走 `spawn_blocking`，SSH 走 ssh2 原生通道 |
 | 主题 | **CSS 变量 + CodeMirror `EditorView.theme` / `HighlightStyle`** | 四套主题，编辑器同步 |
 | 图标 | **Lucide**（控件）+ **Material Icon Theme**（文件图标） | 细线控件；文件类型对齐 VS Code |
 | 包管理 | pnpm | `pnpm-lock.yaml` 入库，CI `--frozen-lockfile` |
@@ -81,11 +80,11 @@
 │  search / sessions / ssh / settings / compare / packageScripts │
 ├─────────────────────────────────────────────────────────────┤
 │              Tauri IPC（commands + events）                   │
-├──────────┬──────────┬──────────┬──────────┬──────────┤
-│ fs.rs    │ search.rs│ git.rs   │ ssh.rs   │ ai.rs    │
-│ 文件读写  │ 文件名/内容 │ 状态/提交  │ 远程终端  │ AI 流式  │
-│ 监听     │ 搜索/替换 │ 分支/Rebase│ 远程终端  │ 补全请求 │
-└──────────┴──────────┴──────────┴──────────┴──────────┘
+├──────────┬──────────┬──────────┬──────────┤
+│ fs.rs    │ search.rs│ git.rs   │ ssh.rs   │
+│ 文件读写  │ 文件名/内容 │ 状态/提交  │ 远程终端  │
+│ 监听     │ 搜索/替换 │ 分支/Rebase│ 远程终端  │
+└──────────┴──────────┴──────────┴──────────┘
                            │
                     操作系统文件 / .git / 子进程（PTY）
 ```
@@ -94,8 +93,8 @@
 
 | 进程 | 职责 |
 |---|---|
-| WebView（前端） | UI、编辑器实例、主题、交互状态、AI ghost text 渲染 |
-| Rust 主进程 | 文件访问、Git、目录遍历、搜索、SSH Shell、AI 请求、窗口控制（macOS 红绿灯） |
+| WebView（前端） | UI、编辑器实例、主题、CodeMirror 扩展、TypeScript/HTML/CSS 语言服务、交互状态 |
+| Rust 主进程 | 文件访问、Git、目录遍历、搜索、SSH Shell、窗口控制（macOS 红绿灯） |
 | 外部子进程 | PTY shell；按需启动的外部工具进程（如项目本地 Prettier） |
 
 ### 4.2 目录结构（定版）
@@ -106,21 +105,20 @@ MiroCode/
 │   ├── app/                  # AppShell / TitleBar / ActivityBar / SideBar / EditorArea / StatusBar
 │   ├── features/
 │   │   ├── explorer/         # 资源树（pointer 拖拽移动）
-│   │   ├── editor/           # CM6 编辑器、查找替换、补全、诊断、导航、主题、AI ghost text
+│   │   ├── editor/           # CM6 编辑器、查找替换、补全、诊断、导航、引用、重命名、Minimap
 │   │   │   └── completion/   # 补全服务层：adapters（LSP→CM 转换）、html/css 语言服务封装、
 │   │   │                     # semanticScanner（JS/TS 轻量语义）、vueBindings（指令/绑定）、symbolFilter
 │   │   ├── search/           # QuickOpen（⌘P）/ FindInFiles（⌘⇧F）
 │   │   ├── git/              # CommitPanel / GitLogPanel / BranchesPopup / CompareView（冲突）/
 │   │   │                     # InteractiveRebaseDialog / PushDialog / UpdateProjectDialog
 │   │   ├── sessions/         # 本地终端 / SSH 远程 Shell
-│   │   ├── settings/         # 设置弹层（editor / ai / shortcuts / system）
-│   │   └── ai/               # AI 补全（manager / providers / fimTemplates / streamFilter / …）
+│   │   ├── settings/         # 设置弹层（editor / shortcuts / system）
 │   ├── stores/               # Pinia store（见 §5.2）
 │   ├── styles/               # tokens.css / themes.css / global.css
 │   ├── shared/               # fs / 对话框 / appUpdate / changelog / SSH API / 组件
 │   └── i18n/                 # zh-CN / en-US
 ├── src-tauri/                # Rust 后端
-│   ├── src/commands/         # fs / git / search / ssh / ai / tooling / path_util / window_chrome
+│   ├── src/commands/         # fs / git / search / ssh / tooling / path_util / window_chrome
 │   ├── src/lib.rs / main.rs  # 命令注册、原生菜单、窗口
 │   ├── tests/                # Rust 单测（cargo test 需 --features test）
 │   └── tauri.conf.json       # 版本、updater pubkey / endpoints、打包
@@ -153,9 +151,9 @@ MiroCode/
 | ActivityBar | Project / Commit / GitLog；底区 Package / 终端 / 设置 |
 | SideBar | Project（资源树）与 Commit（暂存 / 更改）切换 |
 | EditorArea | 多标签；GitLog 与普通文件标签一致（不固定右侧，参与滚动排序）；SSH / Compare 固定钉在右侧（终端为底部面板） |
-| StatusBar | 左侧：终端入口 / 根目录 / 分支（含 ↑↓ 同步标记）/ 语言 / 编码 / 冲突数 / AI 指示器；右侧：Ln/Col / 缩进 / 主题 / Ready |
+| StatusBar | 左侧：终端入口 / 根目录 / 分支（含 ↑↓ 同步标记）/ 语言 / 编码 / 冲突数；右侧：Ln/Col / 缩进 / 主题 / Ready |
 | 系统菜单 | 原生菜单（文件 / 编辑 / 视图 / 工具 / 帮助），UI 文案随 i18n 切换 |
-| Settings | 模态设置，左导航 4 区：编辑器 / AI / 快捷键 / 系统（关于 + 更新） |
+| Settings | 模态设置，左导航 3 区：编辑器 / 快捷键 / 系统（关于 + 更新） |
 
 ### 5.2 Pinia Stores
 
@@ -163,19 +161,19 @@ MiroCode/
 |---|---|
 | `workspace` | 打开文件夹、最近项目、资源树节点、文件变更监听、切换时重置终端/SSH |
 | `ui` | 侧栏状态、活动面板、布局尺寸 |
-| `editor` | 打开标签、活动文件、脏标记、保存、定位 |
+| `editor` | 打开标签、活动文件、脏标记、保存、定位、会话恢复、引用结果 |
 | `git` / `gitLog` | Git 状态、远程操作守卫（`remoteInFlight` 防并发）、提交历史 |
 | `search` | 搜索历史、文件列表缓存 |
 | `sessions` | 本地终端会话（PTY 生命周期） |
 | `ssh` | SSH 主机列表、远程 Shell、切换项目强制断开 |
-| `settings` | 应用设置（主题 / 编辑器 / AI / 更新） |
+| `settings` | 应用设置（主题 / 编辑器 / 更新） |
 | `compare` / `packageScripts` / `appUpdate` | 冲突分栏 / npm scripts / 更新状态 |
 
 ### 5.3 快捷键体系（三层）
 
 1. **原生菜单加速键**（`lib.rs`）：⌘O / ⌘S / ⌘P / ⌘⇧F / ⌥F1 / ⌘J / ⌘B / ⌘, / ⌘F + 系统编辑键
 2. **AppShell 窗口级 keydown**（`AppShell.vue`）：⌘K（Commit 面板）、⌘W（关标签）、⌘⌥→/←（切换标签）、⌘R（刷新资源树）、Esc（关浮层）
-3. **编辑器 keymap**（CM6）：⌘F / ⌘⌥F / ⌘H 查找替换、⌘G / F3 跳转、⌘Enter / F12 跳定义、⌘[ 返回、Shift+F12 引用、F2 重命名、Tab / Esc 接受 / 取消 AI ghost text
+3. **编辑器 keymap**（CM6）：⌘F / ⌘⌥F / ⌘H 查找替换、⌘G / F3 跳转、⌘Enter / F12 跳定义、⌘[ 返回、Shift+F12 引用、F2 重命名、Tab 补全/Emmet、Esc 关闭浮层
 
 完整清单见《使用说明》。
 
@@ -194,27 +192,21 @@ MiroCode/
 |---|---|
 | 高亮 / 折叠 | CM6 Language + `HighlightStyle`，随主题切换 |
 | 查找替换 | `findPanel.ts`：⌘F 查找、⌘⌥F / ⌘H 替换、⌘G / F3 下一个 |
-| 补全 | `completions.ts` 分派链 + `completion/` 服务层：HTML/Vue template → `vscode-html-languageservice`（VS Code 同源，Vue 模式注入指令 custom data）；CSS/SCSS/Less → `vscode-css-languageservice`；JS/TS/JSX/TSX → 轻量语义（作用域声明 + import 绑定 + `workspaceSymbols` 跨文件符号 + `obj.` 成员联想）；Vue template 表达式 → `<script setup>` 绑定注入；均动态 import 按需加载，失败降级静态表；⌘Space 手动触发 |
-| 诊断 | `diagnostics.ts`：JSON / Env 轻量校验（本地实现） |
+| 补全 | `completions.ts` 分派链 + `completion/` 服务层：HTML/Vue template → `vscode-html-languageservice`；CSS/SCSS/Less → `vscode-css-languageservice`；JS/TS/JSX/TSX → 浏览器内嵌 TypeScript LanguageService（类型成员、自动导入、签名帮助）；Vue script → 等长虚拟 TS 文件，template → `<script setup>` 绑定注入；服务失败降级静态表；⌘Space 手动触发 |
+| 诊断 / hover | `diagnostics.ts` + `typeService/tsService.ts`：JS/TS/Vue script 语义诊断、JSON / Env 校验；TypeScript quick info 以 CodeMirror tooltip 展示 |
 | 格式化 | Prettier（`tooling.rs` 调 npx，`--stdin-filepath`） |
-| 跳转 | `navigation.ts`：相对路径 + `@/` 别名 import 跳转（`shared/importReferences.ts`）、同文档符号、跨文件符号索引；⌘[ 返回 |
-| 重命名 / 引用 | F2 重命名 / Shift+F12 引用：本地正则 + 符号索引方案（`renameSymbol.ts` / `findReferences.ts`） |
+| 跳转 | `navigation.ts`：JS/TS/Vue script 优先 TypeScript definition；相对路径 + `@/` 别名 import、同文档符号、跨文件符号索引兜底；⌘[ 返回 |
+| 重命名 / 引用 | F2 / Shift+F12：TypeScript 精确引用位置优先，Vue script 做 offset 映射；结果面板可点击定位，未打开文件也会写盘 |
 | 预览 | Markdown 首次打开默认预览（marked，可切源码）；图片 / SVG 用 `ImagePreview.vue` |
 | 自动保存 | `autoSave.ts`：默认开启，1000ms 防抖写盘，页面隐藏 / 关窗前强制 flush |
 
-### 6.3 AI 行内补全（`features/ai/` + `commands/ai.rs`）
+### 6.3 会话恢复与 Minimap
 
-| 项 | 说明 |
+| 能力 | 实现 |
 |---|---|
-| 形态 | ghost text：CM6 `Decoration.widget` + `WidgetType` 渲染，Tab 接受 / Esc 取消（`Prec.highest` 抢占，补全 popup 打开时不拦截） |
-| Provider | 内置 **DeepSeek**（apiBase `https://api.deepseek.com/beta`，model `deepseek-v4-pro`）与 **自定义**（OpenAI 兼容端点）两个预设；选择后自动填充可覆盖 |
-| 协议 | FIM 走标准 `/completions` 端点（`{prompt, suffix, max_tokens, temperature, stream}`）；前端不拼 `<|fim_begin|>` 等 token，API 服务器内部处理 |
-| 流式 | Rust `reqwest` 流式 + tokio 读 SSE，逐 chunk `ai://delta/{reqId}` 推送；前端 `streamFilter.ts` 行级稳定更新 + 300ms 首字提示 |
-| 防抖取消 | 350ms 防抖（可配置）；继续输入即 `ai_cancel` 中止 Rust 在途请求 + 前端事件 unlisten |
-| 质量过滤 | `contextFilter.ts` 语句已闭合 / 纯注释行跳过请求；`postprocess.ts` 剥代码围栏 / 括号平衡截断 / 重复建议丢弃；`promptBudget.ts` 超预算按 prefix 保底 / suffix 保顶裁剪；`snippets.ts` 从已打开同语言文件抽取相似片段（预算 30%） |
-| 凭据 | `~/.mirocode/ai-credentials.json`（0600），不进 localStorage / webview |
-| 设置 | 开关 / provider / API Key / 地址 / 模型 / 多行策略（never/auto/always）/ 防抖 / 首字提示 / token 预算 / 温度 / 测试连接（首 delta 即判成功） |
-| 指示器 | 状态栏显示就绪 / 思考中 / 错误 |
+| 会话恢复 | `shared/editorSession.ts` 按工作区根目录存储标签、活动文件、光标、固定状态和受限未保存快照；切换工作区前立即落盘，启动/打开项目后恢复 |
+| 恢复安全 | 仅在保存快照的磁盘原文仍一致时恢复未保存内容；磁盘发生变化时保留磁盘版本，不覆盖用户文件 |
+| Minimap | `CodeMirrorEditor.vue` 内置 Canvas，按 requestAnimationFrame 绘制文本长度和视口框，点击缩略图滚动到对应行；不引入额外编辑器依赖 |
 
 ---
 
@@ -226,7 +218,7 @@ MiroCode/
 |---|---|
 | Commit（左侧） | ⌘K 打开；「暂存的更改 / 更改」分组；单 / 批量暂存与取消；行内回滚；Amend；Commit / Commit and Push |
 | 工具栏 | 刷新、打开 Git Log、Update Project（Fetch 后 Merge / Rebase）、Fetch、Pull、Push（对话框 + 未推送列表 + Force）、Stash（计数徽章 + apply/pop/drop） |
-| Git Log（编辑区标签） | 分支范围过滤（all/current）+ 远程分支开关 + 文本过滤 + Load More；右键：Checkout / New Branch / Copy / Show Diff / Cherry-pick / Revert / 交互式 Rebase / Reset（soft/mixed/hard）/ stash apply-pop-drop；双击开 Diff |
+| Git Log（编辑区标签） | `git_log` 从全部 refs 建立拓扑；前端 `gitGraph.ts` 计算多车道 SVG；支持全部/当前/多选分支、远程/标签/贮藏筛选、搜索、自动加载更多、HEAD/贮藏快捷定位、列显隐；提交详情含正文/父提交/变更状态，Cmd/Ctrl 双选比较、文件 Diff/当前版本/复制路径/代码评审；右键覆盖提交 Checkout / New Branch / Tag / Copy / Show Diff / HEAD 对比 / Cherry-pick / Revert / 交互式 Rebase / Reset，ref 覆盖 Checkout / Merge / Rebase / Compare / Rename / Delete / Push Tag，未提交行覆盖 Commit / Stash / Discard / Hard Reset |
 | Branches 弹层 | 本地 / 远程列表；Checkout、New Branch、Rename、Delete（含远程）、Merge into current、Rebase current onto、交互式 Rebase、Compare with current、Set upstream、Copy |
 | 交互式 Rebase | 提交列表 pick / reword / squash / fix / drop + 拖拽排序；冲突时 Commit 横幅 Continue / Skip / Abort |
 | 冲突分栏 | `CompareView.vue`（CM6 MergeView）：左右双栏可编辑，prev/next 冲突导航，填本地 / 远程 / Base，一键接受 ours/theirs，手动解决后保存 |
@@ -256,7 +248,7 @@ MiroCode/
 
 | 项 | 说明 |
 |---|---|
-| 本地终端 | **底部面板**（VS Code 风格）：状态栏左下角终端按钮 / ⌘J 开关；xterm + PTY（`tauri-plugin-pty`），多标签顶栏；面板仅占**编辑区列**（AppShell `.center` 内 EditorArea 下方），资源管理器保持整列全高；高度可拖拽并持久化（`settings.layout.terminalPanelHeight`）；收起时保活（v-show 隐藏），关闭全部终端才销毁；打开面板不打断画布（SSH/GitLog/Compare）聚焦；新建终端挂载即聚焦 |
+| 本地终端 | **底部面板**（VS Code 风格）：状态栏左下角终端按钮 / ⌘J 开关；xterm + PTY（`tauri-plugin-pty`），多标签顶栏；面板仅占**编辑区列**（AppShell `.center` 内 EditorArea 下方），资源管理器保持整列全高；高度可拖拽并持久化（`settings.layout.terminalPanelHeight`）；收起时保活（v-show 隐藏），关闭全部终端才销毁；打开面板不打断画布（SSH/GitLog/Compare）聚焦；新建终端挂载即聚焦；本地补丁将 PTY 阻塞读写/等待/终止派发到 `spawn_blocking`，避免常驻进程阻塞 Tauri IPC |
 | 终端忙/闲 | `terminalIdle.ts` 解析 PTY 输出流判定 shell 是否停在提示符（剥 ANSI 后行尾 `$ % # > ❯ »` 特征 + 150ms 稳定窗口），上报 `sessions` store 的 `localIdle`；Package 脚本芯片点击时活动终端忙则自动新开终端执行，写入命令即标记忙、命令结束提示符回归即恢复闲 |
 | SSH | **独立编辑区标签**（与本地终端解耦）；主机列表 / 远程终端 |
 | 主机配置 | `~/.mirocode/ssh-profiles.json`（应用级全局，与项目无关）；「记住密码」写 `~/.mirocode/ssh-credentials.json`（0600） |
@@ -281,12 +273,11 @@ MiroCode/
 
 | 配置域 | 存储 |
 |---|---|
-| 设置（主题 / 编辑器 / AI / 更新 / 语言） | localStorage（键前缀 `mirocode.*`） |
-| 最近项目 / 打开标签 / 布局 | localStorage |
+| 设置（主题 / 编辑器 / 更新 / 语言） | localStorage（键前缀 `mirocode.*`） |
+| 最近项目 / 编辑器会话 / 布局 | localStorage（编辑器会话键 `mirocode.editor-session.v2:*`） |
 | Git HTTPS 凭据 | `~/.mirocode/git-credentials.json` |
 | SSH 主机 / 凭据 | `~/.mirocode/ssh-profiles.json` / `ssh-credentials.json`（0600） |
 | SSH known_hosts | `~/.ssh/known_hosts` + `~/.mirocode/known_hosts` |
-| AI API Key | `~/.mirocode/ai-credentials.json`（0600） |
 
 配置变更热更新 UI，无需重启（含界面语言 → 原生菜单同步）。
 
@@ -296,10 +287,9 @@ MiroCode/
 
 前端只通过类型化封装调用（`src/shared/` 下的 API 包装），不直接拼裸字符串命令。
 
-**命令命名空间**（Rust `commands/*.rs`）：`fs.*`（读写 / watch / pathExists）、`search.*`（files / content / replace）、`git.*`（status / stage / commit / branch / push / pull / rebase / stash / conflict…）、`ssh.*`（profile / connect / shell）、`ai_*`（请求 / 取消 / 凭据）、`tooling.*`（format_with_prettier / lint_with_eslint）、`window_chrome.*`（macOS 红绿灯）。
+**命令命名空间**（Rust `commands/*.rs`）：`fs.*`（读写 / watch / pathExists）、`search.*`（files / content / replace）、`git.*`（status / stage / commit / branch / push / pull / rebase / stash / conflict…）、`ssh.*`（profile / connect / shell）、`tooling.*`（format_with_prettier / lint_with_eslint）、`window_chrome.*`（macOS 红绿灯）。
 
 **事件**：
-- `ai://delta/{req_id}`、`ai://done|error/{req_id}`：AI 流式补全
 - `fs://changed`：外部文件变更
 
 ---
@@ -311,7 +301,7 @@ MiroCode/
 | 启动时长 | ≤ 2s（常规机器冷启动到可交互） | Tauri、延迟加载 Git/搜索 |
 | 千级文件打开 | 无明显卡顿 | 资源树懒加载子目录、Rust 侧遍历、搜索 LRU 缓存 + async |
 | 内存 | 显著低于 VSCode | CM6、编辑器实例按需创建回收、终端/SSH 连接生命周期 |
-| 编辑时延 | 输入无感 | 诊断/搜索防抖、AI 流式过滤管道 |
+| 编辑时延 | 输入无感 | 诊断/搜索防抖、TypeScript 服务按需加载与增量编译、Minimap 按帧绘制 |
 | 跨平台 | Win / Mac / Linux | CI 4 平台构建矩阵（arm64 / x86_64 / Linux / Windows） |
 
 ---

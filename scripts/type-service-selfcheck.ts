@@ -154,6 +154,26 @@ console.log("== 签名帮助 ==");
   assert("括号外无签名帮助", help === null);
 }
 
+// ==================== 定义 / 引用 / hover / 诊断 / 重命名 ====================
+console.log("== 语言服务符号能力 ==");
+{
+  const doc = files.get("/proj/main.ts")!;
+  const userPos = doc.indexOf("user: User") + 6;
+  const definitions = svc.definitionsAt("/proj/main.ts", userPos);
+  assert("类型定义可跳转", definitions.some((item) => item.fileName === "/proj/types.ts"), definitions);
+  const refs = svc.referencesAt("/proj/main.ts", doc.lastIndexOf("user.") + 1);
+  assert("引用集合包含当前文件", refs.some((item) => item.fileName === "/proj/main.ts"), refs);
+  const quick = svc.quickInfoAt("/proj/main.ts", doc.lastIndexOf("user.") + 1);
+  assert("hover quick info 有类型签名", Boolean(quick?.displayString), quick);
+  const rename = svc.renameLocationsAt("/proj/main.ts", doc.lastIndexOf("user.") + 1);
+  assert("重命名位置非空", rename.length > 0, rename);
+
+  const bad = "const count: number = 'wrong'";
+  svc.setFile("/proj/bad.ts", bad);
+  const diagnostics = svc.diagnosticsFor("/proj/bad.ts");
+  assert("语义诊断捕获类型错误", diagnostics.some((item) => item.severity === "error"), diagnostics);
+}
+
 // ==================== 自动导入 apply（fake view 直接验证插入行为） ====================
 console.log("== 自动导入 apply ==");
 {
