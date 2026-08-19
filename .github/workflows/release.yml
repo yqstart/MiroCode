@@ -79,7 +79,9 @@ jobs:
             -o Acquire::Retries=3 \
             -o Acquire::http::Timeout=30 \
             -o Acquire::https::Timeout=30
-          timeout 300s sudo apt-get install -y \
+          # GitHub 托管 runner 的 Azure Ubuntu 镜像偶发限速；首次安装 WebKit
+          # 依赖可能需要超过 5 分钟，给完整包集留出足够时间。
+          timeout 1200s sudo apt-get install -y \
             -o Acquire::Retries=3 \
             -o Acquire::http::Timeout=30 \
             -o Acquire::https::Timeout=30 \
