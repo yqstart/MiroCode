@@ -364,6 +364,7 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   display: flex;
+  background: var(--bg-app);
 }
 
 .center {

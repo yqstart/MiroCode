@@ -218,23 +218,24 @@ onBeforeUnmount(() => {
   flex-direction: column;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 0;
-  background: var(--bg-panel);
+  padding: 9px 0;
+  background: var(--bg-header);
   border-right: 1px solid var(--border-subtle);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--bg-app) 35%, transparent);
 }
 
 .group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
 }
 
 .item {
   position: relative;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-sm);
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
   display: grid;
   place-items: center;
   color: var(--text-muted);
@@ -243,13 +244,14 @@ onBeforeUnmount(() => {
 
 .item:hover:not(:disabled) {
   color: var(--text-primary);
-  background: var(--accent-soft);
+  background: var(--bg-hover);
 }
 
 .item.active {
   color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--bg-active);
+  box-shadow: inset 2px 0 0 var(--accent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .item:disabled {
@@ -271,7 +273,7 @@ onBeforeUnmount(() => {
   text-align: center;
   background: var(--accent);
   color: var(--accent-fg, #fff);
-  box-shadow: 0 0 0 1px var(--bg-panel);
+  box-shadow: 0 0 0 2px var(--bg-header);
   pointer-events: none;
 }
 
@@ -283,7 +285,7 @@ onBeforeUnmount(() => {
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 1px var(--bg-panel);
+  box-shadow: 0 0 0 2px var(--bg-header);
   pointer-events: none;
 }
 

@@ -20,8 +20,6 @@ export interface EditorPreferences {
   formatOnSave: boolean;
   /** 移动文件/文件夹后如何更新相对 import 引用 */
   updateImportsOnMove: UpdateImportsOnMove;
-  /** 显示代码缩略图，便于在长文件中快速定位 */
-  minimap: boolean;
 }
 
 /** 历史兼容：曾用底栏 Git Log 高度；现 Git Log 为编辑区标签，open 不再驱动布局 */
@@ -61,7 +59,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     prettierEnabled: true,
     formatOnSave: false,
     updateImportsOnMove: "prompt",
-    minimap: true,
   },
   layout: {
     sidebarCollapsed: false,

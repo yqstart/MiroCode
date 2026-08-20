@@ -16,7 +16,7 @@
 | 阶段 | **功能定版**：核心功能集已收敛，进入优化迭代期（性能 / 流畅度 / 交互体验） |
 | 明确不做 | AI/模型联网补全、AI 对话面板、AI Agent、MCP / Skills 生态、插件市场、Monaco 替换 CM6 |
 
-已落地能力：资源树、多标签编辑、全局搜索 / 替换、Git（Commit / Log / Branches / Rebase / 冲突）、本地终端、SSH 远程 Shell、四主题、中英文界面、本地语言智能、会话恢复、Minimap、应用内更新。
+已落地能力：资源树、多标签编辑、全局搜索 / 替换、Git（Commit / Log / Branches / Rebase / 冲突）、本地终端、SSH 远程 Shell、四主题、中英文界面、本地语言智能、会话恢复、应用内更新。
 
 ---
 
@@ -105,7 +105,7 @@ MiroCode/
 │   ├── app/                  # AppShell / TitleBar / ActivityBar / SideBar / EditorArea / StatusBar
 │   ├── features/
 │   │   ├── explorer/         # 资源树（pointer 拖拽移动）
-│   │   ├── editor/           # CM6 编辑器、查找替换、补全、诊断、导航、引用、重命名、Minimap
+│   │   ├── editor/           # CM6 编辑器、查找替换、补全、诊断、导航、引用、重命名
 │   │   │   └── completion/   # 补全服务层：adapters（LSP→CM 转换）、html/css 语言服务封装、
 │   │   │                     # semanticScanner（JS/TS 轻量语义）、vueBindings（指令/绑定）、symbolFilter
 │   │   ├── search/           # QuickOpen（⌘P）/ FindInFiles（⌘⇧F）
@@ -200,13 +200,12 @@ MiroCode/
 | 预览 | Markdown 首次打开默认预览（marked，可切源码）；图片 / SVG 用 `ImagePreview.vue` |
 | 自动保存 | `autoSave.ts`：默认开启，1000ms 防抖写盘，页面隐藏 / 关窗前强制 flush |
 
-### 6.3 会话恢复与 Minimap
+### 6.3 会话恢复
 
 | 能力 | 实现 |
 |---|---|
 | 会话恢复 | `shared/editorSession.ts` 按工作区根目录存储标签、活动文件、光标、固定状态和受限未保存快照；切换工作区前立即落盘，启动/打开项目后恢复 |
 | 恢复安全 | 仅在保存快照的磁盘原文仍一致时恢复未保存内容；磁盘发生变化时保留磁盘版本，不覆盖用户文件 |
-| Minimap | `CodeMirrorEditor.vue` 内置 Canvas，按 requestAnimationFrame 绘制文本长度和视口框，点击缩略图滚动到对应行；不引入额外编辑器依赖 |
 
 ---
 
@@ -301,7 +300,7 @@ MiroCode/
 | 启动时长 | ≤ 2s（常规机器冷启动到可交互） | Tauri、延迟加载 Git/搜索 |
 | 千级文件打开 | 无明显卡顿 | 资源树懒加载子目录、Rust 侧遍历、搜索 LRU 缓存 + async |
 | 内存 | 显著低于 VSCode | CM6、编辑器实例按需创建回收、终端/SSH 连接生命周期 |
-| 编辑时延 | 输入无感 | 诊断/搜索防抖、TypeScript 服务按需加载与增量编译、Minimap 按帧绘制 |
+| 编辑时延 | 输入无感 | 诊断/搜索防抖、TypeScript 服务按需加载与增量编译 |
 | 跨平台 | Win / Mac / Linux | CI 4 平台构建矩阵（arm64 / x86_64 / Linux / Windows） |
 
 ---

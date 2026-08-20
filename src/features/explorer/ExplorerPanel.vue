@@ -1021,6 +1021,7 @@ defineExpose({ locateActiveFile });
   justify-content: space-between;
   padding: 0 6px 0 12px;
   border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-panel) 88%, var(--bg-header));
 }
 
 .title-wrap {
@@ -1044,7 +1045,7 @@ defineExpose({ locateActiveFile });
 }
 
 .title-btn:hover {
-  background: var(--accent-soft);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
@@ -1427,7 +1428,7 @@ defineExpose({ locateActiveFile });
 }
 
 .row:hover {
-  background: var(--accent-soft);
+  background: var(--bg-hover);
 }
 
 .row.dragging {
@@ -1450,8 +1451,9 @@ defineExpose({ locateActiveFile });
 }
 
 .row.active {
-  background: var(--accent-soft);
+  background: var(--bg-active);
   color: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .row:deep(.flash),

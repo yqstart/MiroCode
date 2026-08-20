@@ -10,6 +10,41 @@ const TRAFFIC_LIGHT_X: f64 = 14.0;
 const SPACE_BETWEEN: f64 = 20.0;
 const BUTTON_SIZE: f64 = 14.0;
 
+/// AppKit 默认不会让失焦窗口里的标题栏按钮响应首次鼠标事件，
+/// 表现为第一次点击只激活窗口、第二次点击才真正关闭。
+#[cfg(target_os = "macos")]
+unsafe extern "C-unwind" fn traffic_light_accepts_first_mouse(
+    _this: *mut objc2::runtime::AnyObject,
+    _cmd: objc2::runtime::Sel,
+    _event: *mut objc2::runtime::AnyObject,
+) -> bool {
+    true
+}
+
+/// 只给当前窗口的原生红绿灯按钮增加首次点击响应，不改 WebView 内的按钮行为。
+#[cfg(target_os = "macos")]
+fn enable_traffic_light_first_mouse(button: &objc2_app_kit::NSButton) {
+    use objc2::ffi::{class_replaceMethod, object_getClass};
+    use objc2::runtime::{AnyClass, AnyObject, Imp};
+    use std::mem;
+
+    unsafe {
+        let class = object_getClass((button as *const objc2_app_kit::NSButton).cast::<AnyObject>());
+        if class.is_null() {
+            return;
+        }
+
+        let imp: Imp = mem::transmute(traffic_light_accepts_first_mouse as *const ());
+        // 直接覆盖按钮所属类的方法，确保私有标题栏按钮子类也能生效。
+        let _ = class_replaceMethod(
+            class as *mut AnyClass,
+            objc2::sel!(acceptsFirstMouse:),
+            imp,
+            b"B@:@\0".as_ptr() as *const i8,
+        );
+    }
+}
+
 /// 设置 macOS 原生标题栏底色（r/g/b：0–255）。非 macOS 为空操作。
 #[tauri::command]
 pub fn set_titlebar_background(
@@ -110,6 +145,10 @@ pub fn apply_traffic_lights(window: &WebviewWindow) -> Result<(), String> {
         .standardWindowButton(NSWindowButton::ZoomButton)
         .ok_or_else(|| "无缩放按钮".to_string())?;
 
+    enable_traffic_light_first_mouse(&close);
+    enable_traffic_light_first_mouse(&miniaturize);
+    enable_traffic_light_first_mouse(&zoom);
+
     // 标题栏容器：用 setFrame 同时设 size.height + origin.y。
     // 容器底 = 窗口顶（y = window.frame.height），容器顶 = window.height - 38。
     // 这一步必须做——少 setFrame 只 setFrameSize 的话，origin.y 没对齐，
@@ -152,14 +191,16 @@ pub fn apply_traffic_lights(window: &WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 
-/// 在窗口上安装红绿灯同步：启动延迟补齐 + 关键窗口事件重排。
+/// 在窗口上安装红绿灯同步：启动时及布局实际变化时重排。
 #[cfg(target_os = "macos")]
 pub fn install_traffic_light_hooks(window: &WebviewWindow) {
     use tauri::WindowEvent;
 
     // 立即调一次：button_h 已兜底 14 逻辑点，setup 阶段能拿到按钮 frame → 摆到正确位置
     let _ = apply_traffic_lights(window);
-    // 后续仅在 Resized/ThemeChanged/ScaleFactorChanged 等真实事件触发时重排
+    // 后续仅在 Resized/ThemeChanged/ScaleFactorChanged 等真实布局事件触发时重排。
+    // 不监听 Focused：失焦窗口点击红绿灯时，聚焦事件与鼠标事件相邻，
+    // 此时 setFrame 会抢在鼠标处理期间重排按钮，导致首次点击失效。
     // —— 不再用 80/250/700/1600ms 延迟补排，避免与 Wry 持续 inset_traffic_lights 反复 setFrame 导致视觉抖动
 
     let win = window.clone();
@@ -167,7 +208,6 @@ pub fn install_traffic_light_hooks(window: &WebviewWindow) {
         if !matches!(
             event,
             WindowEvent::Resized(_)
-                | WindowEvent::Focused(_)
                 | WindowEvent::ThemeChanged(_)
                 | WindowEvent::ScaleFactorChanged { .. }
         ) {

@@ -5,6 +5,7 @@ import { storeToRefs } from "pinia";
 import CodeMirrorEditor from "@/features/editor/CodeMirrorEditor.vue";
 import ImagePreview from "@/features/editor/ImagePreview.vue";
 import { renderMarkdown } from "@/features/editor/markdown/preview";
+import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { basename, relativeToRoot } from "@/shared/fs";
 import { isRasterImagePath, isSvgPath } from "@/shared/media";
 import { formatShortcut } from "@/shared/platform";
@@ -515,12 +516,13 @@ onBeforeUnmount(() =>
           :class="{
             active: showFileEditor && tab.path === activePath,
             pinned: tab.pinned,
+            dirty: editor.isDirty(tab.path),
           }"
           @click="activateFile(tab.path)"
           @auxclick.middle.prevent="editor.closeTab(tab.path)"
           @contextmenu="onTabContextMenu($event, tab.path)"
         >
-          <span class="dot" :class="{ dirty: editor.isDirty(tab.path) }" />
+          <FileTypeIcon :path="tab.path" :size="14" class="tab-file-icon" />
           <span class="name" :class="{ disambiguated: fileTabLabel(tab.path, tab.name) !== tab.name }" :title="fileTabTitle(tab.path)">
             {{ fileTabLabel(tab.path, tab.name) }}
           </span>
@@ -804,20 +806,20 @@ onBeforeUnmount(() =>
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg-app);
+  background: var(--bg-editor);
   /* 锚点：md-mode-toggle 用 absolute 定位到右上角 */
   position: relative;
 }
 
 .tabs {
-  height: 36px;
+  height: 34px;
   flex-shrink: 0;
   display: flex;
   align-items: flex-end;
-  gap: 4px;
-  padding: 0 8px;
+  gap: 0;
+  padding: 0 6px;
   border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-panel);
+  background: var(--bg-header);
   overflow: hidden;
 }
 
@@ -827,7 +829,7 @@ onBeforeUnmount(() =>
   height: 100%;
   display: flex;
   align-items: flex-end;
-  gap: 2px;
+  gap: 0;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none; /* Firefox */
@@ -846,7 +848,7 @@ onBeforeUnmount(() =>
   flex-shrink: 0;
   display: flex;
   align-items: flex-end;
-  gap: 2px;
+  gap: 0;
   max-width: 45%;
   min-width: 0;
   overflow: hidden;
@@ -863,8 +865,8 @@ onBeforeUnmount(() =>
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 12px;
+  gap: 5px;
+  padding: 0 7px 0 8px;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   color: var(--text-muted);
   font-size: 12px;
@@ -896,12 +898,24 @@ onBeforeUnmount(() =>
 
 .tab:hover {
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--bg-app) 70%, transparent);
+  background: var(--bg-hover);
 }
 
 .tab.active {
   color: var(--text-primary);
-  background: var(--bg-app);
+  background: var(--bg-editor);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* 未保存状态用左侧短标记表达，避免在文件名之前放空心圆点 */
+.tab.dirty {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 72%, transparent);
+}
+
+.tab.active.dirty {
+  box-shadow:
+    inset 2px 0 0 var(--accent),
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .tab.active::after {
@@ -947,7 +961,7 @@ onBeforeUnmount(() =>
   border-radius: 6px;
   font-size: 11px;
   color: var(--text-secondary);
-  background: var(--bg-app);
+  background: var(--bg-inset);
   border: 1px solid var(--border-subtle);
 }
 
@@ -956,21 +970,8 @@ onBeforeUnmount(() =>
   border-color: var(--accent);
 }
 
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: transparent;
-  border: 1px solid var(--text-muted);
+.tab-file-icon {
   flex-shrink: 0;
-  transition: background var(--transition-medium) var(--ease-out),
-    border-color var(--transition-medium) var(--ease-out);
-}
-
-.dot.dirty {
-  background: var(--accent);
-  border-color: var(--accent);
-  animation: miro-dot-pop 0.42s var(--ease-out) both;
 }
 
 .name {
@@ -1363,7 +1364,8 @@ onBeforeUnmount(() =>
 
 .welcome h1 {
   margin: 0;
-  font-size: 28px;
+  font-size: 26px;
+  letter-spacing: -0.025em;
   color: var(--text-primary);
 }
 
@@ -1387,6 +1389,7 @@ onBeforeUnmount(() =>
   background: var(--accent);
   color: var(--accent-fg);
   font-weight: 600;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .ghost {
@@ -1395,6 +1398,7 @@ onBeforeUnmount(() =>
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
   color: var(--text-secondary);
+  background: var(--bg-inset);
 }
 
 .ghost:hover {

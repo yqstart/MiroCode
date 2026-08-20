@@ -62,7 +62,6 @@ const props = defineProps<{
 }>();
 
 const host = ref<HTMLDivElement | null>(null);
-const minimapCanvas = ref<HTMLCanvasElement | null>(null);
 const editorStore = useEditorStore();
 const settings = useSettingsStore();
 const workspace = useWorkspaceStore();
@@ -142,85 +141,6 @@ function scrollTo(line: number, column: number) {
   });
   view.focus();
   emitCursor(view);
-}
-
-let minimapRaf: number | null = null;
-
-function scheduleMinimapDraw() {
-  if (!editor.value.minimap || !view || !minimapCanvas.value) return;
-  if (minimapRaf !== null) return;
-  minimapRaf = requestAnimationFrame(() => {
-    minimapRaf = null;
-    drawMinimap();
-  });
-}
-
-/** 绘制轻量代码缩略图：不做语法高亮解析，只使用文本长度和当前视口，保证大文件不卡。 */
-function drawMinimap() {
-  const canvas = minimapCanvas.value;
-  if (!canvas || !view || !editor.value.minimap) return;
-  const rect = canvas.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return;
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.floor(rect.width);
-  const height = Math.floor(rect.height);
-  if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
-    canvas.width = Math.floor(width * dpr);
-    canvas.height = Math.floor(height * dpr);
-  }
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-
-  const styles = getComputedStyle(canvas);
-  const muted = styles.getPropertyValue("--text-muted").trim() || "#8b8b98";
-  const accent = styles.getPropertyValue("--accent").trim() || "#8b5cf6";
-  const lines = view.state.doc.lines;
-  const maxRows = Math.max(1, Math.floor(height / 2));
-  const stride = Math.max(1, Math.ceil(lines / maxRows));
-  const maxWidth = Math.max(4, width - 8);
-
-  ctx.fillStyle = muted;
-  ctx.globalAlpha = 0.6;
-  for (let lineNumber = 1; lineNumber <= lines; lineNumber += stride) {
-    const line = view.state.doc.line(lineNumber);
-    const textWidth = Math.min(
-      maxWidth,
-      Math.max(2, Math.ceil(line.length * 1.05)),
-    );
-    const y = ((lineNumber - 0.5) / Math.max(1, lines)) * height;
-    ctx.fillRect(4, Math.max(0, y), textWidth, 1);
-  }
-
-  const firstLine = view.state.doc.lineAt(view.viewport.from).number;
-  const lastLine = view.state.doc.lineAt(view.viewport.to).number;
-  const viewportTop = ((firstLine - 1) / Math.max(1, lines)) * height;
-  const viewportHeight = Math.max(
-    12,
-    ((lastLine - firstLine + 1) / Math.max(1, lines)) * height,
-  );
-  ctx.globalAlpha = 0.16;
-  ctx.fillStyle = accent;
-  ctx.fillRect(0, viewportTop, width, Math.min(height - viewportTop, viewportHeight));
-  ctx.globalAlpha = 0.85;
-  ctx.strokeStyle = accent;
-  ctx.lineWidth = 1;
-  ctx.strokeRect(0.5, viewportTop + 0.5, Math.max(1, width - 1), Math.max(10, viewportHeight - 1));
-  ctx.globalAlpha = 1;
-}
-
-function onMinimapPointerDown(event: PointerEvent) {
-  if (!view || !minimapCanvas.value) return;
-  const rect = minimapCanvas.value.getBoundingClientRect();
-  if (rect.height <= 0) return;
-  const ratio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
-  const lineNumber = Math.max(1, Math.min(view.state.doc.lines, Math.ceil(ratio * view.state.doc.lines)));
-  const pos = view.state.doc.line(lineNumber).from;
-  view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "center" }) });
-  view.focus();
-  scheduleMinimapDraw();
 }
 
 /** 字体大小调节：10-24；wheel deltaY 归一化到「格」浮点累积（一格≈100px），
@@ -422,9 +342,6 @@ function buildExtensions(): Extension[] {  return [
       if (update.selectionSet || update.docChanged) {
         emitCursor(view);
       }
-      if (update.docChanged || update.viewportChanged || update.geometryChanged) {
-        scheduleMinimapDraw();
-      }
     }),
   ];
 }
@@ -494,7 +411,6 @@ function switchDocument(path: string, content: string): void {
     ],
   });
   emitCursor(view);
-  scheduleMinimapDraw();
 }
 
 function createEditor() {
@@ -508,10 +424,8 @@ function createEditor() {
       extensions: buildExtensions(),
     }),
   });
-  view.scrollDOM.addEventListener("scroll", scheduleMinimapDraw, { passive: true });
   loadLanguage(props.path);
   emitCursor(view);
-  scheduleMinimapDraw();
 }
 
 onMounted(() => {
@@ -525,11 +439,6 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(cursorRaf);
     cursorRaf = null;
   }
-  if (minimapRaf !== null) {
-    cancelAnimationFrame(minimapRaf);
-    minimapRaf = null;
-  }
-  view?.scrollDOM.removeEventListener("scroll", scheduleMinimapDraw);
   view?.destroy();
   view = null;
 });
@@ -625,13 +534,6 @@ watch(
   { deep: true },
 );
 
-watch(
-  () => editor.value.minimap,
-  () => {
-    requestAnimationFrame(scheduleMinimapDraw);
-  },
-);
-
 // 行内 blame 常驻列开关热更新（gitComp reconfigure）
 watch(blameVisible, () => {
   view?.dispatch({
@@ -656,14 +558,6 @@ defineExpose({ scrollTo });
 <template>
   <div class="editor-shell">
     <div ref="host" class="cm-host" />
-    <canvas
-      v-if="editor.minimap"
-      ref="minimapCanvas"
-      class="minimap"
-      role="img"
-      aria-label="Code minimap"
-      @pointerdown="onMinimapPointerDown"
-    />
   </div>
 </template>
 
@@ -683,16 +577,6 @@ defineExpose({ scrollTo });
   height: 100%;
   width: auto;
   overflow: hidden;
-}
-
-.minimap {
-  flex: 0 0 112px;
-  width: 112px;
-  height: 100%;
-  display: block;
-  border-left: 1px solid var(--border-subtle);
-  background: var(--bg-panel);
-  cursor: pointer;
 }
 
 .cm-host :deep(.cm-editor) {

@@ -160,8 +160,13 @@ onUnmounted(() => {
   /* 与左侧红绿灯 x:14（window_chrome.rs TRAFFIC_LIGHT_X）对称的右侧留白，
      让右上角终端按钮离窗口右边缘 14pt（红绿灯离左也是 14pt） */
   padding-right: 14px;
-  background: var(--bg-header);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-header) 92%, var(--text-primary) 8%),
+    var(--bg-header)
+  );
   border-bottom: 1px solid var(--border-subtle);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--bg-header) 55%, transparent);
 }
 
 .traffic-spacer {
@@ -188,7 +193,7 @@ onUnmounted(() => {
 
 .sidebar-btn:hover {
   color: var(--text-primary);
-  background: var(--accent-soft);
+  background: var(--bg-hover);
 }
 
 /* 全局项目标题：可点击整行复制路径；内部文字继续走 data-tauri-drag-region 让标题栏可拖 */
@@ -214,7 +219,7 @@ onUnmounted(() => {
 }
 .project-title:not(:disabled):hover {
   color: var(--text-primary);
-  background: var(--accent-soft);
+  background: var(--bg-hover);
 }
 .project-name {
   font-weight: 600;

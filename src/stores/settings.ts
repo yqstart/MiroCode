@@ -18,10 +18,10 @@ const THEME_MIGRATION: Record<string, ThemeId> = {
 
 /** 各主题对应的 macOS Overlay 标题栏底色（仅最顶系统栏，不含项目行） */
 const TITLEBAR_RGB: Record<ThemeId, [number, number, number]> = {
-  dawn: [232, 234, 239],
-  "miro-dark": [26, 26, 32],
-  midnight: [17, 24, 39],
-  cyberpunk: [31, 19, 40],
+  dawn: [233, 235, 239],
+  "miro-dark": [23, 24, 28],
+  midnight: [20, 28, 43],
+  cyberpunk: [23, 21, 31],
 };
 
 function isDarkTheme(theme: ThemeId): boolean {
@@ -111,8 +111,13 @@ function loadSettings(): AppSettings {
     // 继续带入响应式设置，避免用户以为应用仍然会联网请求 AI。
     const editorOverrides = {
       ...(parsed.editor ?? {}),
-    } as Partial<EditorPreferences> & { aiCompletion?: unknown };
+    } as Partial<EditorPreferences> & {
+      aiCompletion?: unknown;
+      minimap?: unknown;
+    };
     delete editorOverrides.aiCompletion;
+    // Minimap 已移除，清理旧版本持久化设置，避免无效字段继续写回磁盘。
+    delete editorOverrides.minimap;
 
     return {
       theme:
@@ -163,6 +168,7 @@ async function syncNativeWindowTheme(theme: ThemeId) {
 
 function applyTheme(theme: ThemeId) {
   document.documentElement.setAttribute("data-theme", theme);
+  document.documentElement.style.colorScheme = isDarkTheme(theme) ? "dark" : "light";
 }
 
 export const useSettingsStore = defineStore("settings", () => {

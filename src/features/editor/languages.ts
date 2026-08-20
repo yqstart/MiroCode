@@ -1,18 +1,6 @@
-import { StreamLanguage } from "@codemirror/language";
 import type { Extension } from "@codemirror/state";
 import { basename } from "@/shared/fs";
-
-const envLanguage = StreamLanguage.define({
-  token(stream) {
-    if (stream.match(/#.*/)) return "comment";
-    if (stream.match(/"(?:\\.|[^"\\])*"/)) return "string";
-    if (stream.match(/'(?:\\.|[^'\\])*'/)) return "string";
-    if (stream.match(/[^=#\s]+(?==)/)) return "def";
-    if (stream.match(/=/)) return "operator";
-    stream.next();
-    return null;
-  },
-});
+import { envLanguage, isEnvFileName } from "@/features/editor/envLanguage";
 
 /**
  * Vue SFC：不用 `@codemirror/lang-vue`（其 wrap 会覆盖 html 对 `<style>`/`<script>` 的嵌套）。
@@ -117,6 +105,6 @@ export async function languageExtensionForPath(path: string): Promise<Extension 
     const { xml } = await import("@codemirror/lang-xml");
     return xml();
   }
-  if (name === ".env" || name.startsWith(".env.")) return envLanguage;
+  if (isEnvFileName(name)) return envLanguage;
   return null;
 }

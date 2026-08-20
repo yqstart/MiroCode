@@ -226,18 +226,6 @@ function onOverlayClick(event: MouseEvent) {
                     <option value="off">{{ t("common.off") }}</option>
                   </select>
                 </label>
-                <label class="field">
-                  <span class="field-label">{{ t("settings.minimap") }}</span>
-                  <select
-                    class="ui-select"
-                    :value="editor.minimap ? 'on' : 'off'"
-                    :title="t('settings.minimapDesc')"
-                    @change="settings.patchEditor({ minimap: ($event.target as HTMLSelectElement).value === 'on' })"
-                  >
-                    <option value="on">{{ t("common.on") }}</option>
-                    <option value="off">{{ t("common.off") }}</option>
-                  </select>
-                </label>
               </div>
             </div>
 
@@ -407,55 +395,57 @@ function onOverlayClick(event: MouseEvent) {
   display: grid;
   place-items: center;
   background: var(--bg-overlay);
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(14px) saturate(1.08);
   animation: miro-overlay-in var(--transition-normal) var(--ease-out);
-  padding: 32px;
+  padding: 24px;
 }
 
 .modal {
-  width: min(920px, 100%);
+  width: min(960px, 100%);
   animation: miro-dialog-in var(--transition-normal) var(--ease-out);
-  height: min(640px, 100%);
+  height: min(680px, 100%);
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: 196px 1fr;
   border-radius: var(--radius-xl);
   overflow: hidden;
   background: var(--bg-panel);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-modal);
 }
 
 .nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 20px 14px;
+  gap: 3px;
+  padding: 18px 12px;
   background: var(--bg-app);
   border-right: 1px solid var(--border-subtle);
 }
 
 .nav-title {
-  margin: 0 8px 12px;
-  font-size: 20px;
+  margin: 0 8px 14px;
+  font-size: 18px;
   font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .nav-item {
   text-align: left;
-  padding: 9px 12px;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
 }
 
 .nav-item:hover {
-  background: var(--accent-soft);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
 .nav-item.active {
-  background: var(--accent-soft);
+  background: var(--bg-active);
   color: var(--accent);
   font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .nav-footer {
@@ -480,12 +470,14 @@ function onOverlayClick(event: MouseEvent) {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: 22px 24px 8px;
+  padding: 20px 22px 10px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .content-header h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: 20px;
+  letter-spacing: -0.02em;
 }
 
 .content-header p {
@@ -503,7 +495,7 @@ function onOverlayClick(event: MouseEvent) {
 }
 
 .close:hover {
-  background: var(--accent-soft);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
@@ -511,20 +503,21 @@ function onOverlayClick(event: MouseEvent) {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 12px 24px 24px;
+  padding: 12px 22px 22px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .section {
-  padding: 16px 18px 18px;
+  padding: 14px 16px 16px;
 }
 
 .section h3 {
-  margin: 0 0 14px;
+  margin: 0 0 12px;
   font-size: 14px;
   font-weight: 600;
+  letter-spacing: -0.005em;
 }
 
 .section.placeholder h3 {
@@ -550,44 +543,58 @@ function onOverlayClick(event: MouseEvent) {
 .theme-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 8px;
 }
 
 .theme-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
   text-align: left;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.theme-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+  transform: translateY(-1px);
 }
 
 .preview {
   position: relative;
-  height: 72px;
+  height: 68px;
   border-radius: var(--radius-md);
-  border: 2px solid transparent;
+  border: 1px solid transparent;
   overflow: hidden;
   padding: 8px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035);
 }
 
 .theme-card[data-selected="true"] .preview {
   border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent),
+    0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 .preview[data-kind="dark"] {
-  background: #121218;
+  background: linear-gradient(135deg, #1d1e25, #101114);
 }
 
 .preview[data-kind="midnight"] {
-  background: #0b1220;
+  background: linear-gradient(135deg, #1d2a42, #0e1421);
 }
 
 .preview[data-kind="cyber"] {
-  background: linear-gradient(135deg, #1a0b1f, #062a2a);
+  background: linear-gradient(135deg, #2b2438, #11161e 72%);
 }
 
 .preview[data-kind="light"] {
-  background: #ffffff;
-  border-color: #e6e8ec;
+  background: linear-gradient(135deg, #ffffff, #eef1f7);
+  border-color: var(--border-subtle);
 }
 
 .theme-card[data-selected="true"] .preview[data-kind="light"] {
@@ -599,12 +606,20 @@ function onOverlayClick(event: MouseEvent) {
   width: 42%;
   border-radius: 999px;
   margin-bottom: 8px;
-  background: var(--accent);
+  background: #a78bfa;
   opacity: 0.85;
 }
 
+.preview[data-kind="midnight"] .preview-bar {
+  background: #66c7f3;
+}
+
+.preview[data-kind="cyber"] .preview-bar {
+  background: #63e6f3;
+}
+
 .preview[data-kind="light"] .preview-bar {
-  background: #2563eb;
+  background: #4f6fe8;
 }
 
 .preview-lines {
@@ -646,6 +661,7 @@ function onOverlayClick(event: MouseEvent) {
 }
 
 .theme-name {
+  padding: 0 2px 2px;
   font-size: 12px;
   color: var(--text-secondary);
 }

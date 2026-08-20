@@ -83,6 +83,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   background: var(--bg-panel);
   border-right: 1px solid var(--border-subtle);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--bg-app) 25%, transparent);
   min-width: 200px;
   max-width: 520px;
   display: flex;

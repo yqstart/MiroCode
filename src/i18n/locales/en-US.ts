@@ -119,8 +119,6 @@ export const enUS = {
     tabSize: "Tab Size",
     wordWrap: "Word Wrap",
     lineNumbers: "Line Numbers",
-    minimap: "Minimap",
-    minimapDesc: "Show a code overview on the right for quick navigation in long files.",
     autoSave: "Auto Save",
     autoSaveDelay: "Auto Save Delay (ms)",
     autoSaveDesc:

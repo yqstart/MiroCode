@@ -119,8 +119,6 @@ export const zhCN = {
     tabSize: "TAB 大小",
     wordWrap: "自动换行",
     lineNumbers: "行号",
-    minimap: "Minimap",
-    minimapDesc: "在编辑器右侧显示代码缩略图，快速定位长文件位置。",
     autoSave: "自动保存",
     autoSaveDelay: "自动保存延迟（毫秒）",
     autoSaveDesc: "编辑后延迟写盘；窗口隐藏或退出前会强制落盘，降低崩溃丢改风险。",

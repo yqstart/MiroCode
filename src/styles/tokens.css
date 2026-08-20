@@ -1,13 +1,13 @@
 /* ==================== 全局基础 Token ====================
-   设计语言基线：Mac 原生风（Arc / Linear 路线）
-   改动原则：拉开层级明度差、半透明边色、柔和阴影、克制强调。
+   设计语言基线：编辑器优先的中性底色 + 单一强调色。
+   改动原则：层级靠明度与细边表达，圆角克制，强调色只负责状态和操作。
    本文件只放「跨主题不变」的基础变量；语义色 / 主题色在 themes.css。 */
 :root {
-  /* ================ 圆角（4 档，跨主题不变；偏 macOS 大圆角风） ================ */
-  --radius-sm: 10px;  /* 控件 / 小按钮 / 输入框 */
-  --radius-md: 12px;  /* 行内标签 / 小卡片 */
-  --radius-lg: 14px;  /* 卡片 / 弹层 */
-  --radius-xl: 18px;  /* 设置弹层 / 大型 dialog */
+  /* ================ 圆角（编辑器密度优先，避免所有元素像卡片） ================ */
+  --radius-sm: 6px;   /* 控件 / 小按钮 / 输入框 */
+  --radius-md: 8px;   /* 行内标签 / 小卡片 */
+  --radius-lg: 10px;  /* 卡片 / 弹层 */
+  --radius-xl: 14px;  /* 设置弹层 / 大型 dialog */
 
   /* ================ 间距（6 档，4px 步进） ================ */
   --space-1: 4px;
@@ -19,7 +19,7 @@
 
   /* ================ 布局尺寸 ================ */
   --activity-bar-width: 48px;
-  --status-bar-height: 28px;
+  --status-bar-height: 26px;
   /* macOS Overlay 标题栏：高度须与 Rust TITLEBAR_HEIGHT 一致；
      1 CSS px = 1 逻辑点（pt），与 backingScaleFactor 无关；
      红绿灯由 Rust 端 setFrameOrigin 垂直居中到此高度。 */
@@ -48,9 +48,9 @@
      fast   = hover/feedback（按钮、tab、文字色）
      medium = 弹层/弹窗（dialog、tooltip、popover）
      slow   = 画布切换（文件切换、welcome） */
-  --transition-fast: 140ms;
-  --transition-medium: 200ms;
-  --transition-slow: 280ms;
+  --transition-fast: 120ms;
+  --transition-medium: 180ms;
+  --transition-slow: 260ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* ================ 阴影（4 级，作为默认） ================
@@ -61,8 +61,12 @@
   --shadow-modal:   0 32px 80px rgba(0, 0, 0, 0.32), 0 8px 24px rgba(0, 0, 0, 0.14), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 
   /* ================ 滚动条（macOS overlay 风格） ================ */
-  --scrollbar-size: 4px;
+  --scrollbar-size: 6px;
   --scrollbar-radius: 999px;
+
+  /* ================ 控件尺寸 ================ */
+  --control-height-sm: 28px;
+  --control-height-md: 32px;
 
   /* ================ z-index 分层 ================
      替换散落字面量；保留 dialog 内部 85/86/120 等差异化覆盖。 */

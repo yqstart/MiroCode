@@ -164,10 +164,11 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 0 12px;
-  background: var(--bg-panel);
+  background: var(--bg-header);
   border-top: 1px solid var(--border-subtle);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--bg-app) 28%, transparent);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   min-width: 0;
 }
 
@@ -217,7 +218,7 @@ onBeforeUnmount(() => {
 }
 
 .branch-btn:hover {
-  background: var(--accent-soft);
+  background: var(--bg-hover);
 }
 
 .branch-icon {
@@ -277,7 +278,7 @@ onBeforeUnmount(() => {
 }
 
 .theme-btn:hover {
-  background: var(--accent-soft);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
