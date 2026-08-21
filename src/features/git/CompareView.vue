@@ -44,25 +44,25 @@ let resizeObserver: ResizeObserver | null = null;
 const mergeHighlightTheme = Prec.highest(
   EditorView.theme({
     "&.cm-merge-a .cm-changedLine, .cm-deletedChunk": {
-      backgroundColor: "rgba(248, 113, 113, 0.12)",
+      backgroundColor: "var(--diff-remove-line)",
     },
     "&.cm-merge-b .cm-changedLine, .cm-inlineChangedLine": {
-      backgroundColor: "rgba(52, 211, 153, 0.12)",
+      backgroundColor: "var(--diff-add-line)",
     },
     "&.cm-merge-a .cm-changedText, .cm-deletedChunk .cm-deletedText": {
-      background: "rgba(248, 113, 113, 0.35)",
+      background: "var(--diff-remove-text)",
       borderRadius: "2px",
       color: "inherit",
       textDecoration: "none",
     },
     "&.cm-merge-b .cm-changedText": {
-      background: "rgba(52, 211, 153, 0.35)",
+      background: "var(--diff-add-text)",
       borderRadius: "2px",
       color: "inherit",
       textDecoration: "none",
     },
     "&.cm-merge-b .cm-deletedText": {
-      background: "rgba(248, 113, 113, 0.3)",
+      background: "var(--diff-remove-text)",
       borderRadius: "2px",
       textDecoration: "none",
     },
@@ -75,6 +75,7 @@ const mergeLayoutTheme = Prec.highest(
     "&": {
       height: "auto",
       fontSize: "13px",
+      backgroundColor: "var(--bg-editor)",
     },
     ".cm-scroller": {
       fontFamily: "var(--font-mono)",
@@ -82,6 +83,11 @@ const mergeLayoutTheme = Prec.highest(
     },
     ".cm-content": {
       paddingBottom: "24px",
+    },
+    ".cm-gutters": {
+      backgroundColor: "var(--bg-inset)",
+      color: "var(--text-muted)",
+      borderRight: "1px solid var(--border-subtle)",
     },
   }),
 );
@@ -355,9 +361,9 @@ watch(theme, () => {
   <div class="compare">
     <header v-if="tab" class="toolbar">
       <div class="labels">
-        <span class="side">{{ tab.leftLabel }}</span>
+        <span class="side side-left">{{ tab.leftLabel }}</span>
         <span class="sep">↔</span>
-        <span class="side">{{ tab.rightLabel }}</span>
+        <span class="side side-right">{{ tab.rightLabel }}</span>
         <span class="path">{{ tab.path }}</span>
       </div>
       <div v-if="tab.kind === 'merge'" class="actions">
@@ -399,6 +405,15 @@ watch(theme, () => {
   flex-direction: column;
   min-height: 0;
   background: var(--bg-app);
+
+  /* 改动色只用于建立阅读锚点，不让整片代码被红绿底色淹没。 */
+  --diff-remove-line: color-mix(in srgb, var(--danger) 7%, transparent);
+  --diff-remove-text: color-mix(in srgb, var(--danger) 16%, transparent);
+  --diff-remove-edge: color-mix(in srgb, var(--danger) 72%, transparent);
+  --diff-add-line: color-mix(in srgb, var(--success) 7%, transparent);
+  --diff-add-text: color-mix(in srgb, var(--success) 16%, transparent);
+  --diff-add-edge: color-mix(in srgb, var(--success) 72%, transparent);
+  --diff-change-edge: color-mix(in srgb, var(--accent) 72%, transparent);
 }
 
 .toolbar {
@@ -406,7 +421,8 @@ watch(theme, () => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 6px 10px;
+  min-height: 34px;
+  padding: 5px 12px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-panel);
   flex-shrink: 0;
@@ -415,21 +431,55 @@ watch(theme, () => {
 .labels {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  flex: 1;
   min-width: 0;
   font-size: 12px;
 }
 
 .side {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 180px;
+  padding: 3px 7px 3px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background: var(--bg-inset);
+  color: var(--text-secondary);
   font-weight: 600;
-  color: var(--accent);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+}
+
+.side-left::before {
+  background: var(--diff-remove-edge);
+}
+
+.side-right::before {
+  background: var(--diff-add-edge);
 }
 
 .sep {
+  padding: 0 1px;
   color: var(--text-muted);
 }
 
 .path {
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-subtle);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -450,6 +500,9 @@ watch(theme, () => {
   font-size: 12px;
   color: var(--text-secondary);
   border: 1px solid var(--border-subtle);
+  background: var(--bg-inset);
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
 }
 
 .btn:hover:not(:disabled) {
@@ -487,12 +540,15 @@ watch(theme, () => {
   min-height: 0;
   position: relative;
   overflow: hidden;
+  background: var(--bg-editor);
 }
 
 .merge-host :deep(.cm-mergeView) {
   height: 100%;
   overflow: auto;
   outline: none;
+  background: var(--bg-editor);
+  overscroll-behavior: contain;
 }
 
 .merge-host :deep(.cm-mergeViewEditors) {
@@ -504,13 +560,48 @@ watch(theme, () => {
 .merge-host :deep(.cm-mergeViewEditor) {
   flex: 1;
   min-width: 0;
+  background: var(--bg-editor);
+}
+
+.merge-host :deep(.cm-mergeViewEditor + .cm-mergeViewEditor) {
+  border-left: 1px solid var(--border-strong);
 }
 
 .merge-host :deep(.cm-editor) {
   height: auto;
 }
 
-/* 强制块状改动高亮（覆盖 merge 包默认底部 2px 细线） */
+.merge-host :deep(.cm-gutters) {
+  background: var(--bg-inset);
+  border-right-color: var(--border-subtle);
+}
+
+.merge-host :deep(.cm-lineNumbers .cm-gutterElement) {
+  min-width: 38px;
+  padding: 0 9px 0 7px;
+  text-align: right;
+}
+
+/* MergeView 默认的绿/橙色改动 gutter 过亮，改成窄而稳定的语义色标。 */
+.merge-host :deep(.cm-changeGutter) {
+  width: 4px;
+  padding-left: 0;
+}
+
+.merge-host :deep(.cm-merge-a .cm-changedLineGutter),
+.merge-host :deep(.cm-deletedLineGutter) {
+  background: var(--diff-remove-edge);
+}
+
+.merge-host :deep(.cm-merge-b .cm-changedLineGutter) {
+  background: var(--diff-add-edge);
+}
+
+.merge-host :deep(.cm-inlineChangedLineGutter) {
+  background: var(--diff-change-edge);
+}
+
+/* 字符级高亮只保留一层柔和底色和底部锚线，避免每一行变成实心色块。 */
 .merge-host :deep(.cm-changedText),
 .merge-host :deep(.cm-deletedText) {
   background-image: none !important;
@@ -520,20 +611,57 @@ watch(theme, () => {
 
 .merge-host :deep(.cm-merge-a .cm-changedText),
 .merge-host :deep(.cm-deletedChunk .cm-deletedText) {
-  background-color: rgba(248, 113, 113, 0.35) !important;
+  background: var(--diff-remove-text) !important;
+  box-shadow: inset 0 -1px 0 var(--diff-remove-edge);
 }
 
 .merge-host :deep(.cm-merge-b .cm-changedText) {
-  background-color: rgba(52, 211, 153, 0.35) !important;
+  background: var(--diff-add-text) !important;
+  box-shadow: inset 0 -1px 0 var(--diff-add-edge);
 }
 
 .merge-host :deep(.cm-merge-a .cm-changedLine),
 .merge-host :deep(.cm-deletedChunk) {
-  background-color: rgba(248, 113, 113, 0.1);
+  background-color: var(--diff-remove-line);
+  box-shadow: inset 2px 0 0 var(--diff-remove-edge);
 }
 
 .merge-host :deep(.cm-merge-b .cm-changedLine),
 .merge-host :deep(.cm-inlineChangedLine) {
-  background-color: rgba(52, 211, 153, 0.1);
+  background-color: var(--diff-add-line);
+  box-shadow: inset 2px 0 0 var(--diff-add-edge);
+}
+
+.merge-host :deep(.cm-merge-b .cm-deletedText) {
+  background: var(--diff-remove-text) !important;
+  box-shadow: inset 0 -1px 0 var(--diff-remove-edge);
+}
+
+/* 折叠的未改动区变成明确的横向分隔，而不是一条发光渐变。 */
+.merge-host :deep(.cm-collapsedLines) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 27px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  text-align: center;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.merge-host :deep(.cm-collapsedLines:hover) {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.merge-host :deep(.cm-collapsedLines::before),
+.merge-host :deep(.cm-collapsedLines::after) {
+  color: var(--accent);
+  opacity: 0.65;
 }
 </style>

@@ -28,7 +28,7 @@ export function setupAutoSave(): () => void {
 
   function scheduleDelayedSave() {
     if (!settings.editor.autoSave) return;
-    if (!editor.dirtyPaths.size) return;
+    if (!editor.hasAutoSaveableChanges()) return;
     clearDelay();
     const delay = Math.max(200, settings.editor.autoSaveDelayMs || 1000);
     delayTimer = window.setTimeout(() => {
@@ -43,9 +43,9 @@ export function setupAutoSave(): () => void {
       return;
     }
     if (!settings.editor.autoSave) return;
-    if (!editor.dirtyPaths.size) return;
+    if (!editor.hasAutoSaveableChanges()) return;
     clearDelay();
-    const current = editor.saveAll({ quiet: true });
+    const current = editor.saveAll({ quiet: true, auto: true });
     flushPromise = current;
     try {
       await current;

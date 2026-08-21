@@ -76,6 +76,23 @@ const langComp = new Compartment();
 const prefsComp = new Compartment();
 const gitComp = new Compartment();
 let applyingExternal = false;
+let resizeObserver: ResizeObserver | null = null;
+let measureRaf: number | null = null;
+
+/**
+ * 编辑器可能在 Transition、底部终端面板或窗口恢复尚未完成布局时创建。
+ * CodeMirror 首次测量若拿到 0 高度，后续不会因为父级布局变化自动恢复绘制，
+ * 最终表现为「标签和状态栏都在，但编辑区空白」。用 ResizeObserver 监听真实
+ * 容器尺寸，并合并到下一帧重新测量，避免启动恢复/拖拽面板时留下空白编辑器。
+ */
+function scheduleEditorMeasure(): void {
+  if (!view || measureRaf !== null) return;
+  measureRaf = requestAnimationFrame(() => {
+    measureRaf = null;
+    if (!view || !host.value?.isConnected) return;
+    view.requestMeasure();
+  });
+}
 
 const navHandlers = {
   onNavigate: (path: string, line: number, column: number) => {
@@ -411,6 +428,7 @@ function switchDocument(path: string, content: string): void {
     ],
   });
   emitCursor(view);
+  scheduleEditorMeasure();
 }
 
 function createEditor() {
@@ -426,15 +444,28 @@ function createEditor() {
   });
   loadLanguage(props.path);
   emitCursor(view);
+  scheduleEditorMeasure();
 }
 
 onMounted(() => {
   createEditor();
+  if (host.value && typeof ResizeObserver !== "undefined") {
+    resizeObserver = new ResizeObserver(() => {
+      scheduleEditorMeasure();
+    });
+    resizeObserver.observe(host.value);
+  }
   // 编辑器首次挂载时拉一次 git status，避免刚打开文件右键看不到 git 菜单
   void git.refresh();
 });
 
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+  if (measureRaf !== null) {
+    cancelAnimationFrame(measureRaf);
+    measureRaf = null;
+  }
   if (cursorRaf !== null) {
     cancelAnimationFrame(cursorRaf);
     cursorRaf = null;
@@ -567,6 +598,7 @@ defineExpose({ scrollTo });
   height: 100%;
   width: 100%;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 

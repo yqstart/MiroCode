@@ -557,11 +557,8 @@ onBeforeUnmount(() =>
             <X :size="12" />
           </span>
         </button>
-      </TransitionGroup>
 
-      <!-- 固定标签区：终端 / SSH / Compare 等非文件标签固定钉在标签栏最右侧，
-           不随文件标签滚动，也不被文件标签挤压（flex-shrink:0） -->
-      <div class="tabs-fixed">
+        <!-- Diff/Compare 与普通文件标签一致：参与滚动，不固定在最右侧 -->
         <button
           v-for="tab in compareTabs"
           :key="tab.id"
@@ -581,7 +578,10 @@ onBeforeUnmount(() =>
             <X :size="12" />
           </span>
         </button>
+      </TransitionGroup>
 
+      <!-- 固定标签区：仅保留 SSH 和 SVG 预览切换等需要常驻右侧的控件 -->
+      <div class="tabs-fixed">
         <button
           v-if="sshOpen"
           type="button"
@@ -678,6 +678,37 @@ onBeforeUnmount(() =>
           </div>
         </div>
       </Transition>
+
+      <!-- MD 预览/编辑右上角 Segmented Control：定位在 tab 下方的实际编辑内容区内 -->
+      <div
+        v-if="isMarkdown && showFileEditor"
+        class="md-mode-toggle"
+        :title="t('editor.mdSwitchHint')"
+        role="tablist"
+      >
+        <button
+          type="button"
+          class="md-mode-btn"
+          :class="{ active: markdownPreviewMode === 'preview' }"
+          :title="t('editor.preview')"
+          role="tab"
+          :aria-selected="markdownPreviewMode === 'preview'"
+          @click="setMdModeUi('preview')"
+        >
+          <Eye :size="13" />
+        </button>
+        <button
+          type="button"
+          class="md-mode-btn"
+          :class="{ active: markdownPreviewMode === 'edit' }"
+          :title="t('editor.edit')"
+          role="tab"
+          :aria-selected="markdownPreviewMode === 'edit'"
+          @click="setMdModeUi('edit')"
+        >
+          <PenLine :size="13" />
+        </button>
+      </div>
     </div>
 
     <Teleport to="body">
@@ -766,36 +797,6 @@ onBeforeUnmount(() =>
       </Transition>
     </Teleport>
 
-    <!-- MD 预览/编辑右上角 Segmented Control（独立于 md-preview 容器，edit 模式也可见） -->
-    <div
-      v-if="isMarkdown && showFileEditor"
-      class="md-mode-toggle"
-      :title="t('editor.mdSwitchHint')"
-      role="tablist"
-    >
-      <button
-        type="button"
-        class="md-mode-btn"
-        :class="{ active: markdownPreviewMode === 'preview' }"
-        :title="t('editor.preview')"
-        role="tab"
-        :aria-selected="markdownPreviewMode === 'preview'"
-        @click="setMdModeUi('preview')"
-      >
-        <Eye :size="13" />
-      </button>
-      <button
-        type="button"
-        class="md-mode-btn"
-        :class="{ active: markdownPreviewMode === 'edit' }"
-        :title="t('editor.edit')"
-        role="tab"
-        :aria-selected="markdownPreviewMode === 'edit'"
-        @click="setMdModeUi('edit')"
-      >
-        <PenLine :size="13" />
-      </button>
-    </div>
   </section>
 </template>
 
@@ -807,8 +808,6 @@ onBeforeUnmount(() =>
   display: flex;
   flex-direction: column;
   background: var(--bg-editor);
-  /* 锚点：md-mode-toggle 用 absolute 定位到右上角 */
-  position: relative;
 }
 
 .tabs {
@@ -1118,7 +1117,6 @@ onBeforeUnmount(() =>
     box-shadow var(--transition-fast) var(--ease-out);
 }
 .welcome .cta:hover {
-  transform: translateY(-1px);
   box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .welcome .ghost:hover {
@@ -1128,7 +1126,8 @@ onBeforeUnmount(() =>
 }
 
 /* ==================== Markdown 预览（Cursor 风格） ====================
-   容器负责滚动与右上角 Segmented Control 定位；内容由 .md-preview-content 渲染。
+   容器负责滚动；右上角 Segmented Control 定位在外层 .canvas 内。
+   内容由 .md-preview-content 渲染。
    全部用 var(--*)，4 主题一次到位；正文 --text-primary 不再降到 secondary。 */
 .md-preview {
   position: relative;
@@ -1140,7 +1139,7 @@ onBeforeUnmount(() =>
   line-height: 1.65;               /* 段落 1.65，从原 1.7 微降 */
 }
 .md-preview-content {
-  /* 顶部多 48px 留给浮动 Segmented Control；左右宽松；底部留 40vh 滚动余量 */
+  /* 顶部多 48px 留给编辑内容区内的 Segmented Control；左右宽松；底部留 40vh 滚动余量 */
   padding: 48px 64px 40vh;
   max-width: 920px;
   margin: 0 auto;
@@ -1313,7 +1312,7 @@ onBeforeUnmount(() =>
 [data-theme="dawn"] .md-preview-content :deep(.tk-type)    { color: #267f99; }
 
 /* ==================== MD 预览/编辑右上角 Segmented Control ====================
-   absolute 锚定到 .editor-area 右上角（不依赖 .md-preview 容器，edit 模式 CM 上方也可见） */
+   absolute 锚定到 .canvas 右上角，编辑模式与预览模式均可见 */
 .md-mode-toggle {
   position: absolute;
   top: 12px;

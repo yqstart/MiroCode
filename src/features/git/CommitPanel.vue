@@ -3,11 +3,13 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   AlertTriangle,
   Archive,
+  ArchiveRestore,
+  ArchiveX,
   ArrowDown,
   ArrowUp,
-  Check,
   ChevronDown,
   CloudDownload,
+  FileDown,
   FolderSync,
   History,
   Minus,
@@ -47,7 +49,6 @@ const {
 const contextMenu = ref<{ x: number; y: number; path: string; staged: boolean } | null>(
   null,
 );
-const commitMenuOpen = ref(false);
 const stagedOpen = ref(true);
 const changesOpen = ref(true);
 const stashesOpen = ref(true);
@@ -71,9 +72,8 @@ onBeforeUnmount(() => {
 /** 点击面板外部任意处关闭右键菜单（菜单本身经 Teleport 到 body，故用全局监听） */
 function onDocMouseDown(event: MouseEvent) {
   const el = event.target as HTMLElement | null;
-  if (el && (el.closest(".ctx") || el.closest(".commit-dropdown"))) return;
+  if (el?.closest(".ctx")) return;
   contextMenu.value = null;
-  commitMenuOpen.value = false;
 }
 
 function dirOf(path: string) {
@@ -157,12 +157,10 @@ function openLog() {
 }
 
 async function doCommit() {
-  commitMenuOpen.value = false;
   await git.commit();
 }
 
 async function doCommitAndPush() {
-  commitMenuOpen.value = false;
   await git.commitAndPush();
 }
 
@@ -175,7 +173,7 @@ function onCommitKeydown(event: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="commit-panel" @click="contextMenu = null; commitMenuOpen = false">
+  <div class="commit-panel" @click="contextMenu = null">
     <header class="header">
       <span class="title">{{ t("git.commit") }}</span>
       <div class="header-actions">
@@ -329,11 +327,12 @@ function onCommitKeydown(event: KeyboardEvent) {
             <div class="group-actions" @click.stop>
               <button
                 type="button"
-                class="act"
+                class="act-icon"
                 :title="t('git.stashPopLatest')"
+                :aria-label="t('git.stashPopLatest')"
                 @click="git.stashPop(0)"
               >
-                {{ t("git.stashPop") }}
+                <Undo2 :size="14" />
               </button>
               <span class="count">{{ stashes.length }}</span>
             </div>
@@ -351,27 +350,30 @@ function onCommitKeydown(event: KeyboardEvent) {
               <div class="row-actions always" @click.stop>
                 <button
                   type="button"
-                  class="act"
+                  class="act-icon"
                   :title="t('git.stashApplyTitle')"
+                  :aria-label="t('git.stashApplyTitle')"
                   @click="git.stashApply(s.index)"
                 >
-                  {{ t("git.stashApply") }}
+                  <FileDown :size="13" />
                 </button>
                 <button
                   type="button"
-                  class="act"
+                  class="act-icon"
                   :title="t('git.stashPopTitle')"
+                  :aria-label="t('git.stashPopTitle')"
                   @click="git.stashPop(s.index)"
                 >
-                  {{ t("git.stashPop") }}
+                  <ArchiveRestore :size="13" />
                 </button>
                 <button
                   type="button"
-                  class="act danger-act"
-                  :title="t('common.delete')"
+                  class="act-icon danger-act"
+                  :title="t('git.stashDropTitle')"
+                  :aria-label="t('git.stashDropTitle')"
                   @click="git.stashDrop(s.index)"
                 >
-                  {{ t("git.stashDrop") }}
+                  <ArchiveX :size="13" />
                 </button>
               </div>
             </div>
@@ -570,36 +572,22 @@ function onCommitKeydown(event: KeyboardEvent) {
           {{ t("git.amend") }}
         </label>
         <div class="commit-actions">
-          <div class="commit-split">
-            <button
-              type="button"
-              class="cta"
-              :disabled="!canCommit"
-              @click.stop="doCommit"
-            >
-              <Check :size="14" /> {{ t("git.commit") }}
-            </button>
-            <button
-              type="button"
-              class="cta-menu"
-              :disabled="!canCommit"
-              :title="t('common.more')"
-              @click.stop="commitMenuOpen = !commitMenuOpen"
-            >
-              <ChevronDown :size="14" />
-            </button>
-            <Transition name="popover">
-              <div v-if="commitMenuOpen" class="commit-dropdown" @click.stop>
-                <button
-                  type="button"
-                  :disabled="!canCommit"
-                  @click="doCommitAndPush"
-                >
-                  {{ t("git.commitAndPush") }}
-                </button>
-              </div>
-            </Transition>
-          </div>
+          <button
+            type="button"
+            class="cta commit-button"
+            :disabled="!canCommit"
+            @click.stop="doCommit"
+          >
+            {{ t("git.commit") }}
+          </button>
+          <button
+            type="button"
+            class="cta commit-push-button"
+            :disabled="!canCommit"
+            @click.stop="doCommitAndPush"
+          >
+            {{ t("git.commitAndPush") }}
+          </button>
         </div>
       </div>
     </template>
@@ -741,8 +729,7 @@ function onCommitKeydown(event: KeyboardEvent) {
     transform var(--transition-fast) var(--ease-out);
 }
 
-.cta:disabled,
-.cta-menu:disabled {
+.cta:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -1054,6 +1041,11 @@ function onCommitKeydown(event: KeyboardEvent) {
   color: var(--danger);
 }
 
+.act-icon.danger-act:hover {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
+}
+
 .stash-row {
   padding-left: 12px;
 }
@@ -1126,54 +1118,19 @@ function onCommitKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: nowrap;
 }
 
-.commit-split {
-  position: relative;
-  display: flex;
+.commit-actions .cta {
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+  white-space: nowrap;
 }
 
-.commit-split .cta {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.cta-menu {
-  height: 30px;
-  width: 26px;
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  background: var(--accent);
+.commit-push-button {
+  background: var(--success);
   color: var(--accent-fg);
-  display: grid;
-  place-items: center;
-  border-left: 1px solid color-mix(in srgb, var(--accent-fg) 25%, transparent);
-}
-
-.commit-dropdown {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 4px);
-  min-width: 180px;
-  padding: 4px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  box-shadow: var(--shadow-modal);
-  z-index: 5;
-  transform-origin: bottom left;
-}
-
-.commit-dropdown button {
-  width: 100%;
-  text-align: left;
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  color: var(--text-primary);
-}
-
-.commit-dropdown button:hover:not(:disabled) {
-  background: var(--accent-soft);
 }
 
 .ctx {
@@ -1204,21 +1161,6 @@ function onCommitKeydown(event: KeyboardEvent) {
 
 .ctx .danger-item {
   color: var(--danger);
-}
-
-/* popover：commit-dropdown */
-.popover-enter-active {
-  transition: opacity var(--transition-medium) var(--ease-out),
-    transform var(--transition-medium) var(--ease-out);
-}
-.popover-leave-active {
-  transition: opacity var(--transition-fast) var(--ease-out),
-    transform var(--transition-fast) var(--ease-out);
-}
-.popover-enter-from,
-.popover-leave-to {
-  opacity: 0;
-  transform: scale(0.96) translateY(4px);
 }
 
 /* ctx：右键菜单 */

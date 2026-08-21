@@ -10,6 +10,10 @@ import {
   terminalBaseOptions,
 } from "@/features/sessions/terminalInputBridge";
 import { createTerminalLinksAddon } from "@/features/sessions/terminalLinks";
+import {
+  createTerminalOutputQueue,
+  type TerminalOutputQueue,
+} from "@/features/sessions/terminalOutputQueue";
 import { terminalThemeColors } from "@/features/sessions/terminalTheme";
 import {
   sshShellClose,
@@ -46,6 +50,7 @@ let unlistenData: UnlistenFn | null = null;
 let unlistenExit: UnlistenFn | null = null;
 let unlistenError: UnlistenFn | null = null;
 let detachInput: (() => void) | null = null;
+let outputQueue: TerminalOutputQueue | null = null;
 /** 串行写入 SSH 通道，避免并发 invoke 打乱 Vim 键序 */
 let writeChain = Promise.resolve();
 
@@ -97,6 +102,11 @@ async function boot() {
   await nextTick();
   fit();
 
+  outputQueue = createTerminalOutputQueue((text) => {
+    if (!term || disposed) return;
+    term.write(text);
+  });
+
   if (disposed) return;
   term.writeln(
     `\x1b[90m连接 ${props.config.username}@${props.config.host}:${props.config.port || 22} …\x1b[0m`,
@@ -105,7 +115,7 @@ async function boot() {
   try {
     unlistenData = await listen<string>(`ssh://data/${props.sessionId}`, (event) => {
       if (!term || disposed) return;
-      term.write(event.payload);
+      outputQueue?.push(event.payload);
     });
     if (disposed) {
       // 组件已在 await 期间卸载：onBeforeUnmount 早已执行，需自行回收已注册的监听
@@ -175,6 +185,8 @@ onBeforeUnmount(() => {
   resizeObserver = null;
   detachInput?.();
   detachInput = null;
+  outputQueue?.dispose();
+  outputQueue = null;
   detachListeners();
   if (connected) {
     void sshShellClose(props.sessionId);

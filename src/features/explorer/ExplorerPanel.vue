@@ -17,7 +17,6 @@ import { storeToRefs } from "pinia";
 import { writeClipboard } from "@/shared/clipboard";
 import FileTypeIcon from "@/shared/FileTypeIcon.vue";
 import { basename, dirname, normalizeAbsPath, relativeToRoot, toAbsolutePath } from "@/shared/fs";
-import { isRasterImagePath } from "@/shared/media";
 import {
   applyImportPatches,
   scanImportReferences,
@@ -112,13 +111,6 @@ const panelTitle = computed(() =>
 );
 const switchCandidates = computed(() =>
   recentFolders.value.filter((p) => p !== rootPath.value),
-);
-const canFormatMenuTarget = computed(() => {
-  if (!menu.value || menu.value.isDir || !rootPath.value) return false;
-  return !isRasterImagePath(menu.value.path);
-});
-const formatMenuDisabled = computed(
-  () => !settings.editor.prettierEnabled,
 );
 
 /** Tauri macOS WKWebView 的 HTML5 DnD 不可靠，改用 pointer 拖拽 */
@@ -643,10 +635,6 @@ async function runMenu(action: string) {
       );
       return;
     }
-    if (action === "format-document") {
-      if (isDir || isRasterImagePath(path)) return;
-      await editor.formatDocument(path);
-    }
   } catch (error) {
     workspace.showNotice(
       error instanceof Error ? error.message : String(error),
@@ -933,14 +921,6 @@ defineExpose({ locateActiveFile });
         </button>
         <button type="button" @click="runMenu('open-in-terminal')">
           {{ t("explorer.openInTerminal") }}
-        </button>
-        <hr />
-        <button
-          type="button"
-          :disabled="!canFormatMenuTarget || formatMenuDisabled"
-          @click="runMenu('format-document')"
-        >
-          {{ t("editor.formatDocument") }}
         </button>
         <hr />
         <button type="button" @click="runMenu('reveal-in-os')">

@@ -166,21 +166,26 @@ fn set_app_menu_locale(app: AppHandle, locale: String) -> Result<(), String> {
 /// 实际逻辑在 `commands/dock_menu::rebuild_dock_menu`（macOS only；
 /// 非 macOS 是 no-op）。catch_unwind 防 NSMenu/NSMenuItem 调用链上的 objc
 /// 异常（已被 NSException 接住前先拦下 Rust 边界 panic），避免 release profile
-/// 的 panic = "abort" 路径把整个 App 干掉。
+/// 的 panic = "abort" 路径把整个 App 干掉。AppKit 对 NSMenu/NSMenuItem
+/// 要求主线程访问，因此即使 Tauri command 在后台线程执行，也统一切回主线程，
+/// 避免 `MainThreadMarker::new()` 在非主线程 panic。
 #[tauri::command]
 fn set_dock_menu(app: AppHandle, state: DockStatePayload) -> Result<(), String> {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        commands::dock_menu::rebuild_dock_menu(&app, &state);
-    }));
-    if let Err(e) = result {
-        let msg = e
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
-            .unwrap_or_else(|| "未知 panic".to_string());
-        eprintln!("[set_dock_menu] panic 已被吞掉: {msg}");
-    }
-    Ok(())
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            commands::dock_menu::rebuild_dock_menu(&handle, &state);
+        }));
+        if let Err(e) = result {
+            let msg = e
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "未知 panic".to_string());
+            eprintln!("[set_dock_menu] panic 已被吞掉: {msg}");
+        }
+    })
+    .map_err(|e| format!("无法在主线程更新 Dock 菜单：{e}"))
 }
 
 // ==================== macOS 启动拉前 ====================

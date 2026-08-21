@@ -72,11 +72,24 @@ export const useEditorStore = defineStore("editor", () => {
    * watcher 直接 return，彻底切断 CM -> store -> prop -> CM 的回环。
    */
   const pendingExternalUpdates = new Set<string>();
+  /** 外部程序持续写同一文件时，自动保存不得和它互相覆盖。 */
+  const autoSaveBlockedPaths = new Set<string>();
+  /** 已经询问过且用户选择保留本地内容的磁盘版本。 */
+  const externalConflictVersions = new Map<string, string>();
   function markExternalUpdate(path: string): void {
     pendingExternalUpdates.add(path);
   }
   function consumeExternalUpdate(path: string): boolean {
     return pendingExternalUpdates.delete(path);
+  }
+
+  function hasAutoSaveableChanges(): boolean {
+    return tabs.value.some(
+      (tab) =>
+        !isRasterImagePath(tab.path) &&
+        tab.dirty &&
+        !autoSaveBlockedPaths.has(tab.path),
+    );
   }
 
   const activeTab = computed(
@@ -317,6 +330,10 @@ export const useEditorStore = defineStore("editor", () => {
     if (!tab) return;
     tab.content = content;
     tab.dirty = content !== tab.original;
+    if (!tab.dirty) {
+      autoSaveBlockedPaths.delete(path);
+      externalConflictVersions.delete(path);
+    }
   }
 
   /** 磁盘内容已更新（如 import 批量替换），同步缓冲区且保持干净状态 */
@@ -327,6 +344,8 @@ export const useEditorStore = defineStore("editor", () => {
     tab.content = content;
     tab.original = content;
     tab.dirty = false;
+    autoSaveBlockedPaths.delete(path);
+    externalConflictVersions.delete(path);
   }
 
   /** 外部磁盘变更：干净标签自动重载；脏标签询问是否覆盖 */
@@ -345,6 +364,8 @@ export const useEditorStore = defineStore("editor", () => {
             await closeTab(path);
             workspace.showNotice(`「${tab.name}」已被外部删除`);
           } else {
+            autoSaveBlockedPaths.add(path);
+            externalConflictVersions.set(path, "<missing>");
             workspace.showNotice(
               `「${tab.name}」已被外部删除，本地仍有未保存更改`,
               3600,
@@ -362,9 +383,13 @@ export const useEditorStore = defineStore("editor", () => {
 
         const disk = await readTextFile(workspace.rootPath, path);
         if (disk === tab.content) {
-          tab.original = disk;
-          tab.dirty = false;
-          tab.previewNonce = Date.now();
+          if (tab.original !== disk || tab.dirty) {
+            tab.original = disk;
+            tab.dirty = false;
+            tab.previewNonce = Date.now();
+          }
+          autoSaveBlockedPaths.delete(path);
+          externalConflictVersions.delete(path);
           continue;
         }
 
@@ -374,9 +399,15 @@ export const useEditorStore = defineStore("editor", () => {
           tab.original = disk;
           tab.dirty = false;
           tab.previewNonce = Date.now();
+          autoSaveBlockedPaths.delete(path);
+          externalConflictVersions.delete(path);
           workspace.showNotice(`「${tab.name}」已从磁盘重新加载`);
           continue;
         }
+
+        // 外部程序可能在保存循环中反复写出同一个版本。第一次询问后，
+        // 同一磁盘版本不再阻塞主线程弹窗；只有出现新版本才重新询问。
+        if (externalConflictVersions.get(path) === disk) continue;
 
         const overwrite = window.confirm(
           `「${tab.name}」已被外部修改，且本地有未保存更改。\n\n确定：用磁盘版本覆盖\n取消：保留编辑器内容`,
@@ -387,10 +418,15 @@ export const useEditorStore = defineStore("editor", () => {
           tab.original = disk;
           tab.dirty = false;
           tab.previewNonce = Date.now();
+          autoSaveBlockedPaths.delete(path);
+          externalConflictVersions.delete(path);
           workspace.showNotice(`「${tab.name}」已用磁盘版本覆盖`);
         } else {
           tab.original = disk;
           tab.dirty = true;
+          // 保留本地版本时暂停自动保存，防止与持续写盘的终端进程互相覆盖。
+          autoSaveBlockedPaths.add(path);
+          externalConflictVersions.set(path, disk);
           workspace.showNotice(`「${tab.name}」外部已变更，已保留本地编辑`, 3200);
         }
       } catch (error) {
@@ -435,6 +471,8 @@ export const useEditorStore = defineStore("editor", () => {
         tab.original = disk;
         tab.dirty = false;
         tab.previewNonce = Date.now();
+        autoSaveBlockedPaths.delete(abs);
+        externalConflictVersions.delete(abs);
       } catch (error) {
         workspace.showNotice(
           error instanceof Error ? error.message : String(error),
@@ -547,7 +585,7 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
-  async function saveActive(options?: { quiet?: boolean }) {
+  async function saveActive(options?: { quiet?: boolean; auto?: boolean }) {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
     if (!activeTab.value) {
@@ -558,6 +596,7 @@ export const useEditorStore = defineStore("editor", () => {
     }
     const tab = activeTab.value;
     if (isRasterImagePath(tab.path)) return;
+    if (options?.auto && autoSaveBlockedPaths.has(tab.path)) return;
 
     if (!workspace.rootPath) {
       if (!options?.quiet) {
@@ -579,6 +618,8 @@ export const useEditorStore = defineStore("editor", () => {
       await writeTextFile(workspace.rootPath, tab.path, content);
       tab.original = content;
       tab.dirty = false;
+      autoSaveBlockedPaths.delete(tab.path);
+      externalConflictVersions.delete(tab.path);
       if (!options?.quiet) {
         workspace.showNotice(`已保存 ${tab.name}`);
       }
@@ -593,10 +634,15 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
-  async function saveAll(options?: { quiet?: boolean }) {
+  async function saveAll(options?: { quiet?: boolean; auto?: boolean }) {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
-    const dirty = tabs.value.filter((t) => !isRasterImagePath(t.path) && t.dirty);
+    const dirty = tabs.value.filter(
+      (t) =>
+        !isRasterImagePath(t.path) &&
+        t.dirty &&
+        !(options?.auto && autoSaveBlockedPaths.has(t.path)),
+    );
     if (!dirty.length) return;
     try {
       let saved = 0;
@@ -611,6 +657,8 @@ export const useEditorStore = defineStore("editor", () => {
         await writeTextFile(workspace.rootPath, tab.path, tab.content);
         tab.original = tab.content;
         tab.dirty = false;
+        autoSaveBlockedPaths.delete(tab.path);
+        externalConflictVersions.delete(tab.path);
         saved += 1;
       }
       if (!options?.quiet && saved > 0) {
@@ -640,6 +688,8 @@ export const useEditorStore = defineStore("editor", () => {
     tabs.value = tabs.value.filter((t) => t.path !== path);
     // 清除外部更新标记：否则重开同路径文件时会触发一次多余的 CM dispatch
     pendingExternalUpdates.delete(path);
+    autoSaveBlockedPaths.delete(path);
+    externalConflictVersions.delete(path);
     if (activePath.value === path) {
       const next = tabs.value[idx] || tabs.value[idx - 1] || null;
       if (next) {
@@ -753,6 +803,8 @@ export const useEditorStore = defineStore("editor", () => {
     for (const tab of victims) {
       tabs.value = tabs.value.filter((t) => t.path !== tab.path);
       pendingExternalUpdates.delete(tab.path);
+      autoSaveBlockedPaths.delete(tab.path);
+      externalConflictVersions.delete(tab.path);
     }
     if (activePath.value && victims.some((t) => t.path === activePath.value)) {
       activePath.value = tabs.value[0]?.path ?? null;
@@ -778,6 +830,8 @@ export const useEditorStore = defineStore("editor", () => {
     jumpStack.value = [];
     openAt.value = null;
     pendingExternalUpdates.clear();
+    autoSaveBlockedPaths.clear();
+    externalConflictVersions.clear();
   }
 
   // ==================== Markdown 预览/编辑模式（按文件路径持久化） ====================
@@ -855,6 +909,7 @@ export const useEditorStore = defineStore("editor", () => {
     activatePrevTab,
     saveActive,
     saveAll,
+    hasAutoSaveableChanges,
     formatDocument,
     closeTab,
     togglePin,

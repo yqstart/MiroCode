@@ -40,6 +40,10 @@ const WATCH_IGNORE_NAMES = new Set([
   ".DS_Store",
 ]);
 
+/** 高频外部写盘时只在安静窗口刷新，避免终端日志/构建器拖垮整个 WebView。 */
+const WATCH_FLUSH_DEBOUNCE_MS = 700;
+const WATCH_FLUSH_MIN_INTERVAL_MS = 1000;
+
 /** 终端 / 外部 git 命令会改这些路径；需触发状态刷新，但不要刷新资源树 */
 function isGitMetaPath(path: string): boolean {
   return /(?:^|[/\\])\.git(?:[/\\]|$)/.test(path);
@@ -101,8 +105,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   let unwatchFn: UnwatchFn | null = null;
   let refreshTimer: number | undefined;
   let gitRefreshTimer: number | undefined;
+  let lastWatchFlushAt = 0;
   const selfWriteUntil = new Map<string, number>();
   let pendingWatchPaths = new Set<string>();
+  let pendingWatchNeedsTreeRefresh = false;
   /**
    * 工作区代际计数：openFolder 每次提交新工作区时自增。异步读取
    * （loadChildren/refreshTree/refreshDirsForPaths）在 await 之后校验代际，
@@ -221,6 +227,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     window.clearTimeout(refreshTimer);
     window.clearTimeout(gitRefreshTimer);
     pendingWatchPaths = new Set();
+    pendingWatchNeedsTreeRefresh = false;
+    lastWatchFlushAt = 0;
   }
 
   function scheduleGitRefresh() {
@@ -253,6 +261,29 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
   }
 
+  function watchEventNeedsTreeRefresh(type: WatchEvent["type"]): boolean {
+    if (typeof type === "string") return type === "any" || type === "other";
+    if ("create" in type || "remove" in type) return true;
+    if ("modify" in type) {
+      // 文件内容/元数据变化不会改变资源树；重命名和未知变化需要重列目录。
+      return type.modify.kind === "rename" || type.modify.kind === "other";
+    }
+    return false;
+  }
+
+  function scheduleWatchFlush(): void {
+    window.clearTimeout(refreshTimer);
+    const elapsed = Date.now() - lastWatchFlushAt;
+    const wait = Math.max(
+      WATCH_FLUSH_DEBOUNCE_MS,
+      WATCH_FLUSH_MIN_INTERVAL_MS - elapsed,
+    );
+    refreshTimer = window.setTimeout(() => {
+      refreshTimer = undefined;
+      void flushWatchChanges();
+    }, wait);
+  }
+
   function onWatchEvent(event: WatchEvent) {
     if (!rootPath.value) return;
     let gitTouched = false;
@@ -268,29 +299,34 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
     if (gitTouched) scheduleGitRefresh();
     if (!pendingWatchPaths.size) return;
-    window.clearTimeout(refreshTimer);
-    refreshTimer = window.setTimeout(() => {
-      void flushWatchChanges();
-    }, 200);
+    pendingWatchNeedsTreeRefresh =
+      pendingWatchNeedsTreeRefresh || watchEventNeedsTreeRefresh(event.type);
+    scheduleWatchFlush();
   }
 
   async function flushWatchChanges() {
     if (!rootPath.value || !pendingWatchPaths.size) return;
+    if (refreshing.value) {
+      // 当前刷新结束后由 finally 重新安排，不能提前清空这批路径。
+      refreshAgain = true;
+      scheduleWatchFlush();
+      return;
+    }
     const changed = [...pendingWatchPaths];
     pendingWatchPaths = new Set();
+    const refreshTree = pendingWatchNeedsTreeRefresh;
+    pendingWatchNeedsTreeRefresh = false;
+    lastWatchFlushAt = Date.now();
     // 工作区文件变了也会刷新 git；取消排队中的纯 git 刷新，避免重复
     window.clearTimeout(gitRefreshTimer);
-    // 刷新进行中（refreshing=true）时 refreshFromDisk 直接 return，
-    // 这批变更路径会永久丢失——用 refreshAgain 补刷（git store 同款模式）
-    do {
-      refreshAgain = false;
-      await refreshFromDisk(changed, { quiet: true });
-    } while (refreshAgain && rootPath.value);
+    refreshAgain = false;
+    await refreshFromDisk(changed, { quiet: true, refreshTree });
+    if (pendingWatchPaths.size) scheduleWatchFlush();
   }
 
   async function refreshFromDisk(
     changedAbsPaths: string[] = [],
-    options: { quiet?: boolean } = {},
+    options: { quiet?: boolean; refreshTree?: boolean } = {},
   ) {
     if (!rootPath.value) return;
     if (refreshing.value) {
@@ -300,9 +336,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     refreshing.value = true;
     try {
       // 仅重列受影响的父目录（文件变更局部刷新），避免大目录全量重列卡顿
-      if (changedAbsPaths.length) {
+      if (changedAbsPaths.length && options.refreshTree !== false) {
         await refreshDirsForPaths(changedAbsPaths);
-      } else {
+      } else if (!changedAbsPaths.length) {
         await refreshTree();
       }
       const root = rootPath.value;
@@ -324,6 +360,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       }
     } finally {
       refreshing.value = false;
+      if (refreshAgain && pendingWatchPaths.size) {
+        refreshAgain = false;
+        scheduleWatchFlush();
+      }
     }
   }
 

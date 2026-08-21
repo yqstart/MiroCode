@@ -53,10 +53,6 @@ const navItems = computed(() => [
   { id: "system" as const, label: t("settings.navAbout") },
 ]);
 
-const completionHint = computed(() =>
-  t("settings.completionHint", { shortcut: formatShortcut("mod", "Space") }),
-);
-
 const shortcutRows = computed(() => [
   { keys: formatShortcut("mod", "O"), action: t("settings.shortcutOpenFolder") },
   { keys: formatShortcut("mod", "P"), action: t("settings.shortcutQuickOpen") },
@@ -310,13 +306,6 @@ function onOverlayClick(event: MouseEvent) {
                   <option value="never">{{ t("settings.updateImportsOnMoveNever") }}</option>
                 </select>
               </label>
-            </div>
-
-            <div class="ui-card section">
-              <h3>{{ t("settings.completion") }}</h3>
-              <p class="desc">
-                {{ completionHint }}
-              </p>
             </div>
           </template>
 
@@ -719,7 +708,6 @@ function onOverlayClick(event: MouseEvent) {
 
 .delay-field {
   margin-top: 14px;
-  max-width: 200px;
 }
 
 /* 镜像行：不套 delay-field 的 200px 限制，select + 状态文字占满整行，

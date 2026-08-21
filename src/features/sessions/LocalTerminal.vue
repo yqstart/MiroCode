@@ -11,6 +11,10 @@ import {
 } from "@/features/sessions/terminalInputBridge";
 import { createTerminalLinksAddon } from "@/features/sessions/terminalLinks";
 import {
+  createTerminalOutputQueue,
+  type TerminalOutputQueue,
+} from "@/features/sessions/terminalOutputQueue";
+import {
   createPromptIdleTracker,
   type PromptIdleTracker,
 } from "@/features/sessions/terminalIdle";
@@ -37,6 +41,7 @@ let disposed = false;
 let resizeObserver: ResizeObserver | null = null;
 let detachInput: (() => void) | null = null;
 let idleTracker: PromptIdleTracker | null = null;
+let outputQueue: TerminalOutputQueue | null = null;
 
 function defaultShell(): string {
   const platform = navigator.platform.toLowerCase();
@@ -82,6 +87,11 @@ function spawnPty() {
       env,
     });
 
+    outputQueue = createTerminalOutputQueue((text) => {
+      if (!term || disposed) return;
+      term.write(text);
+    });
+
     pty.onData((data) => {
       if (!term || disposed) return;
       const text =
@@ -90,7 +100,8 @@ function spawnPty() {
           : new TextDecoder().decode(data);
       // 空闲检测：上报 shell 是否停在提示符上（快捷方式据此决定复用或新开终端）
       idleTracker?.feed(text);
-      term.write(text);
+      // PTY 输出先进入有界队列，避免高频日志阻塞整个 WebView。
+      outputQueue?.push(text);
     });
 
     pty.onExit(() => {
@@ -169,6 +180,8 @@ onBeforeUnmount(() => {
   resizeObserver = null;
   idleTracker?.dispose();
   idleTracker = null;
+  outputQueue?.dispose();
+  outputQueue = null;
   detachInput?.();
   detachInput = null;
   try {
