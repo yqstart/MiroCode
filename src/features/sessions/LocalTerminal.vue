@@ -19,6 +19,10 @@ import {
   type PromptIdleTracker,
 } from "@/features/sessions/terminalIdle";
 import { terminalThemeColors } from "@/features/sessions/terminalTheme";
+import {
+  createTerminalCommandTracker,
+  type TerminalCommandTracker,
+} from "@/shared/terminalCommand";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 
@@ -41,6 +45,7 @@ let disposed = false;
 let resizeObserver: ResizeObserver | null = null;
 let detachInput: (() => void) | null = null;
 let idleTracker: PromptIdleTracker | null = null;
+let commandTracker: TerminalCommandTracker | null = null;
 let outputQueue: TerminalOutputQueue | null = null;
 
 function defaultShell(): string {
@@ -54,6 +59,17 @@ function defaultShell(): string {
 function hostVisible(): boolean {
   const el = host.value;
   return Boolean(el && el.clientWidth > 0 && el.clientHeight > 0);
+}
+
+/** 只在普通 shell 输入态跟踪命令，避免把 Vim 等全屏终端的按键当成命令标题。 */
+function writePty(data: string): void {
+  if (!pty || disposed) return;
+  if (term && term.buffer.active.type === term.buffer.normal.type) {
+    commandTracker?.feed(data);
+  } else {
+    commandTracker?.reset();
+  }
+  pty.write(data);
 }
 
 function spawnPty() {
@@ -87,6 +103,10 @@ function spawnPty() {
       env,
     });
 
+    commandTracker = createTerminalCommandTracker((command) => {
+      sessions.setLocalTitle(props.sessionId, command);
+    });
+
     outputQueue = createTerminalOutputQueue((text) => {
       if (!term || disposed) return;
       term.write(text);
@@ -112,9 +132,7 @@ function spawnPty() {
       sessions.setLocalIdle(props.sessionId, idle);
     });
 
-    detachInput = attachTerminalInputBridge(term, (data) => {
-      pty?.write(data);
-    });
+    detachInput = attachTerminalInputBridge(term, writePty);
   } catch (error) {
     term.writeln(
       `\r\n\x1b[31m终端启动失败: ${error instanceof Error ? error.message : String(error)}\x1b[0m`,
@@ -180,6 +198,8 @@ onBeforeUnmount(() => {
   resizeObserver = null;
   idleTracker?.dispose();
   idleTracker = null;
+  commandTracker?.dispose();
+  commandTracker = null;
   outputQueue?.dispose();
   outputQueue = null;
   detachInput?.();
@@ -231,7 +251,7 @@ watch(
       return;
     }
     try {
-      pty.write(job.data);
+      writePty(job.data);
     } catch {
       // ignore
     }

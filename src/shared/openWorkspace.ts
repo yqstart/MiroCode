@@ -55,6 +55,7 @@ export async function openFolderInNewWindow(
     focus: true,
     titleBarStyle: "overlay",
     hiddenTitle: true,
+    acceptFirstMouse: true,
   });
 
   await new Promise<void>((resolve, reject) => {

@@ -173,7 +173,7 @@ MiroCode/
 
 1. **原生菜单加速键**（`lib.rs`）：⌘O / ⌘S / ⌘P / ⌘⇧F / ⌥F1 / ⌘J / ⌘B / ⌘, / ⌘F + 系统编辑键
 2. **AppShell 窗口级 keydown**（`AppShell.vue`）：⌘K（Commit 面板）、⌘W（关标签）、⌘⌥→/←（切换标签）、⌘R（刷新资源树）、Esc（关浮层）
-3. **编辑器 keymap**（CM6）：⌘F / ⌘⌥F / ⌘H 查找替换、⌘G / F3 跳转、⌘Enter / F12 跳定义、⌘[ 返回、Shift+F12 引用、F2 重命名、Tab 补全/Emmet、Esc 关闭浮层
+3. **编辑器 keymap**（CM6，`features/editor/keymap.ts`）：应用命令以最高优先级注册，⌘Enter / F12 跳定义、⌘[ 返回（无目标时回退 CM 原生编辑命令）、Shift+F12 引用、F2 重命名、⌘F / ⌘⌥F / ⌘H 查找替换、⌥⇧F 全文格式化、⌘K ⌘F 选区格式化、F8 / Shift+F8 诊断导航；其后保留 CM 多光标、行操作、注释、折叠、查找选择与 Tab 补全/Emmet
 
 完整清单见《使用说明》。
 

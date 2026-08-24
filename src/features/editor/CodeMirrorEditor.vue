@@ -2,24 +2,16 @@
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   closeBrackets,
-  closeBracketsKeymap,
-  completionKeymap,
 } from "@codemirror/autocomplete";
-import {
-  defaultKeymap,
-  history,
-  historyKeymap,
-  indentWithTab,
-} from "@codemirror/commands";
+import { history } from "@codemirror/commands";
 import {
   bracketMatching,
   foldGutter,
-  foldKeymap,
   indentOnInput,
 } from "@codemirror/language";
 import { lintGutter } from "@codemirror/lint";
-import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
-import { Compartment, EditorState, Prec, type Extension } from "@codemirror/state";
+import { highlightSelectionMatches, search } from "@codemirror/search";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import {
   crosshairCursor,
   drawSelection,
@@ -28,7 +20,6 @@ import {
   highlightActiveLine,
   highlightActiveLineGutter,
   highlightSpecialChars,
-  keymap,
   lineNumbers,
   rectangularSelection,
 } from "@codemirror/view";
@@ -36,14 +27,13 @@ import { storeToRefs } from "pinia";
 import { createCompletionExtension } from "@/features/editor/completions";
 import { expandEmmetAt, matchEmmetAbbreviation } from "@/features/editor/completion/emmet";
 import { createDiagnosticsExtension } from "@/features/editor/diagnostics";
+import { createEditorKeymap } from "@/features/editor/keymap";
 import { languageExtensionForPath } from "@/features/editor/languages";
-import {
-  createNavigationExtension,
-  goBackKeymap,
-  goToDefinitionKeymap,
-} from "@/features/editor/navigation";
+import { createNavigationExtension } from "@/features/editor/navigation";
 import { editorThemeExtensions } from "@/features/editor/theme";
 import { createMiroFindPanel, openFindPanel, openFindReplacePanel } from "@/features/editor/findPanel";
+import { formatDocumentContent } from "@/features/editor/formatting";
+import { singleTextChange } from "@/features/editor/formatting/textChange";
 import { wordAt } from "@/features/editor/documentSymbols";
 import { renameSymbol } from "@/features/editor/renameSymbol";
 import { createTypeScriptHoverExtension } from "@/features/editor/typeService/tsHover";
@@ -100,9 +90,9 @@ const navHandlers = {
   },
   onGoBack: () => {
     const target = editorStore.popJump();
-    if (target) {
-      void editorStore.openFileAt(target.path, target.line, target.column);
-    }
+    if (!target) return false;
+    void editorStore.openFileAt(target.path, target.line, target.column);
+    return true;
   },
   workspaceRoot: () => workspace.rootPath,
   currentFile: () => props.path,
@@ -213,6 +203,53 @@ function buildGitExtensions(path: string): Extension[] {
   return exts;
 }
 
+/** ⌘K ⌘F：只格式化单一连续选区；实际修改仍走 CM 历史。 */
+async function formatSelection(current: EditorView): Promise<void> {
+  const selection = current.state.selection;
+  if (selection.ranges.length !== 1 || selection.main.empty) return;
+
+  const root = workspace.rootPath;
+  if (!root) return;
+  if (!settings.editor.prettierEnabled) {
+    workspace.showNotice("请先在设置中启用代码格式化");
+    return;
+  }
+
+  const path = props.path;
+  const before = current.state.doc.toString();
+  const range = selection.main;
+  try {
+    const formatted = await formatDocumentContent(root, path, before, {
+      rangeStart: range.from,
+      rangeEnd: range.to,
+    });
+
+    // 格式化期间若用户继续输入、切换标签或销毁视图，丢弃过期结果。
+    if (
+      view !== current ||
+      currentPath !== path ||
+      current.state.doc.toString() !== before
+    ) {
+      return;
+    }
+
+    const change = singleTextChange(before, formatted, {
+      from: range.from,
+      to: range.to,
+    });
+    if (!change) return;
+    current.dispatch({
+      changes: change,
+      userEvent: "input.format.selection",
+    });
+  } catch (error) {
+    workspace.showNotice(
+      error instanceof Error ? error.message : String(error),
+      3200,
+    );
+  }
+}
+
 /** 构建编辑器扩展集（按当前 props.path / 设置；标签切换时按需重建） */
 function buildExtensions(): Extension[] {  return [
     highlightSpecialChars(),
@@ -245,108 +282,52 @@ function buildExtensions(): Extension[] {  return [
     // openFindPanel/openFindReplacePanel 已用 requestAnimationFrame 修复
     // panelByView 时序问题（openSearchPanel 后下一帧才 mount 注册）。
     search({ top: true, createPanel: createMiroFindPanel }),
-    keymap.of([
-      ...closeBracketsKeymap,
-      ...defaultKeymap,
-      ...searchKeymap,
-      ...historyKeymap,
-      ...foldKeymap,
-      ...completionKeymap,
-      ...goToDefinitionKeymap(navHandlers),
-      goBackKeymap(navHandlers),
-      // F2：重命名符号（TypeScript 语义服务优先，工作区索引兜底）
-      {
-        key: "F2",
-        run: (v) => {
-          const root = workspace.rootPath;
-          if (!root) {
-            workspace.showNotice("未打开工作区", 2000);
-            return true;
-          }
-          // Tauri WKWebView 不支持 window.prompt（返回 null 静默失败），
-          // 改用应用内 PromptDialog；预填当前光标处符号名
-          const current =
-            wordAt(v.state.doc.toString(), v.state.selection.main.head)?.word ?? "";
-          void promptInput({
-            title: "重命名符号",
-            label: "新名称",
-            defaultValue: current,
-            confirmText: "重命名",
-          }).then((newName) => {
-            if (!newName) return; // 取消 / 空输入
-            // 输入框打开期间可能已切换文件/关闭标签（view 已 destroy）：
-            // 在销毁的视图上 dispatch 属未定义行为，此处丢弃
-            if (view !== v) return;
-            void renameSymbol(v, newName, root, props.path);
-          });
-          return true;
-        },
+    createEditorKeymap({
+      navigation: navHandlers,
+      onRename: (v) => {
+        const root = workspace.rootPath;
+        if (!root) {
+          workspace.showNotice("未打开工作区", 2000);
+          return;
+        }
+        // Tauri WKWebView 不支持 window.prompt，使用应用内输入框。
+        const current =
+          wordAt(v.state.doc.toString(), v.state.selection.main.head)?.word ?? "";
+        void promptInput({
+          title: "重命名符号",
+          label: "新名称",
+          defaultValue: current,
+          confirmText: "重命名",
+        }).then((newName) => {
+          if (!newName || view !== v) return;
+          void renameSymbol(v, newName, root, props.path);
+        });
       },
-      // Shift+F12：查找当前符号的全部引用（JS/TS 走真实类型服务）。
-      {
-        key: "Shift-F12",
-        run: (v) => {
-          void editorStore.openReferences(
-            props.path,
-            v.state.doc.toString(),
-            v.state.selection.main.head,
-          );
-          return true;
-        },
+      onReferences: (v) => {
+        void editorStore.openReferences(
+          props.path,
+          v.state.doc.toString(),
+          v.state.selection.main.head,
+        );
       },
-      indentWithTab,
-      // Emmet 缩写展开（VS Code 同款）：Tab 在缩进之前消费，仅 html/css/vue 启用。
-      // 链路：ghost 接受（Prec.highest）→ popup 选中项（completionKeymap）→ Emmet → 缩进。
-      {
-        key: "Tab",
-        run: (v) => {
-          if (!/\.(html?|vue|css|scss|sass|less)$/i.test(props.path)) return false;
-          const head = v.state.selection.main.head;
-          const before = v.state.doc.sliceString(0, head);
-          // 同步判断缩写存在与否：存在则异步展开（库懒加载）并消费 Tab；
-          // 不存在返回 false 让位 indentWithTab
-          if (matchEmmetAbbreviation(before)) {
-            void expandEmmetAt(v, props.path);
-            return true;
-          }
-          return false;
-        },
+      onOpenFind: openFindPanel,
+      onOpenReplace: openFindReplacePanel,
+      onFormatDocument: () => {
+        void editorStore.formatDocument();
       },
-    ]),
-    // 快捷键对齐 VS Code：⌘F 查找；⌘⌥F（mac）/ Ctrl+H（win）替换
-    Prec.highest(
-      keymap.of([
-        {
-          key: "Mod-f",
-          run: (v) => {
-            openFindPanel(v);
-            return true;
-          },
-        },
-        {
-          key: "Mod-Alt-f",
-          run: (v) => {
-            openFindReplacePanel(v);
-            return true;
-          },
-        },
-        {
-          key: "Mod-h",
-          run: (v) => {
-            openFindReplacePanel(v);
-            return true;
-          },
-        },
-        // ⌥⇧F：格式化当前文件（对齐 VS Code Shift+Alt+F；内置引擎开箱即用）
-        {
-          key: "Shift-Alt-f",
-          run: () => {
-            void editorStore.formatDocument();
-            return true;
-          },
-        },
-      ]),
-    ),
+      onFormatSelection: (v) => {
+        void formatSelection(v);
+      },
+      // Emmet 缩写展开在普通 Tab 缩进之前消费，仅 html/css/vue 启用。
+      onEmmet: (v) => {
+        if (!/\.(html?|vue|css|scss|sass|less)$/i.test(props.path)) return false;
+        const head = v.state.selection.main.head;
+        const before = v.state.doc.sliceString(0, head);
+        if (!matchEmmetAbbreviation(before)) return false;
+        void expandEmmetAt(v, props.path);
+        return true;
+      },
+    }),
     langComp.of([]),
     gitComp.of(buildGitExtensions(props.path)),
     themeComp.of(editorThemeExtensions(theme.value)),

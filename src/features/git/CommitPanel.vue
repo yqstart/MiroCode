@@ -11,6 +11,7 @@ import {
   CloudDownload,
   FileDown,
   FolderSync,
+  GitCommitHorizontal,
   History,
   Minus,
   Plus,
@@ -576,17 +577,23 @@ function onCommitKeydown(event: KeyboardEvent) {
             type="button"
             class="cta commit-button"
             :disabled="!canCommit"
+            :title="t('git.commit')"
+            :aria-label="t('git.commit')"
             @click.stop="doCommit"
           >
-            {{ t("git.commit") }}
+            <GitCommitHorizontal class="commit-action-icon" :size="15" aria-hidden="true" />
+            <span class="commit-action-label">{{ t("git.commit") }}</span>
           </button>
           <button
             type="button"
             class="cta commit-push-button"
             :disabled="!canCommit"
+            :title="t('git.commitAndPush')"
+            :aria-label="t('git.commitAndPush')"
             @click.stop="doCommitAndPush"
           >
-            {{ t("git.commitAndPush") }}
+            <ArrowUp class="commit-action-icon" :size="15" aria-hidden="true" />
+            <span class="commit-action-label">{{ t("git.commitAndPush") }}</span>
           </button>
         </div>
       </div>
@@ -650,6 +657,7 @@ function onCommitKeydown(event: KeyboardEvent) {
   display: flex;
   flex-direction: column;
   position: relative;
+  container-type: inline-size;
 }
 
 .header {
@@ -1128,9 +1136,38 @@ function onCommitKeydown(event: KeyboardEvent) {
   white-space: nowrap;
 }
 
+.commit-action-icon {
+  display: none;
+  flex-shrink: 0;
+}
+
 .commit-push-button {
   background: var(--success);
   color: var(--accent-fg);
+}
+
+/* 侧栏较窄时保留操作能力，用图标和原生悬浮提示节省空间 */
+@container (max-width: 320px) {
+  .commit-actions {
+    gap: 6px;
+  }
+
+  .commit-actions .cta {
+    flex: 0 0 32px;
+    width: 32px;
+    min-width: 32px;
+    height: 30px;
+    padding: 0;
+    gap: 0;
+  }
+
+  .commit-action-icon {
+    display: block;
+  }
+
+  .commit-action-label {
+    display: none;
+  }
 }
 
 .ctx {

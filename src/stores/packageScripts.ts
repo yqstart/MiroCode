@@ -6,12 +6,29 @@ import {
   type PackageManager,
   type PackageScriptItem,
 } from "@/shared/packageScripts";
+import {
+  loadCustomScriptsForRoot,
+  setCustomScriptsForRoot,
+  type CustomScriptItem,
+} from "@/shared/customScripts";
 import { loadPinnedForRoot, setPinnedForRoot } from "@/shared/pinnedScripts";
 import { useSessionsStore } from "@/stores/sessions";
 import { useWorkspaceStore } from "@/stores/workspace";
 
+export interface PackageScriptListItem extends PackageScriptItem {
+  custom: boolean;
+}
+
+export type SaveCustomScriptResult =
+  | "saved"
+  | "emptyName"
+  | "emptyCommand"
+  | "duplicate"
+  | "noWorkspace";
+
 export const usePackageScriptsStore = defineStore("packageScripts", () => {
   const scripts = ref<PackageScriptItem[]>([]);
+  const customScripts = ref<CustomScriptItem[]>([]);
   const manager = ref<PackageManager>("npm");
   const packageName = ref<string | null>(null);
   const loading = ref(false);
@@ -22,13 +39,16 @@ export const usePackageScriptsStore = defineStore("packageScripts", () => {
   /** 防止同一脚本在刷新/打开终端期间被重复触发。 */
   const running = new Set<string>();
 
-  const available = computed(
-    () => hasPackageJson.value && scripts.value.length > 0,
-  );
+  const allScripts = computed<PackageScriptListItem[]>(() => [
+    ...scripts.value.map((item) => ({ ...item, custom: false })),
+    ...customScripts.value.map((item) => ({ ...item, custom: true })),
+  ]);
+
+  const available = computed(() => allScripts.value.length > 0);
 
   /** 勾选子集（渲染终端顶栏芯片）；脚本被删的孤儿名自动过滤 */
   const pinnedScripts = computed(() =>
-    scripts.value.filter((s) => pinned.value.includes(s.name)),
+    allScripts.value.filter((s) => pinned.value.includes(s.name)),
   );
 
   async function refresh(force = false) {
@@ -40,6 +60,7 @@ export const usePackageScriptsStore = defineStore("packageScripts", () => {
       hasPackageJson.value = false;
       loadedRoot.value = null;
       pinned.value = [];
+      customScripts.value = [];
       return;
     }
     if (!force && loadedRoot.value === root && !loading.value) return;
@@ -50,11 +71,13 @@ export const usePackageScriptsStore = defineStore("packageScripts", () => {
       // 等待期间已切换工作区：旧项目结果作废，不得覆盖新项目的脚本芯片
       if (workspace.rootPath !== root) return;
       loadedRoot.value = root;
+      customScripts.value = loadCustomScriptsForRoot(root);
       pinned.value = loadPinnedForRoot(root);
       if (!info) {
         scripts.value = [];
         packageName.value = null;
         hasPackageJson.value = false;
+        manager.value = "npm";
         return;
       }
       hasPackageJson.value = true;
@@ -69,10 +92,51 @@ export const usePackageScriptsStore = defineStore("packageScripts", () => {
 
   function clear() {
     scripts.value = [];
+    customScripts.value = [];
     packageName.value = null;
     hasPackageJson.value = false;
+    manager.value = "npm";
     loadedRoot.value = null;
     pinned.value = [];
+  }
+
+  /** 添加自定义脚本并按当前工作区落盘，不改写项目 package.json。 */
+  function saveCustomScript(name: string, command: string): SaveCustomScriptResult {
+    const workspace = useWorkspaceStore();
+    const root = workspace.rootPath;
+    if (!root) return "noWorkspace";
+
+    const normalizedName = name.trim();
+    const normalizedCommand = command.trim();
+    if (!normalizedName) return "emptyName";
+    if (!normalizedCommand) return "emptyCommand";
+    if (allScripts.value.some((item) => item.name === normalizedName)) {
+      return "duplicate";
+    }
+
+    customScripts.value = [
+      ...customScripts.value,
+      { name: normalizedName, script: normalizedCommand },
+    ];
+    setCustomScriptsForRoot(root, customScripts.value);
+    return "saved";
+  }
+
+  /** 删除自定义脚本，同时清理它在终端顶栏的快捷执行勾选。 */
+  function deleteCustomScript(name: string): boolean {
+    const workspace = useWorkspaceStore();
+    const root = workspace.rootPath;
+    if (!root) return false;
+    const next = customScripts.value.filter((item) => item.name !== name);
+    if (next.length === customScripts.value.length) return false;
+
+    customScripts.value = next;
+    setCustomScriptsForRoot(root, next);
+    if (pinned.value.includes(name)) {
+      pinned.value = pinned.value.filter((item) => item !== name);
+      setPinnedForRoot(root, pinned.value);
+    }
+    return true;
   }
 
   /** 勾选 / 取消勾选「展示到终端顶栏」，立即持久化（按项目） */
@@ -87,23 +151,25 @@ export const usePackageScriptsStore = defineStore("packageScripts", () => {
   }
 
   /** 打开本地终端并注入 `xxx run script` */
-  async function runScript(name: string) {
+  async function runScript(name: string, custom = false) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) {
       workspace.showNotice("请先打开项目");
       return;
     }
-    const key = `${workspace.rootPath}:${name}`;
+    const key = `${workspace.rootPath}:${custom ? "custom" : "package"}:${name}`;
     if (running.has(key)) return;
     running.add(key);
     try {
       await refresh();
-      const hit = scripts.value.find((s) => s.name === name);
+      const hit = custom
+        ? customScripts.value.find((s) => s.name === name)
+        : scripts.value.find((s) => s.name === name);
       if (!hit) {
         workspace.showNotice(`未找到脚本 ${name}`);
         return;
       }
-      const command = formatRunCommand(manager.value, name);
+      const command = custom ? hit.script : formatRunCommand(manager.value, name);
       useSessionsStore().runInLocalTerminal(command, workspace.rootPath);
     } finally {
       running.delete(key);
@@ -112,6 +178,8 @@ export const usePackageScriptsStore = defineStore("packageScripts", () => {
 
   return {
     scripts,
+    customScripts,
+    allScripts,
     manager,
     packageName,
     loading,
@@ -121,6 +189,8 @@ export const usePackageScriptsStore = defineStore("packageScripts", () => {
     pinnedScripts,
     refresh,
     clear,
+    saveCustomScript,
+    deleteCustomScript,
     togglePinned,
     runScript,
   };

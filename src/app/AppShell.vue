@@ -69,6 +69,7 @@ let appQuitting = false;
 let lastTerminalToggleAt = 0;
 let lastSidebarToggleAt = 0;
 let lastCommitToggleAt = 0;
+let pendingCommitChordTimer: number | null = null;
 
 function toggleTerminal() {
   const now = Date.now();
@@ -124,6 +125,25 @@ function handleMenuAction(action: string) {
 
 function onKeydown(event: KeyboardEvent) {
   const mod = event.metaKey || event.ctrlKey;
+  // 编辑器的 ⌘K ⌘F 是 CodeMirror chord。⌘K 单独仍保留 Commit 面板命令，
+  // 但要延迟一小段时间，避免在 chord 第一笔就被窗口级快捷键抢走。
+  if (pendingCommitChordTimer !== null) {
+    window.clearTimeout(pendingCommitChordTimer);
+    pendingCommitChordTimer = null;
+  }
+  if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "k") {
+    if (isEditorTarget(event.target)) {
+      if (!event.defaultPrevented) event.preventDefault();
+      pendingCommitChordTimer = window.setTimeout(() => {
+        pendingCommitChordTimer = null;
+        if (isEditorTarget(document.activeElement)) toggleCommitPanel();
+      }, 800);
+      return;
+    }
+    event.preventDefault();
+    toggleCommitPanel();
+    return;
+  }
   if (mod && event.key === ",") {
     event.preventDefault();
     ui.toggleSettings();
@@ -170,12 +190,6 @@ function onKeydown(event: KeyboardEvent) {
     toggleSidebar();
     return;
   }
-  // ⌘K：打开 / 隐藏左侧 Commit（WebStorm New UI）
-  if (mod && !event.shiftKey && event.key.toLowerCase() === "k") {
-    event.preventDefault();
-    toggleCommitPanel();
-    return;
-  }
   // Alt+F1：在资源管理器中定位当前文件（对齐 WebStorm）
   if (event.altKey && !mod && event.key === "F1") {
     event.preventDefault();
@@ -218,6 +232,11 @@ function onKeydown(event: KeyboardEvent) {
       ui.closeSettings();
     }
   }
+}
+
+/** 判断快捷键事件是否来自 CodeMirror 编辑区（不把普通输入框算入 chord）。 */
+function isEditorTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest(".cm-content, .cm-editor"));
 }
 
 /** 命中输入控件时跳过文本编辑类快捷键 */
@@ -364,6 +383,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (pendingCommitChordTimer !== null) {
+    window.clearTimeout(pendingCommitChordTimer);
+    pendingCommitChordTimer = null;
+  }
   window.removeEventListener("keydown", onKeydown);
   window.removeEventListener("focus", onWindowFocus);
   window.removeEventListener("beforeunload", onBeforeUnload);

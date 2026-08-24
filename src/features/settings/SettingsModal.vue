@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { Check, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
+import { EDITOR_SHORTCUTS } from "@/features/editor/keymap";
 import { THEME_LABELS } from "@/features/editor/theme";
 import { checkForAppUpdate, getAppVersion } from "@/shared/appUpdate";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
@@ -61,17 +62,17 @@ const shortcutRows = computed(() => [
     action: t("settings.shortcutFindInFiles"),
   },
   { keys: formatShortcut("mod", "S"), action: t("settings.shortcutSave") },
-  {
-    keys: formatShortcut("shift", "alt", "F"),
-    action: t("settings.shortcutFormat"),
-  },
   { keys: formatShortcut("mod", ","), action: t("settings.shortcutSettings") },
   { keys: formatShortcut("mod", "Space"), action: t("settings.shortcutComplete") },
-  { keys: formatShortcut("mod", "Enter"), action: t("settings.shortcutGoToDef") },
-  { keys: formatShortcut("mod", "["), action: t("settings.shortcutGoBack") },
   { keys: formatShortcut("alt", "F1"), action: t("settings.shortcutReveal") },
   { keys: formatShortcut("mod", "J"), action: t("settings.shortcutTerminal") },
   { keys: formatShortcut("mod", "B"), action: t("settings.shortcutSidebar") },
+  ...EDITOR_SHORTCUTS.map((shortcut) => ({
+    keys: shortcut.strokes
+      .map((stroke) => formatShortcut(...stroke))
+      .join(" "),
+    action: t(shortcut.labelKey),
+  })),
 ]);
 
 const activeThemeLabel = computed(() => THEME_LABELS[theme.value]);

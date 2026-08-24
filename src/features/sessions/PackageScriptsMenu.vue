@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Play, RefreshCw } from "lucide-vue-next";
+import { nextTick, ref } from "vue";
+import { Check, Play, Plus, RefreshCw, Trash2, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { useI18n } from "@/i18n";
 import { usePackageScriptsStore } from "@/stores/packageScripts";
@@ -15,16 +16,56 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const pkg = usePackageScriptsStore();
-const { scripts, pinned, pinnedScripts, manager, packageName, loading, hasPackageJson } =
-  storeToRefs(pkg);
+const {
+  allScripts,
+  pinned,
+  pinnedScripts,
+  manager,
+  packageName,
+  loading,
+  hasPackageJson,
+} = storeToRefs(pkg);
 
-async function onRun(name: string) {
-  await pkg.runScript(name);
+const adding = ref(false);
+const customName = ref("");
+const customCommand = ref("");
+const customError = ref("");
+const nameInput = ref<HTMLInputElement | null>(null);
+
+async function onRun(name: string, custom = false) {
+  await pkg.runScript(name, custom);
   emit("ran");
 }
 
 async function onRefresh() {
   await pkg.refresh(true);
+}
+
+async function onStartAdd() {
+  adding.value = true;
+  customError.value = "";
+  await nextTick();
+  nameInput.value?.focus();
+}
+
+function onCancelAdd() {
+  adding.value = false;
+  customName.value = "";
+  customCommand.value = "";
+  customError.value = "";
+}
+
+function onSaveCustom() {
+  const result = pkg.saveCustomScript(customName.value, customCommand.value);
+  if (result === "saved") {
+    onCancelAdd();
+    return;
+  }
+  customError.value = t(`packageScripts.${result}`);
+}
+
+function onDeleteCustom(name: string) {
+  pkg.deleteCustomScript(name);
 }
 </script>
 
@@ -36,30 +77,89 @@ async function onRefresh() {
         <span v-if="packageName" class="pkg">{{ packageName }}</span>
         <span v-if="hasPackageJson" class="pm">{{ manager }}</span>
       </div>
-      <button
-        type="button"
-        class="icon-btn"
-        :title="t('packageScripts.refresh')"
-        :disabled="loading"
-        @click="onRefresh"
-      >
-        <RefreshCw :size="13" :class="{ spin: loading }" />
-      </button>
+      <div class="head-actions">
+        <button
+          v-if="props.variant !== 'compact'"
+          type="button"
+          class="icon-btn"
+          :title="t('packageScripts.addCustom')"
+          @click="onStartAdd"
+        >
+          <Plus :size="14" />
+        </button>
+        <button
+          type="button"
+          class="icon-btn"
+          :title="t('packageScripts.refresh')"
+          :disabled="loading"
+          @click="onRefresh"
+        >
+          <RefreshCw :size="13" :class="{ spin: loading }" />
+        </button>
+      </div>
     </header>
 
-    <div v-if="loading && !scripts.length" class="hint">{{ t("packageScripts.loading") }}</div>
-    <div v-else-if="!hasPackageJson" class="hint">{{ t("packageScripts.noPackageJson") }}</div>
-    <div v-else-if="!scripts.length" class="hint">{{ t("packageScripts.noScripts") }}</div>
+    <form v-if="adding && props.variant !== 'compact'" class="custom-form" @submit.prevent="onSaveCustom">
+      <div class="custom-fields">
+        <input
+          ref="nameInput"
+          v-model="customName"
+          class="custom-input"
+          type="text"
+          autocomplete="off"
+          :placeholder="t('packageScripts.customNamePlaceholder')"
+          @keydown.esc="onCancelAdd"
+        />
+        <input
+          v-model="customCommand"
+          class="custom-input"
+          type="text"
+          autocomplete="off"
+          :placeholder="t('packageScripts.customCommandPlaceholder')"
+          @keydown.esc="onCancelAdd"
+        />
+      </div>
+      <div class="custom-form-foot">
+        <span v-if="customError" class="custom-error">{{ customError }}</span>
+        <span class="custom-form-actions">
+          <button
+            type="button"
+            class="form-btn"
+            :title="t('packageScripts.cancelCustom')"
+            @click="onCancelAdd"
+          >
+            <X :size="13" />
+          </button>
+          <button
+            type="submit"
+            class="form-btn primary"
+            :title="t('packageScripts.saveCustom')"
+            :disabled="!customName.trim() || !customCommand.trim()"
+          >
+            <Check :size="13" />
+          </button>
+        </span>
+      </div>
+    </form>
+
+    <div v-if="loading && !allScripts.length" class="hint">{{ t("packageScripts.loading") }}</div>
+    <div v-else-if="!allScripts.length && !hasPackageJson" class="hint">{{ t("packageScripts.noPackageJson") }}</div>
+    <div v-else-if="!allScripts.length" class="hint">{{ t("packageScripts.noScripts") }}</div>
     <div v-else class="list">
-      <button
-        v-for="item in props.variant === 'compact' ? pinnedScripts : scripts"
-        :key="item.name"
-        type="button"
+      <div
+        v-for="item in props.variant === 'compact' ? pinnedScripts : allScripts"
+        :key="`${item.custom ? 'custom' : 'package'}:${item.name}`"
         class="row"
-        :title="item.script"
-        @click="onRun(item.name)"
+        :class="{ custom: item.custom }"
       >
-        <Play :size="12" class="play" />
+        <button
+          type="button"
+          class="play-btn"
+          :title="t('packageScripts.run', { name: item.name })"
+          @click="onRun(item.name, item.custom)"
+        >
+          <Play :size="12" class="play" />
+        </button>
         <input
           v-if="props.variant !== 'compact'"
           type="checkbox"
@@ -67,12 +167,31 @@ async function onRefresh() {
           :checked="pinned.includes(item.name)"
           :title="t('packageScripts.pinToTerminal')"
           :aria-label="t('packageScripts.pinToTerminal')"
-          @click.stop
           @change="pkg.togglePinned(item.name)"
         />
-        <span class="name">{{ item.name }}</span>
-        <span class="cmd">{{ item.script }}</span>
-      </button>
+        <button
+          type="button"
+          class="run-main"
+          :title="item.script"
+          @click="onRun(item.name, item.custom)"
+        >
+          <span class="name-wrap">
+            <span class="name">{{ item.name }}</span>
+            <span v-if="item.custom" class="custom-mark">{{ t("packageScripts.custom") }}</span>
+          </span>
+          <span class="cmd">{{ item.script }}</span>
+        </button>
+        <button
+          v-if="props.variant !== 'compact' && item.custom"
+          type="button"
+          class="delete-btn"
+          :title="t('packageScripts.deleteCustom')"
+          :aria-label="t('packageScripts.deleteCustom')"
+          @click="onDeleteCustom(item.name)"
+        >
+          <Trash2 :size="13" />
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -105,6 +224,13 @@ async function onRefresh() {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .pkg {
@@ -159,6 +285,87 @@ async function onRefresh() {
   color: var(--text-muted);
 }
 
+.custom-form {
+  display: grid;
+  gap: 6px;
+  margin: 8px 10px 4px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-app) 55%, transparent);
+}
+
+.custom-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+  gap: 6px;
+}
+
+.custom-input {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  outline: none;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.custom-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.custom-form-foot {
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.custom-error {
+  min-width: 0;
+  color: var(--danger);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.custom-form-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.form-btn,
+.delete-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 5px;
+  color: var(--text-muted);
+}
+
+.form-btn:hover {
+  color: var(--text-primary);
+  background: var(--accent-soft);
+}
+
+.form-btn.primary {
+  color: var(--accent);
+}
+
+.form-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .list {
   display: flex;
   flex-direction: column;
@@ -171,22 +378,33 @@ async function onRefresh() {
 .row {
   width: 100%;
   display: grid;
-  grid-template-columns: 16px 16px minmax(72px, auto) 1fr;
+  grid-template-columns: 16px 16px minmax(72px, auto) minmax(0, 1fr) 24px;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
   border-radius: 8px;
-  text-align: left;
-  color: var(--text-primary);
 }
 
 .row:hover {
   background: var(--accent-soft);
 }
 
-.play {
+.play-btn {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 20px;
+  border-radius: 4px;
   color: var(--accent);
   flex-shrink: 0;
+}
+
+.play-btn:hover {
+  background: var(--accent-soft);
+}
+
+.play {
+  display: block;
 }
 
 /* 勾选「展示到终端顶栏」 */
@@ -198,10 +416,48 @@ async function onRefresh() {
   cursor: pointer;
 }
 
+.run-main {
+  grid-column: 3 / 5;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  text-align: left;
+  color: var(--text-primary);
+}
+
+.run-main:hover .name {
+  color: var(--accent);
+}
+
+.name-wrap {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 600;
   font-family: var(--font-mono);
+}
+
+.custom-mark {
+  flex-shrink: 0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 9px;
+  font-family: var(--font-ui);
+  font-weight: 500;
 }
 
 .cmd {
@@ -211,6 +467,16 @@ async function onRefresh() {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
+}
+
+.delete-btn {
+  grid-column: 5;
+  color: var(--text-muted);
+}
+
+.delete-btn:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 
 /* 终端顶栏：横向滚动芯片 */
@@ -255,12 +521,24 @@ async function onRefresh() {
 
 .scripts[data-variant="compact"] .row {
   width: auto;
-  display: inline-flex;
-  grid-template-columns: none;
+  grid-template-columns: 16px minmax(0, auto);
   padding: 4px 8px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-app);
   white-space: nowrap;
+}
+
+.scripts[data-variant="compact"] .play-btn {
+  grid-column: 1;
+}
+
+.scripts[data-variant="compact"] .run-main {
+  grid-column: 2;
+  display: block;
+}
+
+.scripts[data-variant="compact"] .name-wrap {
+  display: inline-flex;
 }
 
 .scripts[data-variant="compact"] .cmd {

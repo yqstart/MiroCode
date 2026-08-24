@@ -221,11 +221,24 @@ function uiTheme(palette: ThemePalette): Extension {
         color: palette.gutterFg,
         border: "none",
         borderRight: "1px solid var(--border-subtle)",
+        padding: "0",
       },
-      /* 折叠箭头默认紧贴 gutter 左缘（@codemirror/language 只给 span 1px padding），
-         加左内边距让箭头略向右移，与行号视觉对齐 */
+      /* 主编辑器侧栏（gutter）按内容收缩，避免行号与折叠区在窄窗口里留下大块空白。 */
+      ".cm-foldGutter": {
+        width: "18px",
+      },
       ".cm-foldGutter .cm-gutterElement": {
-        paddingLeft: "6px",
+        width: "100%",
+        padding: "0 2px 0 4px",
+      },
+      ".cm-lineNumbers": {
+        width: "max-content",
+        minWidth: "0",
+      },
+      ".cm-lineNumbers .cm-gutterElement": {
+        minWidth: "0",
+        padding: "0 5px 0 3px",
+        fontVariantNumeric: "tabular-nums",
       },
       ".cm-activeLine": {
         backgroundColor: palette.activeLine,

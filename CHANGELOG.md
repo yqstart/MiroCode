@@ -6,6 +6,20 @@
 
 后续改动将在这里记录。
 
+## [0.1.3] - 2026-08-24
+
+### 新增
+
+- 新增编辑器 F8 / Shift+F8 诊断导航，以及 `⌘K ⌘F`（Windows/Linux 为 `Ctrl+K Ctrl+F`）单一选区格式化。
+- 新增按工作区隔离的自定义终端指令，可与 `package.json` scripts 一起运行并固定到终端顶栏。
+
+### 改进
+
+- 收敛编辑器应用命令与 CodeMirror 原生 keymap 的优先级，保留多光标、行操作、注释、折叠、查找选择等高频能力；跳转无目标时回退到原生编辑行为。
+- 选区格式化支持项目 Prettier 与内置 Prettier，选区外内容保持不变，并作为一次历史操作提交以支持立即撤销。
+- 扩充设置页与使用说明中的编辑器快捷键清单，修复 `⌘K` 提交面板与选区格式化连续快捷键的冲突。
+- 终端标签显示最近执行的命令并限制过长标题；优化窄侧栏提交操作、侧栏拖拽和 macOS 新窗口首次点击体验。
+
 ## [0.1.2] - 2026-08-24
 
 ### 修复
@@ -42,6 +56,7 @@
 - 保持轻量、跨平台和离线优先，不包含联网 AI 补全、对话面板或 Agent 能力。
 - 移除编辑器 Minimap 及其设置项、Canvas 绘制和点击定位逻辑。
 
+[0.1.3]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.3
 [0.1.2]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.2
 [0.1.1]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.1
 [0.1.0]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.0

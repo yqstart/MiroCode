@@ -359,7 +359,8 @@ export async function findTargetAtPosAsync(
 
 export interface NavigationHandlers {
   onNavigate: (path: string, line: number, column: number) => void;
-  onGoBack: () => void;
+  /** 返回成功时返回 true；没有历史时返回 false，让原生编辑命令继续处理。 */
+  onGoBack: () => boolean;
   workspaceRoot: () => string | null;
   currentFile: () => string;
 }
@@ -534,8 +535,7 @@ export function goBackKeymap(handlers: NavigationHandlers) {
   return {
     key: "Mod-[",
     run() {
-      handlers.onGoBack();
-      return true;
+      return handlers.onGoBack();
     },
   };
 }

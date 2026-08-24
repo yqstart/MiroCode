@@ -15,9 +15,16 @@ let dragging = false;
 let cleanupDrag: (() => void) | null = null;
 
 function onResizeStart(event: MouseEvent) {
+  if (event.button !== 0) return;
+  // 取消浏览器默认文本选区，避免拖动侧栏时选中面板内容
+  event.preventDefault();
   dragging = true;
   const startX = event.clientX;
   const startWidth = layout.value.sidebarWidth;
+  const previousUserSelect = document.body.style.getPropertyValue("user-select");
+  const previousWebkitUserSelect = document.body.style.getPropertyValue(
+    "-webkit-user-select",
+  );
 
   const onMove = (e: MouseEvent) => {
     if (!dragging) return;
@@ -29,12 +36,17 @@ function onResizeStart(event: MouseEvent) {
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseup", onUp);
     document.body.style.cursor = "";
-    document.body.style.userSelect = "";
+    document.body.style.setProperty("user-select", previousUserSelect);
+    document.body.style.setProperty(
+      "-webkit-user-select",
+      previousWebkitUserSelect,
+    );
     cleanupDrag = null;
   };
 
   document.body.style.cursor = "col-resize";
-  document.body.style.userSelect = "none";
+  document.body.style.setProperty("user-select", "none");
+  document.body.style.setProperty("-webkit-user-select", "none");
   window.addEventListener("mousemove", onMove);
   window.addEventListener("mouseup", onUp);
   cleanupDrag = onUp;

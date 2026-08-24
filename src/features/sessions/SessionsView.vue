@@ -31,6 +31,7 @@ function onAddLocal() {
         type="button"
         class="subtab"
         :class="{ active: term.id === activeLocalId }"
+        :title="term.title"
         @click="sessions.activateLocal(term.id)"
       >
         <span>{{ term.title }}</span>
@@ -112,6 +113,15 @@ function onAddLocal() {
   border-radius: 6px;
   color: var(--text-muted);
   font-size: 12px;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.subtab > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .subtab:hover {
@@ -127,6 +137,7 @@ function onAddLocal() {
 .subtab .close {
   width: 16px;
   height: 16px;
+  flex-shrink: 0;
   border-radius: 4px;
   display: grid;
   place-items: center;

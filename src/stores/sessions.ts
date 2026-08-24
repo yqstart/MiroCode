@@ -5,6 +5,7 @@ import {
   saveTerminalSession,
   type TerminalSession,
 } from "@/shared/terminalSession";
+import { summarizeTerminalCommand } from "@/shared/terminalCommand";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 export interface LocalTerminalSession {
@@ -195,8 +196,20 @@ export const useSessionsStore = defineStore("sessions", () => {
 
   function renumberLocalTitles() {
     localTerminals.value.forEach((t, i) => {
-      t.title = `终端 ${i + 1}`;
+      // 只调整仍使用默认名称的标签，最近一次命令名称必须保留。
+      if (/^终端 \d+$/.test(t.title)) {
+        t.title = `终端 ${i + 1}`;
+      }
     });
+  }
+
+  /** 根据最近一次提交到 shell 的命令更新终端标签。 */
+  function setLocalTitle(id: string, command: string) {
+    const terminal = localTerminals.value.find((item) => item.id === id);
+    const title = summarizeTerminalCommand(command);
+    if (!terminal || !title || terminal.title === title) return;
+    terminal.title = title;
+    schedulePersistSession();
   }
 
   function addLocalTerminal(cwd: string | null = null) {
@@ -293,6 +306,7 @@ export const useSessionsStore = defineStore("sessions", () => {
       id = activeLocalId.value;
     }
     if (!id) return;
+    setLocalTitle(id, command);
     focusSessions();
     const data = command.endsWith("\r") || command.endsWith("\n")
       ? command
@@ -337,6 +351,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     resetLocalForWorkspace,
     closeLocalTerminal,
     activateLocal,
+    setLocalTitle,
     setLocalIdle,
     runInLocalTerminal,
     consumePendingLocalWrite,

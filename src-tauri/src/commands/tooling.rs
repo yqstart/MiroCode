@@ -23,11 +23,13 @@ pub async fn format_with_prettier(
     root: String,
     rel_path: String,
     content: String,
+    range_start: Option<usize>,
+    range_end: Option<usize>,
 ) -> Result<String, String> {
     // npx --no-install 首次启动可能联网探测/较慢，wait_with_output 无超时，
     // 放 spawn_blocking + 超时兜底，避免主线程冻结
     let handle = tokio::task::spawn_blocking(move || {
-        format_with_prettier_blocking(&root, &rel_path, &content)
+        format_with_prettier_blocking(&root, &rel_path, &content, range_start, range_end)
     });
     match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
         Ok(Ok(r)) => r,
@@ -40,20 +42,35 @@ fn format_with_prettier_blocking(
     root: &str,
     rel_path: &str,
     content: &str,
+    range_start: Option<usize>,
+    range_end: Option<usize>,
 ) -> Result<String, String> {
     if !Path::new(&root).is_dir() {
         return Err("工作区无效".into());
     }
+    let mut args = vec![
+        "--no-install".to_string(),
+        "prettier".to_string(),
+        "--stdin-filepath".to_string(),
+        rel_path.to_string(),
+    ];
+    if let (Some(start), Some(end)) = (range_start, range_end) {
+        args.extend([
+            "--range-start".to_string(),
+            start.to_string(),
+            "--range-end".to_string(),
+            end.to_string(),
+        ]);
+    }
+
     let mut child = npx_cmd()
-        .args(["--no-install", "prettier", "--stdin-filepath", rel_path])
+        .args(args)
         .current_dir(root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| {
-            format!("无法启动 Prettier（请确认已安装 Node 与项目 prettier）: {e}")
-        })?;
+        .map_err(|e| format!("无法启动 Prettier（请确认已安装 Node 与项目 prettier）: {e}"))?;
 
     if let Some(mut stdin) = child.stdin.take() {
         stdin
