@@ -16,13 +16,17 @@ import {
   type DirEntryInfo,
 } from "@/shared/fs";
 import { validateMoveTarget } from "@/shared/importReferences";
-import { saveBookmark } from "@/shared/securityScoped";
+import {
+  resolveBookmark,
+  saveBookmark,
+} from "@/shared/securityScoped";
 import {
   clearRecentFolders as clearRecentFoldersStorage,
   loadRecentFolders,
   pushRecentFolder,
   removeRecentFolder as removeRecentFolderStorage,
 } from "@/shared/path";
+import { saveWindowSession } from "@/shared/windowSession";
 import { promptInput } from "@/shared/promptDialog";
 import { searchFiles, type FileSearchHit } from "@/shared/searchApi";
 import { useCompareStore } from "@/stores/compare";
@@ -60,6 +64,12 @@ export interface MovePathResult {
   from: string;
   to: string;
   isDir: boolean;
+}
+
+export interface OpenFolderOptions {
+  quiet?: boolean;
+  /** restoreLastFolder 已经在读取目录前激活过书签，避免重复激活。 */
+  bookmarkResolved?: boolean;
 }
 
 /** Toast 操作按钮 */
@@ -369,7 +379,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   async function openFolder(
     path?: string | null,
-    options?: { quiet?: boolean },
+    options?: OpenFolderOptions,
   ): Promise<boolean> {
     try {
       let selected = path;
@@ -383,13 +393,25 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (!selected || Array.isArray(selected)) return false;
 
       const previousRoot = rootPath.value;
-      const isWorkspaceSwitch = previousRoot && previousRoot !== selected;
+      const isWorkspaceSwitch = Boolean(previousRoot && previousRoot !== selected);
+      // 首次打开工作区也要恢复该窗口在此工作区的终端快照；同一工作区
+      // 重新选择时则保留当前编辑器和终端，不做销毁重建。
+      const shouldResetWorkspaceSessions = previousRoot !== selected;
       if (isWorkspaceSwitch) {
         const editor = useEditorStore();
         if (!editor.confirmDiscardForWorkspaceSwitch()) return false;
         // 在 rootPath 改变前先落盘旧工作区的标签/光标/未保存快照，
         // 否则 clearForWorkspaceSwitch 后无法再找回旧会话。
         editor.persistSession(previousRoot);
+        useSessionsStore().persistSession(previousRoot);
+      }
+
+      // 通过最近项目、Dock 菜单、启动恢复或新窗口 URL 进入时，没有经过
+      // NSOpenPanel 的即时授权；先激活已保存的 security-scoped bookmark，
+      // 再访问目录，避免 macOS 把同一项目当成首次访问而重复询问。
+      // 首次打开没有书签时 resolveBookmark 返回 false，继续走原有授权流程。
+      if (!options?.bookmarkResolved) {
+        await resolveBookmark(selected);
       }
 
       // 先把所有会抛错的异步操作（list_dir、reset stores）跑完并吞错。
@@ -430,22 +452,29 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       clipboard.value = null;
       selfWriteUntil.clear();
       recentFolders.value = pushRecentFolder(selected);
+      // 窗口索引与编辑器/终端快照分开保存；同一工作区可同时出现在多个
+      // 窗口中，窗口 ID 由 shared/windowSession 负责隔离。
+      saveWindowSession(selected);
 
-      if (isWorkspaceSwitch) {
-        useEditorStore().clearForWorkspaceSwitch();
-        useCompareStore().clearAll();
+      if (shouldResetWorkspaceSessions) {
+        if (isWorkspaceSwitch) {
+          useEditorStore().clearForWorkspaceSwitch();
+          useCompareStore().clearAll();
+        }
         await safeCall("sessions", () =>
           useSessionsStore().resetLocalForWorkspace(selected),
         );
-        const { useSshStore } = await import("@/stores/ssh");
-        await safeCall("ssh", () => useSshStore().resetForWorkspace());
-        const search = useSearchStore();
-        search.clearResults();
-        search.closeQuickOpen();
-        search.closeFindInFiles();
-        useGitStore().clearForWorkspaceSwitch();
-        const { usePackageScriptsStore } = await import("@/stores/packageScripts");
-        usePackageScriptsStore().clear();
+        if (isWorkspaceSwitch) {
+          const { useSshStore } = await import("@/stores/ssh");
+          await safeCall("ssh", () => useSshStore().resetForWorkspace());
+          const search = useSearchStore();
+          search.clearResults();
+          search.closeQuickOpen();
+          search.closeFindInFiles();
+          useGitStore().clearForWorkspaceSwitch();
+          const { usePackageScriptsStore } = await import("@/stores/packageScripts");
+          usePackageScriptsStore().clear();
+        }
       }
 
       // 工作区状态已提交后再恢复该根目录自己的编辑器会话；恢复失败不影响
@@ -472,7 +501,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       void syncDockMenu();
       // macOS：把刚授权的工作区路径写为 security-scoped bookmark，
       // 下次自动更新后启动可走书签激活，不被 TCC 再问一次。
-      void saveBookmark(selected);
+      // 等待写入完成，避免用户刚打开就重新进入项目时遇到保存竞态。
+      await saveBookmark(selected);
       return true;
     } catch (error) {
       if (!options?.quiet) {
@@ -488,16 +518,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     for (const path of recentFolders.value) {
       // macOS：先 resolve security-scoped bookmark 激活访问权（避免 TCC 弹问）
       // 失败（路径失效）继续尝试下一个；resolve 失败时 helper 会自动清掉旧 bookmark
-      const { resolveBookmark } = await import("@/shared/securityScoped");
       const ok = await resolveBookmark(path);
       if (!ok) continue;
-      try {
-        const exists = await pathExists(path, path);
-        if (!exists) continue;
-      } catch {
-        continue;
-      }
-      const opened = await openFolder(path, { quiet: true });
+      const opened = await openFolder(path, {
+        quiet: true,
+        bookmarkResolved: true,
+      });
       if (opened) return;
     }
   }

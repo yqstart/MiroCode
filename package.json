@@ -1,7 +1,7 @@
 {
   "name": "mirocode",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -16,6 +16,8 @@
     "test:completion": "node --experimental-strip-types scripts/completion-selfcheck.ts && node --experimental-strip-types scripts/completion-service-selfcheck.ts && node --experimental-strip-types scripts/type-service-selfcheck.ts",
     "test:language": "node --experimental-strip-types scripts/language-selfcheck.ts",
     "test:editor-session": "node --experimental-strip-types scripts/editor-session-selfcheck.ts",
+    "test:window-session": "node --experimental-strip-types scripts/window-session-selfcheck.ts",
+    "test:security-scoped": "node --experimental-strip-types scripts/security-scoped-selfcheck.ts",
     "test:terminal-idle": "node --experimental-strip-types scripts/terminal-idle-selfcheck.ts",
     "test:line-diff": "node --experimental-strip-types scripts/line-diff-selfcheck.ts",
     "test:git-graph": "node --experimental-strip-types scripts/git-graph-selfcheck.ts",

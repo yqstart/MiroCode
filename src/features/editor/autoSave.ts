@@ -8,7 +8,12 @@ import { useSessionsStore } from "@/stores/sessions";
  * - 开启时：内容变更后按延迟写盘
  * - 兜底：窗口隐藏 / 关闭前强制落盘（避免延迟未触发就崩溃丢改）
  */
-export function setupAutoSave(): () => void {
+export interface AutoSaveOptions {
+  /** 关闭窗口前保存窗口级编辑器/终端快照。 */
+  beforeClose?: () => void | Promise<void>;
+}
+
+export function setupAutoSave(options: AutoSaveOptions = {}): () => void {
   const settings = useSettingsStore();
   const editor = useEditorStore();
   const sessions = useSessionsStore();
@@ -104,9 +109,14 @@ export function setupAutoSave(): () => void {
         // 避免多个 close handler 同时保存、销毁同一个窗口。
         if (closePromise) return;
         closePromise = (async () => {
+          try {
+            await options.beforeClose?.();
+          } catch {
+            // 会话快照是退出兜底，写入失败不能阻止窗口关闭。
+          }
           // 先卸载本窗口的终端组件，让 PTY kill 尽早发出；常驻终端不能
           // 继续占用运行时线程，否则保存和 destroy 也会被拖住。
-          await sessions.closeSessions();
+          await sessions.closeSessions({ preserveSession: true });
           await nextTick();
           await flushNow();
           closeUnlisten?.();

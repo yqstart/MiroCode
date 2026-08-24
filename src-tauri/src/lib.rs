@@ -1,9 +1,15 @@
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
-    AppHandle, Emitter, Manager, Runtime,
+    AppHandle, Emitter, Manager, RunEvent, Runtime, State,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod commands;
+
+#[derive(Default)]
+struct AppLifecycleState {
+    quitting: AtomicBool,
+}
 
 struct NativeMenuLabels {
     file: &'static str,
@@ -162,6 +168,12 @@ fn set_app_menu_locale(app: AppHandle, locale: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 前端关闭处理器查询应用是否正在整体退出，避免把正常退出前的窗口索引误删。
+#[tauri::command]
+fn is_app_quitting(state: State<'_, AppLifecycleState>) -> bool {
+    state.quitting.load(Ordering::SeqCst)
+}
+
 /// Tauri command：前端 invoke 时重建 Dock 菜单。
 /// 实际逻辑在 `commands/dock_menu::rebuild_dock_menu`（macOS only；
 /// 非 macOS 是 no-op）。catch_unwind 防 NSMenu/NSMenuItem 调用链上的 objc
@@ -226,6 +238,7 @@ pub fn run() {
                 )
                 .build(),
         )
+        .manage(AppLifecycleState::default())
         .manage(commands::ssh::SshState::default())
         .setup(|app| {
             let handle = app.handle();
@@ -272,6 +285,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             set_app_menu_locale,
+            is_app_quitting,
             set_dock_menu,
             commands::fs::list_dir,
             commands::fs::read_text_file,
@@ -362,6 +376,17 @@ pub fn run() {
             // 量化"卡住期间并发 IPC 的最大耗时"。release 构建下函数立即返回错误。
             commands::git::dev_fake_block,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // 让所有 WebView 在应用整体退出前先保存各自的窗口、编辑器和终端
+            // 快照；单独关闭某个窗口不会收到这条应用级通知，因此仍会被移出
+            // 前端窗口索引。
+            if matches!(event, RunEvent::ExitRequested { .. }) {
+                app.state::<AppLifecycleState>()
+                    .quitting
+                    .store(true, Ordering::SeqCst);
+                let _ = app.emit("app://will-exit", ());
+            }
+        });
 }

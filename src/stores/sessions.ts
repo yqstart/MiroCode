@@ -1,5 +1,11 @@
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { defineStore } from "pinia";
+import {
+  loadTerminalSession,
+  saveTerminalSession,
+  type TerminalSession,
+} from "@/shared/terminalSession";
+import { useWorkspaceStore } from "@/stores/workspace";
 
 export interface LocalTerminalSession {
   id: string;
@@ -36,11 +42,62 @@ export const useSessionsStore = defineStore("sessions", () => {
   } | null>(null);
   let seq = 0;
   let writeSeq = 0;
+  let sessionTimer: ReturnType<typeof setTimeout> | null = null;
+  let restoringSession = false;
+  let suppressPersist = false;
 
   const isFocused = computed(() => open.value && focused.value);
   /** 是否应挂载终端面板（显示中或收起保活） */
   const mounted = computed(() => open.value || dormant.value);
   const hasAnySession = computed(() => localTerminals.value.length > 0);
+
+  /** 立即保存当前窗口、当前工作区的终端标签快照。PTY 进程不会跨退出保留。 */
+  function persistSession(root?: string | null) {
+    if (sessionTimer !== null) {
+      clearTimeout(sessionTimer);
+      sessionTimer = null;
+    }
+    if (suppressPersist) return;
+    const sessionRoot = root ?? useWorkspaceStore().rootPath;
+    if (!sessionRoot) return;
+    saveTerminalSession(sessionRoot, {
+      localTerminals: localTerminals.value,
+      activeLocalId: activeLocalId.value,
+      open: open.value,
+      dormant: dormant.value,
+    });
+  }
+
+  function schedulePersistSession() {
+    if (restoringSession || suppressPersist || sessionTimer !== null) return;
+    if (!useWorkspaceStore().rootPath) return;
+    sessionTimer = setTimeout(() => {
+      sessionTimer = null;
+      persistSession();
+    }, 180);
+  }
+
+  function syncSequenceFromIds() {
+    for (const terminal of localTerminals.value) {
+      const match = /^local-(\d+)$/.exec(terminal.id);
+      if (match) seq = Math.max(seq, Number(match[1]));
+    }
+  }
+
+  function restoreSavedSession(saved: TerminalSession) {
+    localTerminals.value = saved.localTerminals.map((terminal) => ({
+      id: terminal.id,
+      title: terminal.title,
+      cwd: terminal.cwd,
+    }));
+    syncSequenceFromIds();
+    activeLocalId.value = saved.activeLocalId;
+    open.value = saved.open;
+    dormant.value = saved.dormant && !saved.open;
+    focused.value = saved.open;
+    localIdle.value = {};
+    pendingLocalWrite.value = null;
+  }
 
   function blurPeers() {
     void import("@/stores/compare").then(({ useCompareStore }) => {
@@ -103,18 +160,36 @@ export const useSessionsStore = defineStore("sessions", () => {
     focused.value = false;
   }
 
-  /** 关闭终端标签：卸载视图并结束保活（PTY 随组件卸载退出） */
-  async function closeSessions(): Promise<boolean> {
-    localTerminals.value = [];
-    activeLocalId.value = null;
-    localIdle.value = {};
-    // 清空待注入命令：目标终端已销毁，残留任务永远无法被消费
-    pendingLocalWrite.value = null;
-    open.value = false;
-    focused.value = false;
-    dormant.value = false;
-    // 等 Vue 卸载 LocalTerminal，确保 PTY kill 已经发出后再返回。
-    await nextTick();
+  /**
+   * 关闭终端标签：卸载视图并结束保活（PTY 随组件卸载退出）。
+   * 应用关闭时传 preserveSession，先保存标签，再清理运行中的 PTY，避免
+   * 清理过程把本次退出前的终端快照覆盖为空。
+   */
+  async function closeSessions(options?: { preserveSession?: boolean }): Promise<boolean> {
+    const root = useWorkspaceStore().rootPath;
+    if (options?.preserveSession) {
+      persistSession(root);
+    }
+
+    suppressPersist = true;
+    try {
+      localTerminals.value = [];
+      activeLocalId.value = null;
+      localIdle.value = {};
+      // 清空待注入命令：目标终端已销毁，残留任务永远无法被消费
+      pendingLocalWrite.value = null;
+      open.value = false;
+      focused.value = false;
+      dormant.value = false;
+      // 等 Vue 卸载 LocalTerminal，确保 PTY kill 已经发出后再返回。
+      await nextTick();
+    } finally {
+      suppressPersist = false;
+    }
+
+    // 用户主动关闭全部终端时，快照也应同步为空；应用关闭前的保留路径
+    // 已在上面保存，不能让清理过程把它覆盖掉。
+    if (!options?.preserveSession) persistSession(root);
     return true;
   }
 
@@ -145,6 +220,13 @@ export const useSessionsStore = defineStore("sessions", () => {
     const keepUiOpen = open.value;
     const wasDormant = dormant.value;
     const hadLocal = localTerminals.value.length > 0;
+    const saved = cwd ? loadTerminalSession(cwd) : null;
+
+    if (sessionTimer !== null) {
+      clearTimeout(sessionTimer);
+      sessionTimer = null;
+    }
+    suppressPersist = true;
     localTerminals.value = [];
     activeLocalId.value = null;
     localIdle.value = {};
@@ -154,13 +236,24 @@ export const useSessionsStore = defineStore("sessions", () => {
 
     // 先卸载旧工作区的终端，再创建新 cwd 的终端，避免切换项目时短暂
     // 同时保留两组 PTY 读/等待任务。
-    await nextTick();
+    restoringSession = true;
+    try {
+      await nextTick();
 
-    if (keepUiOpen || wasDormant || hadLocal) {
-      ensureDefaultLocal(cwd);
-      if (wasDormant && !keepUiOpen) {
-        dormant.value = true;
+      if (saved) {
+        restoreSavedSession(saved);
+      } else if (keepUiOpen || wasDormant || hadLocal) {
+        ensureDefaultLocal(cwd);
+        if (wasDormant && !keepUiOpen) {
+          dormant.value = true;
+        }
       }
+    } finally {
+      restoringSession = false;
+      suppressPersist = false;
+    }
+    if (!saved && (keepUiOpen || wasDormant || hadLocal)) {
+      schedulePersistSession();
     }
   }
 
@@ -217,6 +310,12 @@ export const useSessionsStore = defineStore("sessions", () => {
     }
   }
 
+  watch(
+    [open, dormant, activeLocalId, localTerminals],
+    () => schedulePersistSession(),
+    { deep: true },
+  );
+
   return {
     open,
     focused,
@@ -227,6 +326,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     activeLocalId,
     localIdle,
     pendingLocalWrite,
+    persistSession,
     openSessions,
     hideSessions,
     toggleSessions,

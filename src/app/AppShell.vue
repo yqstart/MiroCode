@@ -27,7 +27,16 @@ import { basename } from "@/shared/fs";
 import { setupAutoSave } from "@/features/editor/autoSave";
 import { checkForAppUpdate } from "@/shared/appUpdate";
 import { isMacOS } from "@/shared/platform";
-import { readBootFolder } from "@/shared/openWorkspace";
+import {
+  openFolderInNewWindow,
+  readBootState,
+} from "@/shared/openWorkspace";
+import {
+  getWindowSessionId,
+  isMainWindowSession,
+  loadWindowSessions,
+  removeWindowSession,
+} from "@/shared/windowSession";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSearchStore } from "@/stores/search";
@@ -39,6 +48,8 @@ import { t } from "@/i18n";
 
 /** macOS 标题栏已挂更新入口；其它平台用右上角浮动徽章 */
 const showFloatingUpdateBadge = !isMacOS();
+const windowSessionId = getWindowSessionId();
+const isPrimaryWindow = isMainWindowSession(windowSessionId);
 
 const ui = useUiStore();
 const workspace = useWorkspaceStore();
@@ -51,7 +62,9 @@ const { settingsOpen } = storeToRefs(ui);
 
 let unlistenMenu: (() => void) | undefined;
 let unlistenDockMenu: (() => void) | undefined;
+let unlistenAppExit: (() => void) | undefined;
 let teardownAutoSave: (() => void) | undefined;
+let appQuitting = false;
 /** 菜单加速键与 window keydown 可能各触发一次，合并为单次切换 */
 let lastTerminalToggleAt = 0;
 let lastSidebarToggleAt = 0;
@@ -223,15 +236,77 @@ function onWindowFocus() {
   void workspace.refreshFromDisk([], { quiet: true });
 }
 
+/** 关闭/退出前同步该窗口当前工作区的文件和终端快照。窗口索引在打开工作区时已写入。 */
+function persistWindowState() {
+  const root = workspace.rootPath;
+  editor.persistSession(root);
+  sessions.persistSession(root);
+}
+
 function onBeforeUnload() {
-  editor.persistSession();
+  persistWindowState();
+}
+
+/** 主进程发出应用退出通知后，各 WebView 先保存，随后关闭处理器才会销毁 PTY。 */
+function onAppWillExit() {
+  appQuitting = true;
+  persistWindowState();
+}
+
+async function isApplicationQuitting(): Promise<boolean> {
+  if (appQuitting) return true;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<boolean>("is_app_quitting");
+  } catch {
+    return appQuitting;
+  }
+}
+
+async function restoreApplicationWindows(bootFolder: string | null) {
+  const savedWindows = isPrimaryWindow ? loadWindowSessions() : [];
+
+  if (bootFolder) {
+    const opened = await workspace.openFolder(bootFolder, { quiet: true });
+    if (!opened && !isPrimaryWindow) {
+      removeWindowSession(windowSessionId);
+    }
+  } else if (isPrimaryWindow) {
+    const mainWindow = savedWindows.find((item) => item.id === "main");
+    let opened = false;
+    if (mainWindow?.root) {
+      opened = await workspace.openFolder(mainWindow.root, { quiet: true });
+    }
+    if (!opened) {
+      await workspace.restoreLastFolder();
+    }
+  }
+
+  // 只有主窗口负责按索引重建其它动态窗口；动态窗口自身只恢复自己的工作区。
+  if (!isPrimaryWindow) return;
+  for (const saved of savedWindows) {
+    if (saved.id === "main" || !saved.root) continue;
+    try {
+      await openFolderInNewWindow(saved.root, { windowId: saved.id });
+    } catch {
+      removeWindowSession(saved.id);
+    }
+  }
 }
 
 onMounted(async () => {
   window.addEventListener("keydown", onKeydown);
   window.addEventListener("focus", onWindowFocus);
   window.addEventListener("beforeunload", onBeforeUnload);
-  teardownAutoSave = setupAutoSave();
+  teardownAutoSave = setupAutoSave({
+    beforeClose: async () => {
+      persistWindowState();
+      // 正常关闭单个窗口时不应在下次启动重新打开；应用整体退出则保留。
+      if (!(await isApplicationQuitting())) {
+        removeWindowSession(windowSessionId);
+      }
+    },
+  });
   // macOS：启动后立即把主窗口拉前（解决自动更新后需手动点 dock 才能前置的问题）。
   // 不能在 Rust setup 闭包里调 NSApp.setActivationPolicy()，会跟 tao 0.35
   // did_finish_launching 内部的 AppState::launched 时序冲突，触发
@@ -242,6 +317,11 @@ onMounted(async () => {
     const win = getCurrentWindow();
     await win.unminimize();
     await win.setFocus();
+  } catch {
+    // 纯 Vite 预览时无 Tauri runtime
+  }
+  try {
+    unlistenAppExit = await listen("app://will-exit", onAppWillExit);
   } catch {
     // 纯 Vite 预览时无 Tauri runtime
   }
@@ -271,12 +351,8 @@ onMounted(async () => {
     // 非 macOS / 纯 Vite 预览时无此事件源
   }
 
-  const bootFolder = readBootFolder();
-  if (bootFolder) {
-    void workspace.openFolder(bootFolder, { quiet: true });
-  } else {
-    void workspace.restoreLastFolder();
-  }
+  const { folder: bootFolder } = readBootState();
+  await restoreApplicationWindows(bootFolder);
 
   if (settings.settings.autoCheckUpdates) {
     window.setTimeout(() => {
@@ -296,6 +372,7 @@ onUnmounted(() => {
   workspace.stopWatch();
   unlistenMenu?.();
   unlistenDockMenu?.();
+  unlistenAppExit?.();
 });
 </script>
 

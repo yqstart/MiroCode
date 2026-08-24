@@ -1,12 +1,15 @@
 /**
  * 编辑器会话恢复。
  *
- * 只按工作区根目录隔离数据，不把会话内容混进应用设置。干净标签只保存
- * 路径/光标/固定状态；有未保存改动的标签额外保存恢复所需的缓冲区快照，
+ * 按窗口 + 工作区根目录隔离数据，不把会话内容混进应用设置。干净标签只
+ * 保存路径/光标/固定状态；有未保存改动的标签额外保存恢复所需的缓冲区快照，
  * 让重启后的恢复行为接近 VS Code 的 hot exit，同时不保存完整项目文件。
  */
 
-const STORAGE_PREFIX = "mirocode.editor-session.v2:";
+import { getWindowSessionId, MAIN_WINDOW_SESSION_ID } from "./windowSession.ts";
+
+const STORAGE_PREFIX = "mirocode.editor-session.v3:";
+const LEGACY_STORAGE_PREFIX = "mirocode.editor-session.v2:";
 const MAX_TABS = 60;
 const MAX_DIRTY_TABS = 12;
 const MAX_CONTENT_CHARS = 1_000_000;
@@ -38,8 +41,12 @@ function isPathInRoot(root: string, path: string): boolean {
   return pathKey === rootKey || pathKey.startsWith(`${rootKey}/`);
 }
 
-function storageKey(root: string): string {
-  return `${STORAGE_PREFIX}${normalizePath(root)}`;
+function storageKey(root: string, windowId: string): string {
+  return `${STORAGE_PREFIX}${encodeURIComponent(windowId)}:${encodeURIComponent(normalizePath(root))}`;
+}
+
+function legacyStorageKey(root: string): string {
+  return `${LEGACY_STORAGE_PREFIX}${normalizePath(root)}`;
 }
 
 function validCursor(value: unknown): value is { line: number; column: number } {
@@ -107,17 +114,28 @@ function parseSession(raw: string, root: string): EditorSession | null {
   }
 }
 
-export function loadEditorSession(root: string): EditorSession | null {
+export function loadEditorSession(
+  root: string,
+  windowId = getWindowSessionId(),
+): EditorSession | null {
   if (!root) return null;
   try {
-    const raw = localStorage.getItem(storageKey(root));
+    const raw =
+      localStorage.getItem(storageKey(root, windowId)) ??
+      (windowId === MAIN_WINDOW_SESSION_ID
+        ? localStorage.getItem(legacyStorageKey(root))
+        : null);
     return raw ? parseSession(raw, root) : null;
   } catch {
     return null;
   }
 }
 
-export function saveEditorSession(root: string, session: EditorSession): void {
+export function saveEditorSession(
+  root: string,
+  session: EditorSession,
+  windowId = getWindowSessionId(),
+): void {
   if (!root) return;
   try {
     const dirtyTabs = session.tabs.filter((tab) => tab.dirty).slice(0, MAX_DIRTY_TABS);
@@ -145,7 +163,7 @@ export function saveEditorSession(root: string, session: EditorSession): void {
       return saved;
     });
     localStorage.setItem(
-      storageKey(root),
+      storageKey(root, windowId),
       JSON.stringify({
         tabs,
         activePath: tabs.some((tab) => tab.path === session.activePath)

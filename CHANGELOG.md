@@ -6,6 +6,17 @@
 
 后续改动将在这里记录。
 
+## [0.1.2] - 2026-08-24
+
+### 修复
+
+- 修复在大量文件变更、且文件所在父目录已被删除时执行全部回滚会报 no such file or directory (os error 2) 的问题。
+
+### 改进
+
+- 改进多窗口工作区、编辑器标签和本地终端会话的退出保存与启动恢复，并按窗口隔离会话状态。
+- 改进 macOS 工作区安全书签的恢复与保存时序，减少重复授权和启动恢复竞态。
+
 ## [0.1.1] - 2026-08-21
 
 ### 修复
@@ -31,5 +42,6 @@
 - 保持轻量、跨平台和离线优先，不包含联网 AI 补全、对话面板或 Agent 能力。
 - 移除编辑器 Minimap 及其设置项、Canvas 绘制和点击定位逻辑。
 
+[0.1.2]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.2
 [0.1.1]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.1
 [0.1.0]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.0

@@ -36,21 +36,47 @@ pub fn normalize(path: &str) -> Result<PathBuf, String> {
 
 pub fn ensure_inside_workspace(root: &Path, target: &Path) -> Result<(), String> {
     let root = fs::canonicalize(root).map_err(|e| format!("工作区无效: {e}"))?;
-    let target_canon = if target.exists() {
-        fs::canonicalize(target).map_err(|e| e.to_string())?
+    // 相对路径按工作区根解析；调用方既有绝对路径，也有
+    // package.json 这类仓库相对路径。
+    let target = if target.is_absolute() {
+        target.to_path_buf()
     } else {
-        let parent = target
-            .parent()
-            .ok_or_else(|| "无效目标路径".to_string())?;
-        let parent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
-        parent.join(target.file_name().ok_or("无效目标路径")?)
+        root.join(target)
     };
 
-    if !target_canon.starts_with(&root) {
-        return Err("禁止访问工作区外的路径".into());
-    }
-    if target.components().any(|c| matches!(c, Component::ParentDir)) {
+    if target
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
         return Err("路径包含非法组件".into());
+    }
+
+    if target.exists() {
+        let target_canon = fs::canonicalize(&target).map_err(|e| e.to_string())?;
+        if !target_canon.starts_with(&root) {
+            return Err("禁止访问工作区外的路径".into());
+        }
+        return Ok(());
+    }
+
+    // 目标可能是 Git 状态中的已删除文件，父目录也可能同时被删除。
+    // 只向上找到最近的现存祖先再 canonicalize，不能直接 canonicalize
+    // target.parent()，否则批量回滚会把正常的缺失路径误报为 os error 2。
+    let mut existing = target.as_path();
+    loop {
+        match fs::symlink_metadata(existing) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                existing = existing
+                    .parent()
+                    .ok_or_else(|| "无效目标路径".to_string())?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let existing_canon = fs::canonicalize(existing).map_err(|e| e.to_string())?;
+    if !existing_canon.starts_with(&root) {
+        return Err("禁止访问工作区外的路径".into());
     }
     Ok(())
 }
@@ -94,4 +120,30 @@ pub fn walk_files(root: &Path, extra_ignores: &[String]) -> Result<Vec<PathBuf>,
         }
     }
     Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_inside_workspace_accepts_missing_nested_target() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path().join("repo");
+        fs::create_dir_all(&root).expect("创建工作区");
+
+        let target = root.join("removed").join("file.txt");
+        assert!(ensure_inside_workspace(&root, &target).is_ok());
+    }
+
+    #[test]
+    fn ensure_inside_workspace_rejects_parent_traversal() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path().join("repo");
+        fs::create_dir_all(&root).expect("创建工作区");
+
+        let target = root.join("..").join("outside.txt");
+        let error = ensure_inside_workspace(&root, &target).expect_err("应拒绝工作区外路径");
+        assert!(error.contains("路径包含非法组件"));
+    }
 }

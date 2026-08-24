@@ -3575,6 +3575,54 @@ mod tests {
         assert_eq!(remote_head, local_head, "远端 main 应指向本地 HEAD");
     }
 
+    #[test]
+    fn discard_many_paths_restores_files_when_parent_directory_is_missing() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+
+        let source_dir = root.join("src").join("generated");
+        std::fs::create_dir_all(&source_dir).expect("创建源目录");
+        for index in 0..128 {
+            std::fs::write(
+                source_dir.join(format!("file-{index}.ts")),
+                format!("export const value{index} = 1;\n"),
+            )
+            .expect("写入源文件");
+        }
+        run_git_ok(root, &["add", "."]);
+        run_git_ok(root, &["commit", "-m", "init"]);
+
+        std::fs::remove_dir_all(&source_dir).expect("删除源目录");
+        let mut options = StatusOptions::new();
+        options
+            .include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .exclude_submodules(true);
+        let repo = Repository::open(root).expect("打开仓库");
+        let statuses = repo.statuses(Some(&mut options)).expect("读取状态");
+        let paths: Vec<String> = statuses
+            .iter()
+            .filter_map(|entry| entry.path().ok().map(str::to_owned))
+            .collect();
+        assert_eq!(paths.len(), 128);
+
+        git_discard_paths_blocking(root.to_string_lossy().to_string(), paths)
+            .expect("批量回滚不应因缺失父目录失败");
+
+        assert_eq!(
+            git_status_blocking(root.to_string_lossy().to_string())
+                .expect("读取回滚后状态")
+                .entries
+                .len(),
+            0
+        );
+        assert!(source_dir.join("file-0.ts").is_file());
+        assert!(source_dir.join("file-127.ts").is_file());
+    }
+
     /// 验证 `try_ssh_agent_with_timeout` 在无 / 假 SSH agent 环境下行为可控：
     /// - 必须在 timeout 之内返回（不会让 IPC worker 无限阻塞）
     /// - 返回值允许三种结果：Ok(Some(cred)) / Ok(None)（超时） / Err（agent 不可用）
