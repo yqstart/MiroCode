@@ -46,6 +46,11 @@ fn enable_traffic_light_first_mouse(button: &objc2_app_kit::NSButton) {
 }
 
 /// 设置 macOS 原生标题栏底色（r/g/b：0–255）。非 macOS 为空操作。
+///
+/// ⚠️ 主线程约定：Tauri 2 所有 command（含同步 command）都 spawn 到 tokio
+/// 异步线程池执行，而 NSWindow/NSView 的 UI 方法与 method swizzle 必须在
+/// 主线程调用。此处统一经 `run_on_main_thread` 切回主线程（与
+/// lib.rs 中 set_dock_menu 同一范式），否则存在崩溃/竞态/布局异常风险。
 #[tauri::command]
 pub fn set_titlebar_background(
     window: WebviewWindow,
@@ -55,9 +60,14 @@ pub fn set_titlebar_background(
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        apply_titlebar_background(&window, r, g, b)?;
-        // 改底色会触发 AppKit 重排，立刻补一次红绿灯位置
-        let _ = apply_traffic_lights(&window);
+        let win = window.clone();
+        window
+            .run_on_main_thread(move || {
+                let _ = apply_titlebar_background(&win, r, g, b);
+                // 改底色会触发 AppKit 重排，立刻补一次红绿灯位置
+                let _ = apply_traffic_lights(&win);
+            })
+            .map_err(|e| format!("无法在主线程更新标题栏底色：{e}"))?;
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -67,11 +77,17 @@ pub fn set_titlebar_background(
 }
 
 /// 将红绿灯垂直居中到 Overlay 标题栏。非 macOS 为空操作。
+/// 主线程约定同 `set_titlebar_background`。
 #[tauri::command]
 pub fn sync_traffic_lights(window: WebviewWindow) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        apply_traffic_lights(&window)?;
+        let win = window.clone();
+        window
+            .run_on_main_thread(move || {
+                let _ = apply_traffic_lights(&win);
+            })
+            .map_err(|e| format!("无法在主线程同步红绿灯：{e}"))?;
     }
     #[cfg(not(target_os = "macos"))]
     {
