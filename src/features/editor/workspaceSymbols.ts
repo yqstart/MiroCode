@@ -51,15 +51,6 @@ async function parseFile(
   }
 }
 
-/** 简化版 LRU：超过上限按 Map 插入顺序淘汰最早的 */
-function evictIfNeeded<K, V>(map: Map<K, V>, max: number): void {
-  while (map.size > max) {
-    const first = map.keys().next().value;
-    if (first === undefined) break;
-    map.delete(first);
-  }
-}
-
 /** 工作区符号索引（单例，全局共享） */
 class WorkspaceSymbolCache {
   /** 文件 → 缓存项（LRU，最近访问在最后） */
@@ -74,34 +65,51 @@ class WorkspaceSymbolCache {
   private readonly MAX_FILE_BYTES = 1_000_000;
   /** 工作区是否已全量扫描（searchSymbols 首次调用时懒构建） */
   private workspaceScanned = false;
+  /** 当前缓存所属工作区根目录；切根时必须清空全部跨文件索引 */
+  private currentRoot: string | null = null;
+  /** 使 clear 后仍在途的旧扫描结果无法回写新缓存 */
+  private generation = 0;
+
+  private ensureWorkspace(root: string): void {
+    if (this.currentRoot === root) return;
+    this.clear();
+    this.currentRoot = root;
+  }
 
   /** 清空全部缓存（工作区根变更时调用） */
   clear(): void {
+    // 递增代际，使 clear 前已发出的 read/list promise 即使返回，也不能
+    // 把旧工作区结果写回新索引。
+    this.generation += 1;
     this.fileCache.clear();
     this.globalIndex.clear();
     this.inflight.clear();
     this.workspaceScanned = false;
+    this.currentRoot = null;
+  }
+
+  /** 从全局聚合索引移除某个文件的全部贡献。 */
+  private removeGlobalPath(path: string): void {
+    for (const [name, list] of this.globalIndex.entries()) {
+      const filtered = list.filter((d) => d.path !== path);
+      if (filtered.length === 0) this.globalIndex.delete(name);
+      else if (filtered.length !== list.length) this.globalIndex.set(name, filtered);
+    }
   }
 
   /** 使单文件缓存失效（编辑保存后调用） */
   invalidate(path: string): void {
-    const entry = this.fileCache.get(path);
-    if (!entry) return;
     this.fileCache.delete(path);
-    // 从 globalIndex 移除该文件贡献的符号
-    if (entry.symbols !== PARSE_FAIL_MARKER) {
-      for (const [name, list] of this.globalIndex.entries()) {
-        const filtered = list.filter((d) => d.path !== path);
-        if (filtered.length === 0) this.globalIndex.delete(name);
-        else if (filtered.length !== list.length) this.globalIndex.set(name, filtered);
-      }
-    }
+    // 即使 fileCache 已被 LRU 淘汰，也要清理可能残留的聚合索引贡献。
+    this.removeGlobalPath(path);
   }
 
   /** 使工作区内所有文件失效（refreshFromDisk / 文件监听触发时调用） */
   invalidateAll(): void {
+    this.generation += 1;
     this.fileCache.clear();
     this.globalIndex.clear();
+    this.inflight.clear();
     this.workspaceScanned = false;
   }
 
@@ -117,6 +125,7 @@ class WorkspaceSymbolCache {
     limit = 16,
   ): Promise<Array<{ name: string; kind: SymbolKind; path: string; line: number }>> {
     if (!root || !prefix) return [];
+    this.ensureWorkspace(root);
     if (!this.workspaceScanned) {
       this.workspaceScanned = true;
       void this.scanWorkspace(root);
@@ -126,11 +135,14 @@ class WorkspaceSymbolCache {
 
   /** 后台全量构建工作区索引（仅首次 searchSymbols 触发，成功后常驻） */
   private async scanWorkspace(root: string): Promise<void> {
+    const generation = this.generation;
     const candidates: string[] = [];
     await collectFiles(root, "", candidates, 4);
+    if (generation !== this.generation) return;
     // 分批并行（避免一次发起过多 IPC；失败单文件容错）
     const BATCH = 12;
     for (let i = 0; i < candidates.length; i += BATCH) {
+      if (generation !== this.generation) return;
       const batch = candidates.slice(i, i + BATCH);
       await Promise.allSettled(batch.map((p) => this.getFileSymbols(root, p)));
     }
@@ -138,6 +150,10 @@ class WorkspaceSymbolCache {
 
   /** 获取单文件符号表（自动构建） */
   async getFileSymbols(root: string, path: string, content?: string): Promise<FileSymbolTable | typeof PARSE_FAIL_MARKER | null> {
+    // 调用方 searchSymbols/findDefinition/findAllReferences 已先绑定 root；
+    // scanWorkspace 的旧代际不能在这里再次 ensureWorkspace，否则它在新
+    // 工作区建立后返回会把新缓存清空。代际检查负责阻止旧结果回写。
+    const generation = this.generation;
     // 已有缓存：用 hash 校验
     if (content !== undefined) {
       const hash = djb2(content);
@@ -177,10 +193,17 @@ class WorkspaceSymbolCache {
         content !== undefined
           ? indexDocumentSymbols(text, path)
           : await parseFile(root, path);
+      if (generation !== this.generation) {
+        // 工作区已切换/全量失效：结果仍可返回给旧调用方，但禁止写入当前缓存。
+        // 不删除新代际可能已经登记的同路径 promise。
+        if (generation === this.generation) this.inflight.delete(path);
+        return symbols;
+      }
       this.fileCache.set(path, { hash, symbols });
       this.touch(path);
-      evictIfNeeded(this.fileCache, this.MAX_FILES);
-      // 合并到 globalIndex（仅成功解析）
+      this.evictFileCacheIfNeeded();
+      // 重新合并前先移除该路径旧贡献，防止 LRU 淘汰/异常路径造成重复。
+      this.removeGlobalPath(path);
       if (symbols !== PARSE_FAIL_MARKER) {
         for (const [name, list] of symbols.entries()) {
           const existing = this.globalIndex.get(name) ?? [];
@@ -190,7 +213,7 @@ class WorkspaceSymbolCache {
           this.globalIndex.set(name, existing);
         }
       }
-      this.inflight.delete(path);
+      if (generation === this.generation) this.inflight.delete(path);
       return symbols;
     })();
     this.inflight.set(path, promise);
@@ -203,6 +226,7 @@ class WorkspaceSymbolCache {
     word: string,
     importerPath: string,
   ): Promise<(DocumentSymbol & { path: string }) | null> {
+    this.ensureWorkspace(root);
     // 1) 看 importer 自己 import 了哪些文件，把这些文件的符号表加载进来
     const candidates = await this.loadImportChain(root, importerPath, 5);
     // 2) 在 globalIndex 查 word
@@ -267,6 +291,7 @@ class WorkspaceSymbolCache {
     sourceContent: string,
     maxDepth = 5,
   ): Promise<Array<{ path: string; line: number; column: number }>> {
+    this.ensureWorkspace(root);
     const result: Array<{ path: string; line: number; column: number }> = [];
     // 1) 同文件内的所有 word 出现
     pushOccurrences(result, sourceFile, sourceContent, word);
@@ -349,6 +374,15 @@ class WorkspaceSymbolCache {
       symbols: this.globalIndex.size,
       inflight: this.inflight.size,
     };
+  }
+
+  /** LRU 淘汰：同步移除 globalIndex 中被淘汰文件的贡献。 */
+  private evictFileCacheIfNeeded(): void {
+    while (this.fileCache.size > this.MAX_FILES) {
+      const first = this.fileCache.keys().next().value;
+      if (first === undefined) break;
+      this.invalidate(first);
+    }
   }
 
   /** LRU touch：把最近访问移到 Map 末尾 */

@@ -34,6 +34,7 @@ import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSearchStore } from "@/stores/search";
 import { useSessionsStore } from "@/stores/sessions";
+import { workspaceSymbols } from "@/features/editor/workspaceSymbols";
 
 const WATCH_IGNORE_NAMES = new Set([
   ".git",
@@ -441,6 +442,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       // 即使后续 reset 全部失败，UI 至少是「打开了」——比「半残状态」更可恢复。
       stopWatch();
       refreshAgain = false;
+      if (previousRoot !== selected) {
+        // workspaceSymbols 是跨编辑器能力共享的单例；切根前递增代际，
+        // 使旧工作区在途扫描即使晚返回也不能污染新索引。
+        workspaceSymbols.clear();
+      }
       workspaceEpoch += 1;
       rootPath.value = selected;
       rootName.value = basename(selected);
