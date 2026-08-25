@@ -59,7 +59,7 @@ function selectPanel(panel: SidePanelId) {
   }
   settings.setActivePanel(panel);
   if (panel === "commit" && workspace.rootPath) {
-    void git.refresh();
+    void git.scheduleRefresh();
   }
 }
 
@@ -67,7 +67,7 @@ function toggleLog() {
   scriptsOpen.value = false;
   gitLog.toggleLog();
   if (gitLog.open && workspace.rootPath) {
-    void git.refresh();
+    void git.scheduleRefresh();
     void git.loadLog(100);
   }
 }

@@ -63,7 +63,7 @@ const canCommit = computed(
 
 onMounted(() => {
   document.addEventListener("mousedown", onDocMouseDown);
-  if (rootPath.value) void git.refresh();
+  if (rootPath.value) void git.scheduleRefresh();
 });
 
 onBeforeUnmount(() => {

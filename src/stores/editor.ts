@@ -623,7 +623,7 @@ export const useEditorStore = defineStore("editor", () => {
       if (!options?.quiet) {
         workspace.showNotice(`已保存 ${tab.name}`);
       }
-      void git.refresh();
+      void git.scheduleRefresh();
     } catch (error) {
       if (!options?.quiet) {
         workspace.showNotice(
@@ -666,7 +666,7 @@ export const useEditorStore = defineStore("editor", () => {
           saved === 1 ? `已保存 ${dirty[0].name}` : `已保存 ${saved} 个文件`,
         );
       }
-      if (workspace.rootPath) void git.refresh();
+      if (workspace.rootPath) void git.scheduleRefresh();
     } catch (error) {
       if (!options?.quiet) {
         workspace.showNotice(

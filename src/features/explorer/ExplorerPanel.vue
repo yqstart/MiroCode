@@ -275,7 +275,7 @@ async function afterMove(result: MovePathResult) {
   } else {
     editor.renameTabPath(result.from, result.to);
   }
-  void git.refresh();
+  void git.scheduleRefresh();
 
   const mode = settings.editor.updateImportsOnMove;
   if (mode === "never" || !rootPath.value) return;
@@ -310,7 +310,7 @@ async function afterMove(result: MovePathResult) {
   );
   if (count > 0) {
     workspace.showNotice(t("moveReferences.applied", { count }));
-    void git.refresh();
+    void git.scheduleRefresh();
   }
 }
 
@@ -335,7 +335,7 @@ function onDocMouseDown(event: MouseEvent) {
 
 onMounted(async () => {
   document.addEventListener("mousedown", onDocMouseDown, true);
-  if (rootPath.value) void git.refresh();
+  if (rootPath.value) void git.scheduleRefresh();
   if (revealTarget.value) {
     await nextTick();
     scrollRowIntoView(revealTarget.value);

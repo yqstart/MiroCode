@@ -437,7 +437,7 @@ onMounted(() => {
     resizeObserver.observe(host.value);
   }
   // 编辑器首次挂载时拉一次 git status，避免刚打开文件右键看不到 git 菜单
-  void git.refresh();
+  void git.scheduleRefresh();
 });
 
 onBeforeUnmount(() => {
@@ -463,7 +463,7 @@ watch(
     switchDocument(newPath, props.content);
     // 切换文件后立刻拉一次 git status，避免刚切换就右键时 statusMap 暂空
     // 看不到「显示 Diff / 回滚变更」菜单项。
-    void git.refresh();
+    void git.scheduleRefresh();
   },
 );
 

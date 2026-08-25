@@ -95,7 +95,7 @@ function toggleCommitPanel() {
     !settings.layout.sidebarCollapsed &&
     workspace.rootPath
   ) {
-    void git.refresh();
+    void git.scheduleRefresh();
   }
 }
 

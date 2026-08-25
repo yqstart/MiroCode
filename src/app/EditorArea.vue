@@ -418,7 +418,7 @@ function onEditorContextMenu(event: MouseEvent) {
   tabCtx.value = null;
   // 右键时主动触发一次 git 刷新，避免 statusMap 暂空导致 git 菜单看不到
   // （refresh 是异步的，菜单立即就显示，状态随后自然补上）
-  void git.refresh();
+  void git.scheduleRefresh();
   const pos = clampMenuPos(event.clientX, event.clientY);
   editorCtx.value = {
     x: pos.x,

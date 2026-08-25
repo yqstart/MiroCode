@@ -104,6 +104,11 @@ export const useGitStore = defineStore("git", () => {
   const remoteInFlight = ref(false);
   let refreshSeq = 0;
   let refreshAgain = false;
+  /** 短时间内的 UI 刷新请求合并为一次五路 IPC，避免文件切换/保存/聚焦
+   * 产生刷新风暴；Git 操作完成后的 await refresh() 仍保持即时语义。 */
+  const REFRESH_DEBOUNCE_MS = 300;
+  let scheduledRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let scheduledRefreshResolvers: Array<() => void> = [];
   /** 日志加载专用序号：与 refreshSeq 解耦。
    *  loadLog 与 refresh 并发时（GitLogPanel ensureLog 的 Promise.all），
    *  refresh 自增 refreshSeq 会把 loadLog 结果系统性作废——面板打开/刷新
@@ -186,6 +191,21 @@ export const useGitStore = defineStore("git", () => {
 
   function selectChange(path: string | null) {
     selectedPath.value = path;
+  }
+
+  function scheduleRefresh(): Promise<void> {
+    return new Promise((resolve) => {
+      scheduledRefreshResolvers.push(resolve);
+      if (scheduledRefreshTimer !== null) clearTimeout(scheduledRefreshTimer);
+      scheduledRefreshTimer = setTimeout(() => {
+        scheduledRefreshTimer = null;
+        const resolvers = scheduledRefreshResolvers;
+        scheduledRefreshResolvers = [];
+        void refresh().finally(() => {
+          for (const done of resolvers) done();
+        });
+      }, REFRESH_DEBOUNCE_MS);
+    });
   }
 
   async function refresh() {
@@ -1406,6 +1426,7 @@ export const useGitStore = defineStore("git", () => {
     setAllChecked,
     selectChange,
     refresh,
+    scheduleRefresh,
     initRepo,
     stage,
     unstage,
