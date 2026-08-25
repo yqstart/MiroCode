@@ -61,13 +61,47 @@ function escapeAttr(s: string): string {
   return s.replace(/[^a-zA-Z0-9_\-.:/?#@!$&'()*+,;=%]/g, "");
 }
 
-/** 危险协议检测：javascript: / vbscript: / data:（data:image 除外）等执行类 URL */
+/** 危险协议检测：javascript: / vbscript: / data:（data:image 除外）等执行类 URL。
+ *  判定前先做 HTML 实体 + percent 解码：浏览器解析 href 属性时会解码
+ *  `&#x73;`/`&#115;`/`&colon;` 等字符引用，`java&#x73;cript:` 点击后即 javascript:，
+ *  必须在解码后的形态上拦截。 */
 function isUnsafeProtocol(href: string | undefined | null): boolean {
   if (!href) return false;
-  const trimmed = href.trim().toLowerCase();
+  const decoded = decodeHrefObfuscation(href);
+  const trimmed = decoded.trim().toLowerCase();
   if (/^(javascript|vbscript)\s*:/.test(trimmed)) return true;
   if (trimmed.startsWith("data:") && !trimmed.startsWith("data:image/")) return true;
   return false;
+}
+
+/** 解码 href 中的常见混淆：数字/十六进制字符引用（含无分号变体）、
+ *  `&colon;`/`&Tab;`/`&NewLine;` 等命名实体、以及 `%xx` percent 编码。
+ *  另按 WHATWG URL 标准剥离 tab/LF/CR（浏览器解析前会移除，
+ *  `java&#x09;script:` 点击即 javascript:）。decodeURIComponent 对
+ *  非法序列抛错时保留原文（安全方向：不过度解码）。 */
+function decodeHrefObfuscation(href: string): string {
+  let out = href
+    .replace(/&#x([0-9a-f]+);?/gi, (_, hex) => safeFromCodePoint(parseInt(hex, 16)))
+    .replace(/&#([0-9]+);?/g, (_, dec) => safeFromCodePoint(parseInt(dec, 10)))
+    .replace(/&colon;/gi, ":")
+    .replace(/&newline;/gi, "\n")
+    .replace(/&tab;/gi, "\t")
+    .replace(/[\u0000-\u001f\u007f]/g, "");
+  try {
+    out = decodeURIComponent(out);
+  } catch {
+    // 非法 percent 序列：保持已解码形态
+  }
+  return out;
+}
+
+function safeFromCodePoint(code: number): string {
+  if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return "";
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return "";
+  }
 }
 
 // ==================== 对外 API ====================
