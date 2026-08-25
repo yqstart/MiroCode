@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { marked } from "marked";
+import { renderMarkdown } from "@/features/editor/markdown/preview";
 import {
   registerUpdateNotesHandler,
   type UpdateNotesDialogOptions,
@@ -21,7 +21,10 @@ const notesHtml = computed(() => {
   if (!md) {
     return `<p class="empty">${t("update.notesEmpty")}</p>`;
   }
-  return marked.parse(md, { async: false }) as string;
+  // 走 preview.ts 的安全封装（raw HTML 转义 + 危险协议过滤），
+  // 不裸调 marked.parse：notesMarkdown 可能来自 GitHub Release body
+  // （网络不可信输入），裸渲染 = v-html 注入面。
+  return renderMarkdown(md);
 });
 
 function close(action: UpdateNotesAction | null) {
