@@ -1,7 +1,7 @@
 use chrono::{Local, TimeZone};
 use git2::{
     build::CheckoutBuilder, BranchType, Cred, DiffOptions, RemoteCallbacks, Repository, ResetType,
-    Signature, StashFlags, StatusOptions,
+    Signature, StashFlags, Status, StatusOptions,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -475,21 +475,26 @@ fn commit_internal(
     if message.trim().is_empty() {
         return Err("提交说明不能为空".into());
     }
-    // 勾选路径提交（WebStorm Changelist）：仅纳入选中文件，先重置索引再 add
+    // 勾选路径提交（WebStorm Changelist）：仅纳入选中文件，先重置索引再 add。
+    // 合并冲突解决中（MERGE_HEAD 存在）时跳过 reset：合并结果在 index 里，
+    // reset 会把已解决的冲突与合并内容一并清掉。
+    let merging = read_merge_head(&root)?.is_some();
     if let Some(ref paths) = paths {
         if paths.is_empty() {
             return Err("请至少勾选一个文件再提交".into());
         }
-        match repo.head() {
-            Ok(head) => {
-                let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
-                repo.reset(commit.as_object(), ResetType::Mixed, None)
-                    .map_err(|e| e.to_string())?;
-            }
-            Err(_) => {
-                let mut index = repo.index().map_err(|e| e.to_string())?;
-                index.clear().map_err(|e| e.to_string())?;
-                index.write().map_err(|e| e.to_string())?;
+        if !merging {
+            match repo.head() {
+                Ok(head) => {
+                    let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+                    repo.reset(commit.as_object(), ResetType::Mixed, None)
+                        .map_err(|e| e.to_string())?;
+                }
+                Err(_) => {
+                    let mut index = repo.index().map_err(|e| e.to_string())?;
+                    index.clear().map_err(|e| e.to_string())?;
+                    index.write().map_err(|e| e.to_string())?;
+                }
             }
         }
         index_add(&repo, paths)?;
@@ -516,6 +521,10 @@ fn commit_internal(
                 let mut ps = vec![head_commit];
                 if let Some(oid) = extra_parent {
                     ps.push(repo.find_commit(oid).map_err(|e| e.to_string())?);
+                } else if let Some(merge_oid) = read_merge_head(&root)? {
+                    // 冲突解决后的提交：把 MERGE_HEAD 记录的被合并分支作为第二父，
+                    // 保持合并拓扑（否则该分支变更重复应用，再次 merge 会凭空冲突）
+                    ps.push(repo.find_commit(merge_oid).map_err(|e| e.to_string())?);
                 }
                 ps
             }
@@ -539,7 +548,28 @@ fn commit_internal(
             &parent_refs,
         )
         .map_err(|e| e.to_string())?;
+    // 合并提交落库后清掉 MERGE_HEAD/MERGE_MSG（对齐 git commit 结束合并的行为）
+    if let Ok(dir) = git_dir(&root) {
+        let _ = std::fs::remove_file(dir.join("MERGE_HEAD"));
+        let _ = std::fs::remove_file(dir.join("MERGE_MSG"));
+    }
     Ok(oid.to_string())
+}
+
+/// 读取 .git/MERGE_HEAD（存在且可解析为提交时返回 Some(oid)）。
+fn read_merge_head(root: &str) -> Result<Option<git2::Oid>, String> {
+    let dir = git_dir(root)?;
+    let path = dir.join("MERGE_HEAD");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("读取 MERGE_HEAD 失败: {e}"))?;
+    let oid = content
+        .trim()
+        .parse::<git2::Oid>()
+        .map_err(|e| format!("MERGE_HEAD 内容无效: {e}"))?;
+    Ok(Some(oid))
 }
 
 #[tauri::command]
@@ -1859,7 +1889,19 @@ fn git_pull_blocking(
     password: Option<String>,
     remember: Option<bool>,
 ) -> Result<String, String> {
+    // 与 merge 一致：进行中的操作并存或本地有未提交改动时拒绝，
+    // 否则 libgit2 的 merge/checkout 会静默覆盖本地修改
+    if is_rebase_in_progress(&root) {
+        return Err("无法拉取：Rebase 正在进行中，请先完成或放弃 Rebase".into());
+    }
+    if git_dir(&root)
+        .map(|d| d.join("MERGE_HEAD").exists())
+        .unwrap_or(false)
+    {
+        return Err("无法拉取：上一次合并尚未完成，请先解决冲突或放弃合并".into());
+    }
     let repo = open_repo(&root)?;
+    ensure_mergeable_worktree(&repo)?;
     let head = repo.head().map_err(|e| e.to_string())?;
     let branch = head.shorthand().map_err(|e| e.to_string())?.to_string();
     let mut remote = repo
@@ -1892,6 +1934,9 @@ fn git_pull_blocking(
         return Ok("已是最新".into());
     }
     if analysis.is_fast_forward() {
+        // 快进：移动 HEAD ref 后再 checkout 同步 index/工作树。
+        // force 在 ensure_mergeable_worktree 已保证工作树干净的前提下是安全的，
+        // 且能补全 index 中缺失的新增文件（safe 模式不会写「index 中不存在」的文件）。
         let refname = format!("refs/heads/{branch}");
         let mut reference = repo.find_reference(&refname).map_err(|e| e.to_string())?;
         reference
@@ -1899,14 +1944,22 @@ fn git_pull_blocking(
             .map_err(|e| e.to_string())?;
         repo.set_head(&refname).map_err(|e| e.to_string())?;
         repo.checkout_head(Some(CheckoutBuilder::default().force()))
-            .map_err(|e| e.to_string())?;
-        return Ok("快进合并完成".into());
+            .map_err(|e| format!("快进拉取后检出工作树失败: {e}"))?;
+        return Ok("快进拉取完成".into());
     }
 
     repo.merge(&[&fetch_commit], None, None)
         .map_err(|e| format!("合并失败: {e}"))?;
     if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
-        return Err("拉取后存在冲突，请在 Git 面板解决".into());
+        // 写 MERGE_HEAD：冲突解决后提交自动带上第二父（拓扑不丢）
+        if let Ok(dir) = git_dir(&root) {
+            let _ = std::fs::write(dir.join("MERGE_HEAD"), format!("{}\n", fetch_commit.id()));
+            let _ = std::fs::write(
+                dir.join("MERGE_MSG"),
+                format!("Merge remote-tracking branch 'origin/{branch}'\n"),
+            );
+        }
+        return Err("拉取后存在冲突，请在 Commit 面板解决".into());
     }
     let msg = format!("Merge remote-tracking branch 'origin/{branch}'");
     // 双亲提交：远端 commit 必须进父链（否则拓扑丢失，重复 pull 出冲突）
@@ -2173,11 +2226,26 @@ pub async fn git_merge_branch(root: String, name: String) -> Result<String, Stri
 fn git_merge_branch_blocking(root: String, name: String) -> Result<String, String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
+    // 与系统 git 一致：存在其它进行中的操作时拒绝合并
+    if is_rebase_in_progress(&root) {
+        return Err("无法合并：Rebase 正在进行中，请先完成或放弃 Rebase".into());
+    }
+    if git_dir(&root)
+        .map(|d| d.join("MERGE_HEAD").exists())
+        .unwrap_or(false)
+    {
+        return Err("无法合并：上一次合并尚未完成，请先在 Commit 面板继续或放弃合并".into());
+    }
     let repo = open_repo(&root)?;
+    // libgit2 的 merge 会静默覆盖本地未提交修改（系统 git 会拒绝）。
+    // 合并前必须拦截已跟踪文件的 staged/unstaged 改动，防止合并后用户改动丢失。
+    ensure_mergeable_worktree(&repo)?;
     let branch = repo
         .find_branch(&name, BranchType::Local)
         .or_else(|_| repo.find_branch(&format!("origin/{name}"), BranchType::Remote))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            format!("未找到要合并的分支「{name}」（本地与 origin 均不存在）: {e}")
+        })?;
     let commit = branch.get().peel_to_commit().map_err(|e| e.to_string())?;
     let annotated = repo
         .find_annotated_commit(commit.id())
@@ -2189,6 +2257,10 @@ fn git_merge_branch_blocking(root: String, name: String) -> Result<String, Strin
         return Ok("已是最新，无需合并".into());
     }
     if analysis.is_fast_forward() {
+        // 快进：移动 HEAD ref 后再 checkout 同步 index/工作树。
+        // libgit2 的 merge() 不做 HEAD 移动；force 在 ensure_mergeable_worktree
+        // 已保证工作树干净的前提下是安全的，且能补全 index 中缺失的新增文件
+        // （safe 模式不会写「index 中不存在」的文件）。
         let head_ref = repo.head().map_err(|e| e.to_string())?;
         let refname = head_ref.name().map_err(|e| e.to_string())?.to_string();
         let mut reference = repo.find_reference(&refname).map_err(|e| e.to_string())?;
@@ -2196,15 +2268,25 @@ fn git_merge_branch_blocking(root: String, name: String) -> Result<String, Strin
             .set_target(annotated.id(), "merge fast-forward")
             .map_err(|e| e.to_string())?;
         repo.checkout_head(Some(CheckoutBuilder::default().force()))
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("快进合并后检出工作树失败: {e}"))?;
         return Ok("快进合并完成".into());
     }
     repo.merge(&[&annotated], None, None)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("合并失败: {e}"))?;
     if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
-        return Err("合并产生冲突，请在冲突面板解决".into());
+        // 写入 git 标准 MERGE_HEAD/MERGE_MSG：冲突解决后提交时，把被合并分支
+        // 作为第二父（libgit2 自身不写这些文件。否则合并提交为单亲，拓扑丢失，
+        // 之后再次 merge 同一分支会被判定需要真实合并 → 已应用变更重复应用 → 凭空冲突）
+        if let Ok(dir) = git_dir(&root) {
+            let _ = std::fs::write(dir.join("MERGE_HEAD"), format!("{}\n", commit.id()));
+            let _ = std::fs::write(
+                dir.join("MERGE_MSG"),
+                format!("Merge branch '{name}'\n"),
+            );
+        }
+        return Err("合并产生冲突，请在 Commit 面板解决".into());
     }
-    // 双亲提交：被合并分支 commit 必须进父链（否则拓扑丢失，重复 merge 出冲突）
+    // 双亲提交：被合并分支 commit 必须进父链（拓扑正确，重复 merge 判 up-to-date）
     commit_internal(
         root,
         format!("Merge branch '{name}'"),
@@ -2213,6 +2295,60 @@ fn git_merge_branch_blocking(root: String, name: String) -> Result<String, Strin
         Some(commit.id()),
     )?;
     Ok("合并完成".into())
+}
+
+/// 合并前检查：已跟踪文件存在 staged 或 unstaged 改动时拒绝。
+/// libgit2 的 merge/checkout 默认会覆盖本地修改（系统 git 会先拒绝），
+/// 这里前置拦截并把原因说清楚，避免用户改动静默丢失。
+fn ensure_mergeable_worktree(repo: &Repository) -> Result<(), String> {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(false)
+        .include_ignored(false)
+        .recurse_untracked_dirs(false);
+    let statuses = repo.statuses(Some(&mut opts)).map_err(|e| e.to_string())?;
+    for entry in statuses.iter() {
+        let flags = entry.status();
+        if flags.intersects(
+            Status::INDEX_NEW
+                | Status::INDEX_MODIFIED
+                | Status::INDEX_DELETED
+                | Status::INDEX_RENAMED
+                | Status::INDEX_TYPECHANGE
+                | Status::WT_MODIFIED
+                | Status::WT_DELETED
+                | Status::WT_RENAMED
+                | Status::WT_TYPECHANGE,
+        ) {
+            let path = entry.path().unwrap_or("?");
+            return Err(format!(
+                "无法合并：「{path}」有未提交的更改，请先提交或贮藏后再合并"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 放弃进行中的合并（对齐 git merge --abort）：清掉 MERGE_HEAD/MERGE_MSG 并
+/// 将 index 与工作树重置回合并前的 HEAD。
+#[tauri::command]
+pub fn git_merge_abort(root: String) -> Result<String, String> {
+    clear_status_cache();
+    let repo = open_repo(&root)?;
+    let dir = git_dir(&root)?;
+    if !dir.join("MERGE_HEAD").exists() {
+        return Err("当前没有进行中的合并".into());
+    }
+    let head = repo.head().map_err(|e| e.to_string())?;
+    let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+    repo.reset(commit.as_object(), ResetType::Mixed, None)
+        .map_err(|e| format!("放弃合并失败（重置索引）: {e}"))?;
+    // reset --merge 语义：同时把工作树恢复（本地无冲突的改动在合并前已被
+    // ensure_mergeable_worktree 拦截，恢复是安全的）
+    repo.checkout_head(Some(CheckoutBuilder::default().force()))
+        .map_err(|e| format!("放弃合并失败（恢复工作树）: {e}"))?;
+    let _ = std::fs::remove_file(dir.join("MERGE_HEAD"));
+    let _ = std::fs::remove_file(dir.join("MERGE_MSG"));
+    Ok("已放弃合并".into())
 }
 
 #[tauri::command]
@@ -2509,6 +2645,21 @@ fn git_update_project_blocking(
     password: Option<String>,
     remember: Option<bool>,
 ) -> Result<String, String> {
+    // 与 merge/pull 一致：进行中的操作并存或本地有未提交改动时拒绝，
+    // 否则 libgit2 的 merge/checkout 会静默覆盖本地修改
+    if is_rebase_in_progress(&root) {
+        return Err("无法更新：Rebase 正在进行中，请先完成或放弃 Rebase".into());
+    }
+    if git_dir(&root)
+        .map(|d| d.join("MERGE_HEAD").exists())
+        .unwrap_or(false)
+    {
+        return Err("无法更新：上一次合并尚未完成，请先解决冲突或放弃合并".into());
+    }
+    {
+        let repo = open_repo(&root)?;
+        ensure_mergeable_worktree(&repo)?;
+    }
     git_fetch_blocking(
         root.clone(),
         Some("origin".into()),
@@ -2546,6 +2697,9 @@ fn git_update_project_blocking(
                 return Ok("已是最新".into());
             }
             if analysis.is_fast_forward() {
+                // 快进：移动 HEAD ref 后再 checkout 同步 index/工作树。
+                // force 在 ensure_mergeable_worktree 已保证工作树干净的前提下
+                // 是安全的，且能补全 index 中缺失的新增文件。
                 let refname = format!("refs/heads/{branch}");
                 let mut reference = repo.find_reference(&refname).map_err(|e| e.to_string())?;
                 reference
@@ -2553,12 +2707,20 @@ fn git_update_project_blocking(
                     .map_err(|e| e.to_string())?;
                 repo.set_head(&refname).map_err(|e| e.to_string())?;
                 repo.checkout_head(Some(CheckoutBuilder::default().force()))
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("快进更新后检出工作树失败: {e}"))?;
                 return Ok("快进更新完成".into());
             }
             repo.merge(&[&annotated], None, None)
                 .map_err(|e| format!("合并失败: {e}"))?;
             if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
+                // 写 MERGE_HEAD：冲突解决后提交自动带上第二父（拓扑不丢）
+                if let Ok(dir) = git_dir(&root) {
+                    let _ = std::fs::write(dir.join("MERGE_HEAD"), format!("{}\n", commit.id()));
+                    let _ = std::fs::write(
+                        dir.join("MERGE_MSG"),
+                        format!("Merge remote-tracking branch '{upstream_name}'\n"),
+                    );
+                }
                 return Err("更新后存在冲突，请在 Commit 面板解决".into());
             }
             // 双亲提交：远端 commit 必须进父链（否则拓扑丢失，重复 update 出冲突）
@@ -2637,7 +2799,10 @@ pub async fn git_cherry_pick(root: String, commit_id: String) -> Result<String, 
 }
 
 fn git_cherry_pick_blocking(root: String, commit_id: String) -> Result<String, String> {
+    // 与 merge/pull 一致：先拦截本地未提交改动，libgit2 的 cherrypick
+    // 同样可能静默覆盖本地修改
     let repo = open_repo(&root)?;
+    ensure_mergeable_worktree(&repo)?;
     let oid = resolve_commit_oid(&repo, &commit_id)?;
     let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
     repo.cherrypick(&commit, None)
@@ -3520,6 +3685,12 @@ mod tests {
         );
     }
 
+    fn repo_state_is_merging(root: &str) -> bool {
+        git_dir(root)
+            .map(|d| d.join("MERGE_HEAD").exists())
+            .unwrap_or(false)
+    }
+
     #[test]
     fn status_cache_generation_rejects_stale_result() {
         let snapshot = GitStatusSnapshot {
@@ -3868,5 +4039,266 @@ mod tests {
 
         // 等 long_task 收尾
         rt.block_on(async { long_task.await.unwrap() });
+    }
+
+    // ==================== merge 复现测试 ====================
+
+    #[test]
+    fn merge_branch_real_merge_creates_two_parents_and_is_idempotent() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+        std::fs::write(root.join("README.md"), "base\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "init"]);
+
+        // feature 分支提交
+        run_git_ok(root, &["checkout", "-b", "feature"]);
+        std::fs::write(root.join("feature.txt"), "f1\n").expect("写入文件");
+        run_git_ok(root, &["add", "feature.txt"]);
+        run_git_ok(root, &["commit", "-m", "feature work"]);
+
+        // main 分叉提交
+        run_git_ok(root, &["checkout", "main"]);
+        std::fs::write(root.join("README.md"), "base\nmain\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "main work"]);
+
+        let root_string = root.to_string_lossy().into_owned();
+        let msg = git_merge_branch_blocking(root_string.clone(), "feature".into())
+            .expect("真实合并应成功");
+        assert_eq!(msg, "合并完成");
+
+        let repo = open_repo(&root_string).expect("打开仓库");
+        let head = repo.head().expect("HEAD").peel_to_commit().expect("提交");
+        assert_eq!(head.parent_count(), 2, "合并提交应有双亲");
+        assert_eq!(
+            std::fs::read_to_string(root.join("feature.txt")).unwrap(),
+            "f1\n",
+            "合并后工作树应包含被合并分支的文件"
+        );
+
+        // 重复合并同一分支：应判定 up-to-date，不得凭空冲突
+        let again =
+            git_merge_branch_blocking(root_string.clone(), "feature".into()).expect("重复合并应成功");
+        assert!(again.contains("无需合并"), "again: {again}");
+        // libgit2 的 merge 会写 MERGE_HEAD；成功提交后不得残留（否则下次合并被误判「合并未完成」）
+        assert!(!repo_state_is_merging(&root_string), "成功合并后不应残留 MERGE_HEAD");
+    }
+
+    #[test]
+    fn merge_branch_fast_forward_updates_head() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+        std::fs::write(root.join("README.md"), "base\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "init"]);
+        run_git_ok(root, &["checkout", "-b", "feature"]);
+        std::fs::write(root.join("feature.txt"), "f1\n").expect("写入文件");
+        run_git_ok(root, &["add", "feature.txt"]);
+        run_git_ok(root, &["commit", "-m", "feature work"]);
+        run_git_ok(root, &["checkout", "main"]);
+
+        let root_string = root.to_string_lossy().into_owned();
+        let msg = git_merge_branch_blocking(root_string.clone(), "feature".into())
+            .expect("快进合并应成功");
+        assert_eq!(msg, "快进合并完成");
+        let repo = open_repo(&root_string).expect("打开仓库");
+        assert!(
+            std::fs::read_to_string(root.join("feature.txt")).is_ok(),
+            "快进后工作树应包含被合并分支的文件"
+        );
+        let merged = repo
+            .find_branch("feature", BranchType::Local)
+            .expect("分支");
+        let head = repo.head().expect("HEAD").peel_to_commit().expect("提交");
+        assert_eq!(
+            head.id(),
+            merged.get().peel_to_commit().expect("提交").id(),
+            "快进后 HEAD 应等于被合并分支 tip"
+        );
+    }
+
+    #[test]
+    fn merge_branch_dirty_worktree_returns_clear_error() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+        std::fs::write(root.join("README.md"), "base\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "init"]);
+        run_git_ok(root, &["checkout", "-b", "feature"]);
+        std::fs::write(root.join("feature.txt"), "f1\n").expect("写入文件");
+        run_git_ok(root, &["add", "feature.txt"]);
+        run_git_ok(root, &["commit", "-m", "feature work"]);
+        run_git_ok(root, &["checkout", "main"]);
+        std::fs::write(root.join("README.md"), "base\nmain\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "main work"]);
+        // 弄脏工作树：README.md 有未提交修改（main 与 feature 都动过该文件）
+        std::fs::write(root.join("README.md"), "base\nmain\ndirty\n").expect("写入文件");
+
+        let root_string = root.to_string_lossy().into_owned();
+        let err = git_merge_branch_blocking(root_string.clone(), "feature".into())
+            .expect_err("脏工作树合并应报错");
+        assert!(!err.is_empty());
+        eprintln!("脏工作树合并错误信息: {err}");
+        // 本地修改不得被合并覆盖
+        assert_eq!(
+            std::fs::read_to_string(root.join("README.md")).unwrap(),
+            "base\nmain\ndirty\n",
+            "合并不能覆盖本地未提交修改"
+        );
+        // 仓库不得进入合并中间态
+        assert!(!repo_state_is_merging(&root_string), "仓库不应处于合并中");
+    }
+
+    #[test]
+    fn merge_branch_fast_forward_must_not_discard_local_changes() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+        std::fs::write(root.join("README.md"), "base\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "init"]);
+        run_git_ok(root, &["checkout", "-b", "feature"]);
+        std::fs::write(root.join("feature.txt"), "f1\n").expect("写入文件");
+        run_git_ok(root, &["add", "feature.txt"]);
+        run_git_ok(root, &["commit", "-m", "feature work"]);
+        run_git_ok(root, &["checkout", "main"]);
+        // 弄脏工作树（feature 新增的文件之外的文件，快进本可安全进行）
+        std::fs::write(root.join("README.md"), "base\ndirty-local\n").expect("写入文件");
+
+        let root_string = root.to_string_lossy().into_owned();
+        let err = git_merge_branch_blocking(root_string.clone(), "feature".into())
+            .expect_err("快进合并不得静默丢弃本地修改");
+        assert!(!err.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(root.join("README.md")).unwrap(),
+            "base\ndirty-local\n",
+            "快进合并不能覆盖本地未提交修改"
+        );
+    }
+
+    #[test]
+    fn merge_branch_conflict_leaves_repo_in_merge_state() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+        std::fs::write(root.join("README.md"), "base\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "init"]);
+        // main 改 README 第一行
+        std::fs::write(root.join("README.md"), "main-change\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "main change"]);
+        // feature 改 README 同一行（冲突）
+        run_git_ok(root, &["checkout", "-b", "feature", "HEAD~1"]);
+        std::fs::write(root.join("README.md"), "feature-change\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "feature change"]);
+        run_git_ok(root, &["checkout", "main"]);
+
+        let root_string = root.to_string_lossy().into_owned();
+        let err = git_merge_branch_blocking(root_string.clone(), "feature".into())
+            .expect_err("冲突合并应返回错误");
+        assert!(err.contains("冲突"), "err: {err}");
+        // 冲突后 index 应标记 conflicted，且写了 MERGE_HEAD 供拓扑恢复
+        let repo = open_repo(&root_string).expect("打开仓库");
+        let index = repo.index().expect("index");
+        assert!(index.has_conflicts(), "冲突后 index 应有冲突标记");
+        assert!(repo_state_is_merging(&root_string), "冲突后应有 MERGE_HEAD");
+    }
+
+    #[test]
+    fn merge_conflict_then_commit_keeps_merge_topology() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+        std::fs::write(root.join("README.md"), "base\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "init"]);
+        std::fs::write(root.join("README.md"), "main-change\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "main change"]);
+        run_git_ok(root, &["checkout", "-b", "feature", "HEAD~1"]);
+        std::fs::write(root.join("README.md"), "feature-change\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "feature change"]);
+        run_git_ok(root, &["checkout", "main"]);
+
+        let root_string = root.to_string_lossy().into_owned();
+        git_merge_branch_blocking(root_string.clone(), "feature".into())
+            .expect_err("冲突合并返回错误");
+        assert!(repo_state_is_merging(&root_string));
+
+        // 用户解决冲突（取 main 版本）并通过应用内提交
+        std::fs::write(root.join("README.md"), "main-change\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        commit_internal(root_string.clone(), "resolve merge".into(), None, None, None)
+            .expect("解决冲突后提交");
+        // 合并提交必须带双亲；MERGE_HEAD 应被清理
+        assert!(!repo_state_is_merging(&root_string), "提交后应清掉 MERGE_HEAD");
+        let repo = open_repo(&root_string).expect("打开仓库");
+        let head = repo.head().expect("HEAD").peel_to_commit().expect("提交");
+        assert_eq!(head.parent_count(), 2, "冲突解决的提交应有双亲");
+
+        // 拓扑保留：再次 merge 同一分支应判定 up-to-date，而非凭空冲突
+        let again =
+            git_merge_branch_blocking(root_string.clone(), "feature".into()).expect("再次合并");
+        assert!(again.contains("无需合并"), "again: {again}");
+    }
+
+    #[test]
+    fn merge_abort_restores_worktree_and_clears_state() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+        std::fs::write(root.join("README.md"), "base\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "init"]);
+        std::fs::write(root.join("README.md"), "main-change\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "main change"]);
+        run_git_ok(root, &["checkout", "-b", "feature", "HEAD~1"]);
+        std::fs::write(root.join("README.md"), "feature-change\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "feature change"]);
+        run_git_ok(root, &["checkout", "main"]);
+
+        let root_string = root.to_string_lossy().into_owned();
+        git_merge_branch_blocking(root_string.clone(), "feature".into())
+            .expect_err("冲突合并返回错误");
+        assert!(repo_state_is_merging(&root_string));
+
+        let msg = git_merge_abort(root_string.clone()).expect("放弃合并");
+        assert_eq!(msg, "已放弃合并");
+        assert!(!repo_state_is_merging(&root_string));
+        let repo = open_repo(&root_string).expect("打开仓库");
+        assert!(!repo.index().expect("index").has_conflicts());
+        assert_eq!(
+            std::fs::read_to_string(root.join("README.md")).unwrap(),
+            "main-change\n",
+            "放弃合并后工作树应回到合并前"
+        );
+
+        // 没有进行中的合并时 abort 应报错
+        let err = git_merge_abort(root_string).expect_err("无合并时放弃应报错");
+        assert!(!err.is_empty());
     }
 }

@@ -355,6 +355,7 @@ pub fn run() {
             commands::git::git_revert_to,
             commands::git::git_revert_commit,
             commands::git::git_merge_branch,
+            commands::git::git_merge_abort,
             commands::git::git_conflict_files,
             commands::git::git_resolve_conflict,
             commands::ssh::ssh_shell_open,

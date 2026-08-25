@@ -312,6 +312,9 @@ function onCommitKeydown(event: KeyboardEvent) {
         >
           {{ t("git.allTheirs") }}
         </button>
+        <button type="button" class="link danger" @click="git.mergeAbort()">
+          {{ t("git.mergeAbort") }}
+        </button>
       </div>
 
       <div class="changes">

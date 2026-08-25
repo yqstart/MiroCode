@@ -354,6 +354,10 @@ export async function gitMergeBranch(root: string, name: string): Promise<string
   return ipc("git_merge_branch", { root, name });
 }
 
+export async function gitMergeAbort(root: string): Promise<string> {
+  return ipc("git_merge_abort", { root });
+}
+
 export async function gitConflictFiles(root: string): Promise<string[]> {
   return ipc("git_conflict_files", { root });
 }

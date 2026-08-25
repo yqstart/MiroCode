@@ -454,6 +454,10 @@ export const enUS = {
       "Revert to {hash}? Uncommitted changes may be lost.",
     revertToOk: "Reverted to the selected commit",
     merged: "Merged {name}",
+    mergeAbort: "Abort Merge",
+    mergeAbortConfirm:
+      "Abort the current merge? The working tree will return to the state before merge started.",
+    mergeAborted: "Merge aborted",
     rebasedOnto: "Rebased onto {onto}",
     rebaseContinued: "Rebase continued",
     rebaseAbortConfirm:

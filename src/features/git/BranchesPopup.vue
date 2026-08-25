@@ -165,7 +165,9 @@ async function onDelete(name?: string) {
 async function onMerge(name: string) {
   ctx.value = null;
   close();
-  const localName = name.includes("/") ? name.split("/").slice(1).join("/") : name;
+  // 仅去掉 origin/ 前缀；本地分支名可能自带斜杠（feature/foo），
+  // slice(1) 会把它们误截断成 foo 导致合并找不到分支
+  const localName = name.startsWith("origin/") ? name.slice("origin/".length) : name;
   await git.mergeBranch(localName);
 }
 

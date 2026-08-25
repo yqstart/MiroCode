@@ -660,7 +660,9 @@ async function onCheckoutRef(name: string, isRemote: boolean) {
 
 async function onRefAction(name: string, action: "merge" | "rebase" | "compare") {
   ctx.value = null;
-  const localName = name.includes("/") ? name.split("/").slice(1).join("/") : name;
+  // 仅去掉 origin/ 前缀；本地分支名可能自带斜杠（feature/foo），
+  // slice(1) 会把它们误截断成 foo 导致合并找不到分支
+  const localName = name.startsWith("origin/") ? name.slice("origin/".length) : name;
   if (action === "merge") await git.mergeBranch(localName);
   else if (action === "rebase") await git.rebaseBranch(name);
   else await git.compareBranchWithCurrent(name);

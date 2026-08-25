@@ -21,6 +21,7 @@ import {
   gitInit,
   gitLog,
   gitMergeBranch,
+  gitMergeAbort,
   gitPull,
   gitPush,
   gitRebaseAbort,
@@ -934,6 +935,24 @@ export const useGitStore = defineStore("git", () => {
     } catch (error) {
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
+        4800,
+      );
+      // 冲突等场景也会走到这里：刷新让冲突面板立即出现
+      await refresh();
+    }
+  }
+
+  async function mergeAbort() {
+    const workspace = useWorkspaceStore();
+    if (!workspace.rootPath) return;
+    if (!window.confirm(t("git.mergeAbortConfirm"))) return;
+    try {
+      const msg = await gitMergeAbort(workspace.rootPath);
+      workspace.showNotice(msg || t("git.mergeAborted"));
+      await refresh();
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
         3200,
       );
     }
@@ -1478,6 +1497,7 @@ export const useGitStore = defineStore("git", () => {
     revertTo,
     revertCommit,
     mergeBranch,
+    mergeAbort,
     rebaseBranch,
     rebaseContinue,
     rebaseAbort,
