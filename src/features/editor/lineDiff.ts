@@ -109,11 +109,35 @@ export function myersDiff(a: string[], b: string[]): ROp[] {
 export function computeLineChanges(oldText: string, newText: string): LineChange[] {
   const a = splitLines(oldText);
   const b = splitLines(newText);
-  const ops = myersDiff(a, b);
+
+  // 公共前缀/后缀剥离：常规编辑（大文件改几行）只对改动附近做精细 diff，
+  // 5000 行文件改 1 行不会把整份文本喂给 Myers。
+  let pref = 0;
+  const prefMax = Math.min(a.length, b.length);
+  while (pref < prefMax && a[pref] === b[pref]) pref += 1;
+  let suff = 0;
+  const suffMax = prefMax - pref;
+  while (suff < suffMax && a[a.length - 1 - suff] === b[b.length - 1 - suff]) suff += 1;
+
+  const midA = a.slice(pref, a.length - suff);
+  const midB = b.slice(pref, b.length - suff);
+
+  let ops: ROp[];
+  if (midA.length + midB.length <= MAX_MYERS_LINES) {
+    ops = myersDiff(midA, midB);
+  } else {
+    // 降级：中间段整体视为一个改动块（del midA + ins midB），跳过 Myers
+    // 的 O(ND) trace 内存（5000 行差异最坏 ~200MB 主线程分配）。
+    // 归类语义不变，只是不区分中间段内的逐行精细差异。
+    ops = [];
+    if (midA.length) ops.push({ type: "del", n: midA.length });
+    if (midB.length) ops.push({ type: "ins", n: midB.length });
+  }
+
   const changes: LineChange[] = [];
 
-  let oldIdx = 0;
-  let newIdx = 0;
+  let oldIdx = pref;
+  let newIdx = pref;
   let i = 0;
 
   while (i < ops.length) {
@@ -166,3 +190,7 @@ function clampLine(line: number, total: number): number {
   if (total <= 0) return 1;
   return Math.min(Math.max(1, line), total);
 }
+
+/** Myers 精细 diff 的行数上限（剥离公共前缀/后缀后的中间段）：
+ *  超出走整体块降级，避免 trace 数组 O(D×(n+m)) 内存爆炸冻结主线程。 */
+const MAX_MYERS_LINES = 1000;
