@@ -367,7 +367,9 @@ async function ensureLog() {
   if (!snapshot.value.initialized) await git.refresh();
   if (!snapshot.value.initialized) return;
   const seq = ++loadSeq;
-  await Promise.all([git.loadLog(120), git.refresh()]);
+  // loadLog 不传 limit：沿用 store 权威 logLimit，避免 loadMore 到 240 条后
+  // 任意 ensureLog（刷新/checkout）把日志缩回硬编码的 120 条。
+  await Promise.all([git.loadLog(), git.refresh()]);
   if (seq !== loadSeq) return;
   if (!selectedKey.value && rows.value[0]) selectedKey.value = rows.value[0].key;
 }

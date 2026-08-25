@@ -104,6 +104,12 @@ export const useGitStore = defineStore("git", () => {
   const remoteInFlight = ref(false);
   let refreshSeq = 0;
   let refreshAgain = false;
+  /** 日志加载专用序号：与 refreshSeq 解耦。
+   *  loadLog 与 refresh 并发时（GitLogPanel ensureLog 的 Promise.all），
+   *  refresh 自增 refreshSeq 会把 loadLog 结果系统性作废——面板打开/刷新
+   *  时日志永远停在旧数据。独立序号只对并发 loadLog 互斥（旧 limit 不
+   *  覆盖新 limit），工作区切换防护改由 root 对比承担。 */
+  let logSeq = 0;
 
   const statusMap = computed(() => {
     const map = new Map<string, GitStatusEntry>();
@@ -720,14 +726,17 @@ export const useGitStore = defineStore("git", () => {
     if (!workspace.rootPath || !snapshot.value.initialized) return;
     const nextLimit = limit ?? logLimit.value;
     logLimit.value = nextLimit;
-    // 与 refresh 同款序号防护：等待期间切换工作区，旧仓库日志不得写入新工作区
-    const seq = refreshSeq;
+    const root = workspace.rootPath;
+    const seq = ++logSeq;
     try {
-      const result = await gitLog(workspace.rootPath, nextLimit);
-      if (seq !== refreshSeq) return;
+      const result = await gitLog(root, nextLimit);
+      // 并发 loadLog 只认最新（旧 limit 不覆盖新 limit）
+      if (seq !== logSeq) return;
+      // 等待期间切换工作区：旧仓库日志不得写入新工作区
+      if (workspace.rootPath !== root) return;
       log.value = result;
     } catch (error) {
-      if (seq !== refreshSeq) return;
+      if (seq !== logSeq) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
