@@ -121,18 +121,26 @@ function buildPrefs() {
 // 光标写入节流：同一帧内多次 selectionSet/docChanged 合并为一次 store 写入
 // （状态栏行/列显示允许 16ms 延迟，消除每键重复触发 Pinia 响应式）
 let cursorRaf: number | null = null;
+let pendingCursorPath = "";
 let pendingCursorLine = 0;
 let pendingCursorColumn = 0;
 function emitCursor(current: EditorView) {
   const head = current.state.selection.main.head;
   const line = current.state.doc.lineAt(head);
+  // 捕获触发时刻的路径：帧末回调执行时可能已切换标签（输入后立即点击），
+  // 不得把上一标签的光标/状态栏行列写进新标签。
+  pendingCursorPath = props.path;
   // 帧内不断用最新值覆盖，帧末统一写一次
   pendingCursorLine = line.number;
   pendingCursorColumn = head - line.from + 1;
   if (cursorRaf !== null) return;
   cursorRaf = requestAnimationFrame(() => {
     cursorRaf = null;
-    editorStore.setCursor(props.path, pendingCursorLine, pendingCursorColumn);
+    editorStore.setCursor(
+      pendingCursorPath,
+      pendingCursorLine,
+      pendingCursorColumn,
+    );
   });
 }
 

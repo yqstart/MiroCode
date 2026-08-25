@@ -284,11 +284,29 @@ export const useEditorStore = defineStore("editor", () => {
     try {
       // 栅格图：不读文本，仅作预览标签
       const root = workspace.rootPath;
+      // 发起时刻的活动标签：读盘是异步 IPC，期间用户可能已切到别的标签。
+      // 完成后若无新激活则不抢占（避免「点了大文件后又被强制切走」）；
+      // 若期间已激活其它标签，本标签只加入列表，不打断用户当前编辑。
+      const beforeActive = activePath.value;
       const content = isRasterImagePath(path)
         ? ""
         : await readTextFile(workspace.rootPath, path);
       // 读取期间已切换工作区：旧文件标签不得落入新工作区
       if (workspace.rootPath !== root) return;
+      // 并发打开同一文件的场景（双击、快速打开连续回车等）：两个请求都
+      // 通过了上面的 existing 检查，后完成的请求会在此发现重复标签。
+      // 此时绝不能再 push，否则同一 path 出现两个标签，:key 冲突导致
+      // 标签与编辑内容错位（activeTab 只命中第一个、切换不换文档）。
+      const dup = tabs.value.find((t) => t.path === path);
+      if (dup) {
+        if (activePath.value === beforeActive) {
+          activePath.value = path;
+          markExternalUpdate(path);
+          workspace.selectPath(path);
+          workspace.revealPath(path);
+        }
+        return;
+      }
       tabs.value.push({
         id: path,
         path,
@@ -301,9 +319,11 @@ export const useEditorStore = defineStore("editor", () => {
         pinned: false,
         dirty: false,
       });
-      activePath.value = path;
-      workspace.selectPath(path);
-      workspace.revealPath(path);
+      if (activePath.value === beforeActive) {
+        activePath.value = path;
+        workspace.selectPath(path);
+        workspace.revealPath(path);
+      }
     } catch (error) {
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
