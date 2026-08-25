@@ -149,37 +149,41 @@ mod macos {
             if !ok {
                 return Err("startAccessingSecurityScopedResource 返回 false".into());
             }
-            // URLByResolvingBookmarkData 返回 autoreleased 对象：存入 thread-local
+            // URLByResolvingBookmarkData 返回 autoreleased 对象：存入进程级表
             // 前必须 retain，否则 autorelease pool drain 后指针悬垂
             let url_retained: *mut AnyObject = msg_send![&*url, retain];
-            // 保留 NSURL 防止 ARC 立刻释放：把指针存到 thread-local Vec
+            // 保留 NSURL 防止 ARC 立刻释放：把指针存到进程级 Vec
             // （实际由 release_* 调 stopAccessingSecurityScopedResource 对应释放）
-            ACTIVE_URLS.with(|cell| {
-                cell.borrow_mut().push(url_retained as usize);
-            });
+            ACTIVE_URLS
+                .lock()
+                .map(|mut urls| urls.push(url_retained as usize))
+                .map_err(|e| format!("安全作用域表加锁失败: {e}"))?;
             Ok(true)
         }
     }
 
     /// 释放所有已激活的 security-scoped URL（close 路径调）
     pub fn release_all() {
-        ACTIVE_URLS.with(|cell| {
-            for ptr in cell.borrow().iter() {
-                unsafe {
-                    let url: &AnyObject = &*(*ptr as *const AnyObject);
-                    let _: () = msg_send![url, stopAccessingSecurityScopedResource];
-                    // 对应 resolve 里存入前的 retain
-                    let _: () = msg_send![url, release];
-                }
+        let Ok(mut urls) = ACTIVE_URLS.lock() else {
+            return;
+        };
+        for ptr in urls.iter() {
+            unsafe {
+                let url: &AnyObject = &*(*ptr as *const AnyObject);
+                let _: () = msg_send![url, stopAccessingSecurityScopedResource];
+                // 对应 resolve 里存入前的 retain
+                let _: () = msg_send![url, release];
             }
-            cell.borrow_mut().clear();
-        });
+        }
+        urls.clear();
     }
 
-    use std::cell::RefCell;
-    thread_local! {
-        static ACTIVE_URLS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
-    }
+    // 进程级表（不用 thread_local）：resolve 与 release 是两个同步 command，
+    // Tauri 2 把它们 spawn 到 tokio 线程池的不同线程执行——thread_local 会
+    // 因两次 invoke 落线程不同而表不配对，release 读空表 → NSURL retain 与
+    // TCC 授权计数每次会话恢复泄漏。Mutex<Vec<usize>> 进程级共享（usize
+    // 存储 retain 后的指针，满足 Send/Sync）。
+    static ACTIVE_URLS: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
 }
 
 #[cfg(target_os = "macos")]
