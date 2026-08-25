@@ -213,6 +213,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     childrenMap.value = { ...childrenMap.value, [path]: entries };
   }
 
+  async function loadChildrenSafely(path: string): Promise<boolean> {
+    try {
+      await loadChildren(path);
+      return true;
+    } catch (error) {
+      showNotice(
+        `无法读取目录：${error instanceof Error ? error.message : String(error)}`,
+        3200,
+      );
+      return false;
+    }
+  }
+
   function markSelfWrite(path: string, ms = 1600) {
     selfWriteUntil.set(path, Date.now() + ms);
   }
@@ -541,7 +554,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     } else {
       next.add(path);
       if (!childrenMap.value[path]) {
-        await loadChildren(path);
+        if (!(await loadChildrenSafely(path))) {
+          next.delete(path);
+          expanded.value = next;
+          return;
+        }
       }
     }
     expanded.value = next;
@@ -802,7 +819,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
     let cursor = root;
     if (!childrenMap.value[cursor]) {
-      await loadChildren(cursor);
+      if (!(await loadChildrenSafely(cursor))) return;
     }
     const next = new Set(expanded.value);
     next.add(root);
@@ -810,7 +827,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       cursor = joinPath(cursor, parts[i]);
       next.add(cursor);
       if (!childrenMap.value[cursor]) {
-        await loadChildren(cursor);
+        if (!(await loadChildrenSafely(cursor))) return;
       }
     }
     expanded.value = next;
