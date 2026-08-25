@@ -13,6 +13,9 @@ const LEGACY_STORAGE_PREFIX = "mirocode.editor-session.v2:";
 const MAX_TABS = 60;
 const MAX_DIRTY_TABS = 12;
 const MAX_CONTENT_CHARS = 1_000_000;
+/** localStorage 配额预算（UTF-16 code unit，中文 1 字 = 1 单元）：
+ *  WebKit 配额约 5MB，留约 0.5MB 余量给设置/评审状态等其它 key。 */
+const QUOTA_BUDGET_CHARS = 4_500_000;
 
 export interface EditorSessionTab {
   path: string;
@@ -131,47 +134,91 @@ export function loadEditorSession(
   }
 }
 
+/**
+ * 构建会话 payload。withSnapshots=false 时丢弃未保存内容快照，
+ * 只保留路径/光标/固定状态（降级形态）。
+ */
+function buildSessionPayload(
+  session: EditorSession,
+  withSnapshots: boolean,
+): EditorSession | null {
+  const dirtyPaths = new Set(
+    withSnapshots
+      ? session.tabs
+          .filter((tab) => tab.dirty)
+          .slice(0, MAX_DIRTY_TABS)
+          .map((tab) => tab.path)
+      : [],
+  );
+  const tabs = session.tabs.slice(0, MAX_TABS).map((tab) => {
+    const saved: EditorSessionTab = {
+      path: tab.path,
+      cursor: {
+        line: Math.max(1, Math.floor(tab.cursor.line)),
+        column: Math.max(1, Math.floor(tab.cursor.column)),
+      },
+      pinned: tab.pinned === true,
+    };
+    if (
+      withSnapshots &&
+      dirtyPaths.has(tab.path) &&
+      typeof tab.content === "string" &&
+      typeof tab.original === "string" &&
+      tab.content.length <= MAX_CONTENT_CHARS &&
+      tab.original.length <= MAX_CONTENT_CHARS
+    ) {
+      saved.dirty = true;
+      saved.content = tab.content;
+      saved.original = tab.original;
+    }
+    return saved;
+  });
+  return {
+    tabs,
+    activePath: tabs.some((tab) => tab.path === session.activePath)
+      ? session.activePath
+      : tabs[0]?.path ?? null,
+  };
+}
+
+/** 序列化并在预算内写入；超预算或写入失败返回 false（不抛）。 */
+function trySetItem(key: string, payload: EditorSession): boolean {
+  try {
+    const raw = JSON.stringify(payload);
+    if (raw.length > QUOTA_BUDGET_CHARS) return false;
+    localStorage.setItem(key, raw);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function saveEditorSession(
   root: string,
   session: EditorSession,
   windowId = getWindowSessionId(),
 ): void {
   if (!root) return;
-  try {
-    const dirtyTabs = session.tabs.filter((tab) => tab.dirty).slice(0, MAX_DIRTY_TABS);
-    const dirtyPaths = new Set(dirtyTabs.map((tab) => tab.path));
-    const tabs = session.tabs.slice(0, MAX_TABS).map((tab) => {
-      const saved: EditorSessionTab = {
-        path: tab.path,
-        cursor: {
-          line: Math.max(1, Math.floor(tab.cursor.line)),
-          column: Math.max(1, Math.floor(tab.cursor.column)),
-        },
-        pinned: tab.pinned === true,
-      };
-      if (
-        dirtyPaths.has(tab.path) &&
-        typeof tab.content === "string" &&
-        typeof tab.original === "string" &&
-        tab.content.length <= MAX_CONTENT_CHARS &&
-        tab.original.length <= MAX_CONTENT_CHARS
-      ) {
-        saved.dirty = true;
-        saved.content = tab.content;
-        saved.original = tab.original;
-      }
-      return saved;
-    });
-    localStorage.setItem(
-      storageKey(root, windowId),
-      JSON.stringify({
-        tabs,
-        activePath: tabs.some((tab) => tab.path === session.activePath)
-          ? session.activePath
-          : tabs[0]?.path ?? null,
-      } satisfies EditorSession),
+  const key = storageKey(root, windowId);
+
+  // 完整形态（含未保存快照）：先尝试，超预算/配额直接进入降级。
+  const full = buildSessionPayload(session, true);
+  if (full && trySetItem(key, full)) return;
+
+  // 降级 1：丢弃未保存快照（干净标签的路径/光标/固定状态仍保留）。
+  const degraded = buildSessionPayload(session, false);
+  if (degraded && trySetItem(key, degraded)) return;
+
+  // 降级 2：快照超限仍放不下时，按档位裁剪标签数量（保底 1 个）。
+  for (const ratio of [0.5, 0.25, 0.125]) {
+    const limit = Math.max(1, Math.floor(session.tabs.length * ratio));
+    const trimmed = buildSessionPayload(
+      { tabs: session.tabs.slice(0, limit), activePath: session.activePath },
+      false,
     );
-  } catch {
-    // 隐私模式 / localStorage 容量不足不应阻断编辑器工作。
+    if (trimmed && trySetItem(key, trimmed)) return;
   }
+
+  // 全部失败：显式告警（隐私模式 / 极端配额），不再静默。
+  console.warn("[editorSession] 会话保存失败：localStorage 容量不足，本次崩溃恢复快照已丢失");
 }
