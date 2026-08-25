@@ -236,7 +236,7 @@ export const useGitStore = defineStore("git", () => {
         if (snapshot.value.initialized) {
           // 与 gitStatus 结果相互独立的 3 项查询并行化，缩短整体阻塞
           const [branchesRes, stashesRes, rebaseRes, tagsRes] = await Promise.all([
-            gitBranches(workspace.rootPath),
+            gitBranches(workspace.rootPath).catch(() => []),
             gitStashList(workspace.rootPath).catch(() => []),
             gitRebaseStatus(workspace.rootPath).catch(() => ({
               ...EMPTY_REBASE,
