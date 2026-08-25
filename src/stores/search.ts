@@ -35,8 +35,8 @@ export const useSearchStore = defineStore("search", () => {
       .filter(Boolean);
   }
 
-  /** 带超时的 race，返回清理函数：Promise.race 分出胜负后定时器仍在队列，
-   *  每次搜索固定泄漏一个 15s/30s 定时器，连续输入会短时堆积 */
+  /** 带超时的 race，返回清理函数。调用方必须在 finally 调 clear，
+   * 这样 IPC 成功、失败、超时和序号过期都不会残留 timer。 */
   function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
     let timer: number | undefined;
     const timeout = new Promise<never>((_, reject) => {
@@ -103,22 +103,19 @@ export const useSearchStore = defineStore("search", () => {
     const seq = ++contentSearchSeq;
     const root = workspace.rootPath;
     loading.value = true;
+    const guard = withTimeout(
+      searchContent(workspace.rootPath, q, {
+        maxResults: 200,
+        caseSensitive: caseSensitive.value,
+        extraIgnores: workspace.extraIgnores,
+        extensions: parseExtensions(),
+        contextLines: 0,
+      }),
+      30_000,
+      "搜索超时（30s），请缩小范围或重试",
+    );
     try {
-      // 前端 30s 超时兜底：即使后端 IPC 卡死（线程毒化 / walk 无响应），
-      // 也能恢复 loading 状态，避免「搜索中」永远转圈
-      const guard = withTimeout(
-        searchContent(workspace.rootPath, q, {
-          maxResults: 200,
-          caseSensitive: caseSensitive.value,
-          extraIgnores: workspace.extraIgnores,
-          extensions: parseExtensions(),
-          contextLines: 0,
-        }),
-        30_000,
-        "搜索超时（30s），请缩小范围或重试",
-      );
       const result = await guard.promise;
-      guard.clear();
       // 若期间发起了新的搜索、已关闭或切换了工作区，丢弃本次过期结果
       if (seq !== contentSearchSeq || workspace.rootPath !== root) return;
       contentResults.value = result;
