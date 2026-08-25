@@ -15,6 +15,7 @@
     "e2e:ipc": "node scripts/e2e-ipc-selfcheck.mjs",
     "test:completion": "node --experimental-strip-types scripts/completion-selfcheck.ts && node --experimental-strip-types scripts/completion-service-selfcheck.ts && node --experimental-strip-types scripts/type-service-selfcheck.ts",
     "test:language": "node --experimental-strip-types scripts/language-selfcheck.ts",
+    "test:markdown-highlight": "node --experimental-strip-types scripts/markdown-highlight-selfcheck.ts",
     "test:editor-session": "node --experimental-strip-types scripts/editor-session-selfcheck.ts",
     "test:window-session": "node --experimental-strip-types scripts/window-session-selfcheck.ts",
     "test:security-scoped": "node --experimental-strip-types scripts/security-scoped-selfcheck.ts",

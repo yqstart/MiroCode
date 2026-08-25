@@ -49,14 +49,14 @@ function escapeHtml(s: string): string {
 /** 单行注释起始 token；用于先剥离注释，避免内部字符被规则误命中；
  *  null 表示该语言无单行注释。 */
 const COMMENT_LINE: Record<string, RegExp | null> = {
-  js: /\/\/.*$/,
-  ts: /\/\/.*$/,
-  jsx: /\/\/.*$/,
-  tsx: /\/\/.*$/,
+  js: /\/\/.*$/gm,
+  ts: /\/\/.*$/gm,
+  jsx: /\/\/.*$/gm,
+  tsx: /\/\/.*$/gm,
   json: null,
-  bash: /#.*$/,
-  py: /#.*$/,
-  yaml: /#.*$/,
+  bash: /#.*$/gm,
+  py: /#.*$/gm,
+  yaml: /#.*$/gm,
   md: null,
 };
 
@@ -190,38 +190,44 @@ function wrap(className: string, body: string): string {
  */
 export function highlight(code: string, lang: string | undefined): string {
   const norm = normalizeLang(lang);
-  const escaped = escapeHtml(code);
-  if (!norm) return escaped;
+  if (!norm) return escapeHtml(code);
+
+  // 先在原始源码上把字符串/注释占位，所有后续正则只处理源码文本，
+  // 不会把已经生成的 <span class="tk-*"> 标签再次当成源码匹配，
+  // 也不会因 escapeHtml 把引号变成 &quot;/&#39; 而错过字符串。
+  const placeholders: string[] = [];
+  let placeholderIndex = 0;
+  let stage1 = code;
+  const placeholder = (className: "string" | "comment" | "number" | "type" | "keyword", body: string): string => {
+    // 私用区字符不属于数字/单词，后续 token 正则不会命中；
+    // 索引通过字符码点保存，最后再还原对应的安全 HTML。
+    const index = placeholderIndex++;
+    const token = `\u0000${String.fromCharCode(0xe000 + index)}\u0000`;
+    placeholders.push(wrap(className, body));
+    return token;
+  };
 
   // 1) 标记字符串位置（用占位符避免后续规则破坏字符串内容）
   const strings = STRING_PATTERNS[norm] ?? [];
-  const placeholders: string[] = [];
-  let stage1 = escaped;
   for (const pat of strings) {
-    stage1 = stage1.replace(pat, (m) => {
-      const idx = placeholders.push(`<span class="tk-string">${m}</span>`) - 1;
-      return `\u0000STR${idx}\u0000`;
-    });
+    stage1 = stage1.replace(pat, (m) => placeholder("string", escapeHtml(m)));
   }
 
-  // 2) 单行注释（先于关键字，避免 // 出现在字符串里时被着色——但因为字符串已占位，安全）
+  // 2) 标记单行注释（字符串已占位，所以注释标记不会误命中字符串内容）
   const commentRe = COMMENT_LINE[norm];
   if (commentRe) {
-    // 多行场景：把 // 段（py 用 #，bash/yaml 用 #）整段标灰
-    // 这里只处理单行；多行注释（/* */）下一段处理
-    stage1 = stage1.replace(commentRe, (m) =>
-      wrap("comment", m),
-    );
+    stage1 = stage1.replace(commentRe, (m) => placeholder("comment", escapeHtml(m)));
   }
-  // 多行注释：js/ts/jsx/tsx 的 /* ... */、html 的 <!-- -->
+  // 多行注释：js/ts/jsx/tsx 的 /* ... */
   if (norm === "js" || norm === "ts" || norm === "jsx" || norm === "tsx") {
-    stage1 = stage1.replace(/\/\*[\s\S]*?\*\//g, (m) =>
-      wrap("comment", m),
-    );
+    stage1 = stage1.replace(/\/\*[\s\S]*?\*\//g, (m) => placeholder("comment", escapeHtml(m)));
   }
 
-  // 3) 数字（不在字符串占位里：因为占位符不含数字）
-  stage1 = stage1.replace(NUMBER_RE, (m) => wrap("number", m));
+  // 3) 统一转义剩余源码；占位符不含 HTML 特殊字符。
+  stage1 = escapeHtml(stage1);
+
+  // 4) 数字、类型、关键字只在尚未插入 HTML 标签的源码上着色。
+  stage1 = stage1.replace(NUMBER_RE, (m) => placeholder("number", m));
 
   // 4) 类型（首字母大写标识符）
   const types = TYPES[norm] ?? [];
@@ -230,7 +236,7 @@ export function highlight(code: string, lang: string | undefined): string {
       `\\b(${types.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`,
       "g",
     );
-    stage1 = stage1.replace(typeRe, (m) => wrap("type", m));
+    stage1 = stage1.replace(typeRe, (m) => placeholder("type", m));
   }
 
   // 5) 关键字
@@ -240,11 +246,12 @@ export function highlight(code: string, lang: string | undefined): string {
       `\\b(${kws.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`,
       "g",
     );
-    stage1 = stage1.replace(kwRe, (m) => wrap("keyword", m));
+    stage1 = stage1.replace(kwRe, (m) => placeholder("keyword", m));
   }
 
-  // 6) 还原字符串占位
-  stage1 = stage1.replace(/\u0000STR(\d+)\u0000/g, (_, n) => placeholders[Number(n)] ?? "");
-
-  return stage1;
+  // 6) 最后还原所有 token HTML，避免任何后续规则破坏标签。
+  return stage1.replace(/\u0000([\ue000-\uf8ff])\u0000/g, (_, marker) => {
+    const index = marker.charCodeAt(0) - 0xe000;
+    return placeholders[index] ?? "";
+  });
 }
