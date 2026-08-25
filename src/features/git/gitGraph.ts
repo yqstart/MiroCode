@@ -51,18 +51,18 @@ export function layoutGitGraph(commits: GraphCommitLike[]): GraphRowLayout[] {
     const next = [...lanes];
     next.splice(lane, 1);
 
-    const parentLanes: number[] = [];
+    const parentIds: string[] = [];
     const parents = commit.parents ?? [];
     let insertAt = Math.min(lane, next.length);
 
     for (const parent of parents) {
       const existing = next.indexOf(parent);
       if (existing >= 0) {
-        parentLanes.push(existing);
+        parentIds.push(parent);
         continue;
       }
       next.splice(insertAt, 0, parent);
-      parentLanes.push(insertAt);
+      parentIds.push(parent);
       insertAt += 1;
     }
 
@@ -89,8 +89,13 @@ export function layoutGitGraph(commits: GraphCommitLike[]): GraphRowLayout[] {
     }
 
     // 当前提交从节点中心发散到它的所有父提交。无父提交时不画向下连接线。
-    for (const to of parentLanes) {
-      connectors.push({ from: lane, to, fromY: 0.5, toY: 1 });
+    // 这里按父提交 ID 从最终 deduped 车道重新解析，不使用插入时的旧索引：
+    // 后续父提交插入可能把已存在的第一父提交挤到右侧。
+    for (const parent of parentIds) {
+      const to = deduped.indexOf(parent);
+      if (to >= 0) {
+        connectors.push({ from: lane, to, fromY: 0.5, toY: 1 });
+      }
     }
 
     result.push({

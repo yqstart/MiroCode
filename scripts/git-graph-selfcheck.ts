@@ -35,4 +35,18 @@ const filtered = layoutGitGraph([
 ]);
 assert.equal(filtered[2]?.lane, 0, "隐藏父提交重新出现时应接回原车道");
 
+const staleParentLane = layoutGitGraph([
+  { id: "a", parents: ["x"] },
+  // 当前提交未预先登记时，已有的 x 会被新插入的 y 挤到右侧。
+  { id: "merge-stale-parent", parents: ["x", "y"] },
+  { id: "x", parents: [] },
+  { id: "y", parents: [] },
+]);
+const staleParentRow = staleParentLane[1];
+assert.deepEqual(staleParentRow?.lanesAfter, ["y", "x"]);
+assert.ok(
+  staleParentRow?.connectors.some((line) => line.from === 0 && line.to === 1),
+  "父提交插入挤动车道后，第一父连接线应指向最终车道",
+);
+
 console.log("Git Graph 车道布局自测通过");
