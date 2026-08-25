@@ -31,6 +31,8 @@ pub struct ReplaceResult {
     pub changed_files: usize,
     pub replacements: usize,
     pub files: Vec<String>,
+    /// 因超过 2MB 大小上限被跳过的文件数（与 search_content 的护栏对齐）
+    pub skipped_large_files: usize,
 }
 
 /// 仅当文件名或任一路径段（文件夹名）包含查询子串时命中；不做跨段子序列模糊。
@@ -344,6 +346,7 @@ pub async fn replace_in_files(
         let mut changed_files = 0usize;
         let mut replacements = 0usize;
         let mut touched = Vec::new();
+        let mut skipped_large_files = 0usize;
 
         // 外层 120s 超时无法取消线程：闭包内自检截止时间提前停写。
         // 否则超时返回后线程仍在后台覆写文件，用户重试会与旧任务并发写同一批文件
@@ -356,6 +359,14 @@ pub async fn replace_in_files(
                 return Err("替换超时（110s），已停止继续写入，请缩小范围重试".into());
             }
             ensure_inside_workspace(&root_path, &path)?;
+            // 大小护栏：与 search_content 对齐（2MB）。全工作区替换时几百 MB 的
+            // 产物/数据文件整读会内存暴涨，且替换它们通常不是用户意图；
+            // 超限跳过并计数，在结果里显式报告而非静默。
+            const MAX_REPLACE_BYTES: u64 = 2_000_000;
+            if fs::metadata(&path).map(|m| m.len() > MAX_REPLACE_BYTES).unwrap_or(false) {
+                skipped_large_files += 1;
+                continue;
+            }
             let Ok(bytes) = fs::read(&path) else {
                 continue;
             };
@@ -415,6 +426,7 @@ pub async fn replace_in_files(
             changed_files,
             replacements,
             files: touched,
+            skipped_large_files,
         })
     })
     .await

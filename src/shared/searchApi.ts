@@ -19,6 +19,8 @@ export interface ReplaceResult {
   changedFiles: number;
   replacements: number;
   files: string[];
+  /** 因超过 2MB 上限被跳过的文件数（后端护栏，UI 应提示） */
+  skippedLargeFiles: number;
 }
 
 export interface SearchOptions {

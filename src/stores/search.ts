@@ -180,8 +180,12 @@ export const useSearchStore = defineStore("search", () => {
         },
       );
       replacePreview.value = result;
+      const skippedNote =
+        (result.skippedLargeFiles ?? 0) > 0
+          ? `，跳过 ${result.skippedLargeFiles} 个超 2MB 的大文件`
+          : "";
       workspace.showNotice(
-        `已替换 ${result.replacements} 处，涉及 ${result.changedFiles} 个文件`,
+        `已替换 ${result.replacements} 处，涉及 ${result.changedFiles} 个文件${skippedNote}`,
       );
       await runContentSearch();
     } catch (error) {
