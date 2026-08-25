@@ -65,8 +65,13 @@ function queueSshWrite(data: string) {
     });
 }
 
+function hostVisible(): boolean {
+  const el = host.value;
+  return Boolean(el && el.clientWidth > 0 && el.clientHeight > 0);
+}
+
 function fit() {
-  if (!term || !fitAddon || !props.active) return;
+  if (!term || !fitAddon || !props.active || !hostVisible()) return;
   try {
     fitAddon.fit();
     if (connected) {
