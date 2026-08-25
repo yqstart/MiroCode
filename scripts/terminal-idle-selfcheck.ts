@@ -89,6 +89,7 @@ async function main() {
   assert(!(await settleIdle("build >")), "无换行构建输出 build > → 忙碌");
   assert(!(await settleIdle("toolkit $")), "无换行日志 toolkit $ → 忙碌");
   assert(!(await settleIdle("42%\r52%\r62%\r72%")), "回车刷屏进度 → 忙碌");
+  assert(!(await settleIdle("x".repeat(1024 * 1024))), "1MB 无换行输出 → 忙碌");
 
   console.log("完整场景时序（运行中忙 → 停止后闲）：");
   const order: string[] = [];

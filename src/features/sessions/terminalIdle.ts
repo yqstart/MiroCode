@@ -26,6 +26,9 @@ const PROMPT_SYMBOL_LEADING = /^[$%#>❯»➜✗✓]/;
 /** 符号特征的行长度上限：robbyrussell 带长 git 分支与目录约 60 字符，此处留余量；
  *  长度约束过滤长日志输出行（如 top 的 %cpu 行、进度条行）的误判。 */
 const PROMPT_SYMBOL_MAX_LEN = 80;
+/** 无换行输出的残余缓冲上限：超长内容不可能是 ≤300 字符提示符，
+ * 只保留尾部用于后续换行/提示符判断，避免每个 chunk 重扫无界字符串。 */
+const MAX_RESIDUAL_BUFFER_CHARS = 64 * 1024;
 
 /** 提示符行长度上限：命令输出行远长于常规提示符，长度约束过滤大部分误判 */
 const PROMPT_MAX_LEN = 300;
@@ -79,6 +82,12 @@ export function createPromptIdleTracker(
   function feed(data: string) {
     if (disposed) return;
     buffer += data;
+    if (buffer.length > MAX_RESIDUAL_BUFFER_CHARS) {
+      // 超长无换行输出不可能是提示符；保留尾部以便后续换行/提示符
+      // 恢复判断，并立即把上一状态压为忙，避免误复用运行中的终端。
+      buffer = buffer.slice(-MAX_RESIDUAL_BUFFER_CHARS);
+      lastTailIsPrompt = false;
+    }
     // 行切分：\r\n 优先视为一个换行；残余段（提示符本身无行尾）也参与判定
     let found = true;
     while (found) {
