@@ -109,6 +109,8 @@ export const useGitStore = defineStore("git", () => {
   const REFRESH_DEBOUNCE_MS = 300;
   let scheduledRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledRefreshResolvers: Array<() => void> = [];
+  /** 当前刷新循环的 Promise；并发调用会排队补刷，并等待最终结果。 */
+  let activeRefreshPromise: Promise<void> | null = null;
   /** 日志加载专用序号：与 refreshSeq 解耦。
    *  loadLog 与 refresh 并发时（GitLogPanel ensureLog 的 Promise.all），
    *  refresh 自增 refreshSeq 会把 loadLog 结果系统性作废——面板打开/刷新
@@ -208,73 +210,87 @@ export const useGitStore = defineStore("git", () => {
     });
   }
 
-  async function refresh() {
+  /**
+   * 刷新 Git 状态；已有刷新时只追加一轮，并让调用方等待最终一轮完成。
+   * 这样 stage/unstage 等修改操作不会在旧快照仍显示时提前返回。
+   */
+  function refresh(): Promise<void> {
     const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) {
+    const root = workspace.rootPath;
+    if (!root) {
       snapshot.value = { ...EMPTY };
       branches.value = [];
       tags.value = [];
       stashes.value = [];
       conflictFiles.value = [];
+      rebaseStatus.value = { ...EMPTY_REBASE };
       checkedMap.value = {};
       selectedPath.value = null;
-      return;
+      return Promise.resolve();
     }
-    // 合并并发刷新：进行中再触发则结束后补刷一次
-    if (loading.value) {
+    if (activeRefreshPromise) {
       refreshAgain = true;
-      return;
+      return activeRefreshPromise;
     }
+
     loading.value = true;
     const seq = ++refreshSeq;
-    try {
-      do {
-        refreshAgain = false;
-        const next = await gitStatus(workspace.rootPath);
-        if (seq !== refreshSeq) return;
-        snapshot.value = next;
-        if (snapshot.value.initialized) {
-          // 与 gitStatus 结果相互独立的 3 项查询并行化，缩短整体阻塞
-          const [branchesRes, stashesRes, rebaseRes, tagsRes] = await Promise.all([
-            gitBranches(workspace.rootPath).catch(() => []),
-            gitStashList(workspace.rootPath).catch(() => []),
-            gitRebaseStatus(workspace.rootPath).catch(() => ({
-              ...EMPTY_REBASE,
-            })),
-            gitTags(workspace.rootPath).catch(() => []),
-          ]);
-          if (seq !== refreshSeq) return;
-          branches.value = branchesRes;
-          tags.value = tagsRes;
-          stashes.value = stashesRes as typeof stashes.value;
-          rebaseStatus.value = rebaseRes;
-          // 冲突文件直接从 status 快照派生（entries 已带 conflicted 标记），
-          // 省去 gitConflictFiles 内部再跑一次完整 status（此前在主线程重扫）
-          conflictFiles.value =
-            snapshot.value.conflictCount > 0
-              ? snapshot.value.entries
-                  .filter((e) => e.conflicted)
-                  .map((e) => e.path)
-              : [];
-        } else {
-          branches.value = [];
-          tags.value = [];
-          stashes.value = [];
-          conflictFiles.value = [];
-          rebaseStatus.value = { ...EMPTY_REBASE };
+    const run = (async () => {
+      try {
+        do {
+          refreshAgain = false;
+          const next = await gitStatus(root);
+          if (seq !== refreshSeq || workspace.rootPath !== root) return;
+          snapshot.value = next;
+          if (snapshot.value.initialized) {
+            // 与 gitStatus 结果相互独立的 3 项查询并行化，缩短整体阻塞
+            const [branchesRes, stashesRes, rebaseRes, tagsRes] = await Promise.all([
+              gitBranches(root).catch(() => []),
+              gitStashList(root).catch(() => []),
+              gitRebaseStatus(root).catch(() => ({
+                ...EMPTY_REBASE,
+              })),
+              gitTags(root).catch(() => []),
+            ]);
+            if (seq !== refreshSeq || workspace.rootPath !== root) return;
+            branches.value = branchesRes;
+            tags.value = tagsRes;
+            stashes.value = stashesRes as typeof stashes.value;
+            rebaseStatus.value = rebaseRes;
+            // 冲突文件直接从 status 快照派生（entries 已带 conflicted 标记），
+            // 省去 gitConflictFiles 内部再跑一次完整 status（此前在主线程重扫）
+            conflictFiles.value =
+              snapshot.value.conflictCount > 0
+                ? snapshot.value.entries
+                    .filter((e) => e.conflicted)
+                    .map((e) => e.path)
+                : [];
+          } else {
+            branches.value = [];
+            tags.value = [];
+            stashes.value = [];
+            conflictFiles.value = [];
+            rebaseStatus.value = { ...EMPTY_REBASE };
+          }
+          if (seq === refreshSeq && workspace.rootPath === root) syncCheckedPaths();
+        } while (refreshAgain && seq === refreshSeq && workspace.rootPath === root);
+      } catch (error) {
+        if (seq === refreshSeq && workspace.rootPath === root) {
+          workspace.showNotice(
+            error instanceof Error ? error.message : String(error),
+            3200,
+          );
         }
-        if (seq === refreshSeq) syncCheckedPaths();
-      } while (refreshAgain && seq === refreshSeq);
-    } catch (error) {
-      if (seq === refreshSeq) {
-        workspace.showNotice(
-          error instanceof Error ? error.message : String(error),
-          3200,
-        );
+      } finally {
+        if (seq === refreshSeq && workspace.rootPath === root) loading.value = false;
       }
-    } finally {
-      if (seq === refreshSeq) loading.value = false;
-    }
+    })();
+
+    const settled = run.finally(() => {
+      if (refreshSeq === seq) activeRefreshPromise = null;
+    });
+    activeRefreshPromise = settled;
+    return settled;
   }
 
   async function initRepo() {
@@ -832,6 +848,9 @@ export const useGitStore = defineStore("git", () => {
     selectedPath.value = null;
     closeDiff();
     refreshSeq += 1;
+    // 旧工作区的刷新无法取消，但必须与新工作区的刷新解耦；旧 run
+    // 会因 refreshSeq/root 校验丢弃结果，且不会清理新 run 的 Promise。
+    activeRefreshPromise = null;
     refreshAgain = false;
     loading.value = false;
   }

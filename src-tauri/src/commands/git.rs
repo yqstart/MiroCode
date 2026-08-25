@@ -39,19 +39,56 @@ struct StatusCacheEntry {
     result: Result<GitStatusSnapshot, String>,
 }
 
-static STATUS_CACHE: OnceLock<Mutex<Option<StatusCacheEntry>>> = OnceLock::new();
-
-fn status_cache() -> &'static Mutex<Option<StatusCacheEntry>> {
-    STATUS_CACHE.get_or_init(|| Mutex::new(None))
+struct StatusCacheState {
+    generation: u64,
+    entry: Option<StatusCacheEntry>,
 }
 
-/// 使 git_status 缓存失效（修改性命令在改变仓库状态前调用）
+static STATUS_CACHE: OnceLock<Mutex<StatusCacheState>> = OnceLock::new();
+
+fn status_cache() -> &'static Mutex<StatusCacheState> {
+    STATUS_CACHE.get_or_init(|| {
+        Mutex::new(StatusCacheState {
+            generation: 0,
+            entry: None,
+        })
+    })
+}
+
+/// 使 git_status 缓存失效（修改性命令在改变仓库状态前调用）。
+///
+/// generation 用来阻止失效前已经在途的 git_status 请求在完成后重新
+/// 写入旧快照。仅清空 entry 不够，因为旧请求可能晚于本次修改返回。
 pub(crate) fn clear_status_cache() {
-    if let Some(lock) = STATUS_CACHE.get() {
-        if let Ok(mut guard) = lock.lock() {
-            *guard = None;
-        }
+    let mut state = status_cache().lock().unwrap_or_else(|e| e.into_inner());
+    state.generation = state.generation.wrapping_add(1);
+    state.entry = None;
+}
+
+fn try_store_status_result(
+    state: &mut StatusCacheState,
+    root: String,
+    request_generation: u64,
+    result: Result<GitStatusSnapshot, String>,
+) -> bool {
+    if state.generation != request_generation {
+        return false;
     }
+    state.entry = Some(StatusCacheEntry {
+        root,
+        at: Instant::now(),
+        result,
+    });
+    true
+}
+
+fn cache_status_result(
+    root: String,
+    request_generation: u64,
+    result: Result<GitStatusSnapshot, String>,
+) {
+    let mut state = status_cache().lock().unwrap_or_else(|e| e.into_inner());
+    let _ = try_store_status_result(&mut state, root, request_generation, result);
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -183,14 +220,15 @@ fn status_label(status: git2::Status) -> String {
 pub async fn git_status(root: String) -> Result<GitStatusSnapshot, String> {
     // 读路径 TTL 缓存：高频 refresh（保存/聚焦/切文件）在窗口内复用上次结果
     let now = Instant::now();
-    {
-        let guard = status_cache().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(entry) = guard.as_ref() {
+    let request_generation = {
+        let state = status_cache().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = state.entry.as_ref() {
             if entry.root == root && now.duration_since(entry.at) < STATUS_CACHE_TTL {
                 return entry.result.clone();
             }
         }
-    }
+        state.generation
+    };
     // 同步命令默认在主线程执行（Tauri 2 wry IPC handler 内联调用），
     // recurse_untracked_dirs 在大仓库（未 ignore 的 node_modules 等）可达秒级，
     // 放 spawn_blocking + 超时，避免冻结整个 UI
@@ -201,14 +239,8 @@ pub async fn git_status(root: String) -> Result<GitStatusSnapshot, String> {
         Ok(Err(join)) => Err(format!("读取 Git 状态任务失败: {join}")),
         Err(_) => Err("读取 Git 状态超时（30s）".into()),
     };
-    {
-        let mut guard = status_cache().lock().unwrap_or_else(|e| e.into_inner());
-        *guard = Some(StatusCacheEntry {
-            root,
-            at: Instant::now(),
-            result: result.clone(),
-        });
-    }
+    // 失效前已启动的请求可能在修改完成后才返回，不能让它重新污染 TTL 缓存。
+    cache_status_result(root, request_generation, result.clone());
     result
 }
 
@@ -371,39 +403,47 @@ fn index_add(repo: &Repository, paths: &[String]) -> Result<(), String> {
 pub fn git_stage(root: String, paths: Vec<String>) -> Result<(), String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
-    let repo = open_repo(&root)?;
-    index_add(&repo, &paths)
+    let result = (|| {
+        let repo = open_repo(&root)?;
+        index_add(&repo, &paths)
+    })();
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
 pub fn git_unstage(root: String, paths: Vec<String>) -> Result<(), String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
-    let repo = open_repo(&root)?;
-    match repo.head() {
-        Ok(head) => {
-            let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
-            if paths.is_empty() {
-                repo.reset(commit.as_object(), ResetType::Mixed, None)
-                    .map_err(|e| e.to_string())?;
-            } else {
-                repo.reset_default(Some(commit.as_object()), &paths)
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-        Err(_) => {
-            let mut index = repo.index().map_err(|e| e.to_string())?;
-            if paths.is_empty() {
-                index.clear().map_err(|e| e.to_string())?;
-            } else {
-                for p in paths {
-                    let _ = index.remove_path(Path::new(&p));
+    let result = (|| {
+        let repo = open_repo(&root)?;
+        match repo.head() {
+            Ok(head) => {
+                let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+                if paths.is_empty() {
+                    repo.reset(commit.as_object(), ResetType::Mixed, None)
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    repo.reset_default(Some(commit.as_object()), &paths)
+                        .map_err(|e| e.to_string())?;
                 }
             }
-            index.write().map_err(|e| e.to_string())?;
+            Err(_) => {
+                let mut index = repo.index().map_err(|e| e.to_string())?;
+                if paths.is_empty() {
+                    index.clear().map_err(|e| e.to_string())?;
+                } else {
+                    for p in paths {
+                        let _ = index.remove_path(Path::new(&p));
+                    }
+                }
+                index.write().map_err(|e| e.to_string())?;
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })();
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
@@ -415,7 +455,9 @@ pub fn git_commit(
 ) -> Result<String, String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
-    commit_internal(root, message, paths, amend, None)
+    let result = commit_internal(root, message, paths, amend, None);
+    clear_status_cache();
+    result
 }
 
 /// 内部提交：可指定额外父提交。
@@ -3479,12 +3521,76 @@ mod tests {
     }
 
     #[test]
+    fn status_cache_generation_rejects_stale_result() {
+        let snapshot = GitStatusSnapshot {
+            initialized: true,
+            branch: Some("main".into()),
+            upstream: None,
+            head: None,
+            ahead: 0,
+            behind: 0,
+            entries: vec![],
+            conflict_count: 0,
+        };
+        let mut state = StatusCacheState {
+            generation: 4,
+            entry: None,
+        };
+
+        assert!(try_store_status_result(
+            &mut state,
+            "/repo".into(),
+            4,
+            Ok(snapshot.clone()),
+        ));
+        assert!(state.entry.is_some());
+
+        // 模拟 stage/commit 使缓存失效后，旧请求才返回：旧结果不得复活。
+        state.generation = 5;
+        state.entry = None;
+        assert!(!try_store_status_result(
+            &mut state,
+            "/repo".into(),
+            4,
+            Ok(snapshot),
+        ));
+        assert!(state.entry.is_none());
+    }
+
+    #[test]
     fn percent_encode_credential_escapes_reserved_chars() {
         assert_eq!(percent_encode_credential("user name"), "user%20name");
         assert_eq!(
             percent_encode_credential("p@ss:word/1"),
             "p%40ss%3Aword%2F1"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn git_stage_refreshes_status_after_index_change() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+        std::fs::write(root.join("README.md"), "before\n").expect("写入文件");
+        run_git_ok(root, &["add", "README.md"]);
+        run_git_ok(root, &["commit", "-m", "init"]);
+        std::fs::write(root.join("README.md"), "after\n").expect("修改文件");
+
+        let root_string = root.to_string_lossy().into_owned();
+        let before = git_status(root_string.clone()).await.expect("读取修改前状态");
+        assert!(before
+            .entries
+            .iter()
+            .any(|entry| entry.path == "README.md" && entry.unstaged && !entry.staged));
+
+        git_stage(root_string.clone(), vec!["README.md".into()]).expect("暂存文件");
+        let after = git_status(root_string).await.expect("读取暂存后状态");
+        assert!(after
+            .entries
+            .iter()
+            .any(|entry| entry.path == "README.md" && entry.staged));
     }
 
     #[test]
