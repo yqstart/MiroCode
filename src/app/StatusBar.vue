@@ -25,9 +25,7 @@ const branchesOpen = ref(false);
 
 const lang = computed(() => activeTab.value?.language ?? "—");
 const cursor = computed(() => activeTab.value?.cursor ?? { line: 1, column: 1 });
-const dirty = computed(() =>
-  activeTab.value ? activeTab.value.content !== activeTab.value.original : false,
-);
+const dirty = computed(() => activeTab.value?.dirty ?? false);
 const branch = computed(() =>
   snapshot.value.initialized ? snapshot.value.branch : null,
 );
