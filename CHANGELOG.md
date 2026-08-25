@@ -6,6 +6,27 @@
 
 后续改动将在这里记录。
 
+## [0.1.4] - 2026-08-25
+
+### 修复
+
+- 修复 Git 分支查询、工作区目录展开与快捷定位失败时的错误处理，保持状态刷新和导航可用。
+- 修复搜索超时定时器未清理、终端 shell 退出后 PTY 状态残留、远程终端隐藏保活时重复调整尺寸等问题。
+- 修复 Markdown 代码高亮 token 损坏、工作区切换后旧符号索引回写，以及 Git Graph 父提交连线刷新竞态。
+- 修复 macOS 安全书签并发访问和标题栏 AppKit 调用线程问题。
+
+### 改进
+
+- 优化设置持久化、编辑器状态栏和 Git 高频刷新，降低输入与状态更新开销。
+- 优化终端忙闲检测和命令输出缓冲，减少任务误判与无界内存增长。
+- 为大文件替换增加 2MB 护栏，并在差异计算中优化公共前后缀处理和超大变更降级策略。
+- 改进编辑器会话快照配额处理，超限时分级降级而不是整体丢失。
+
+### 安全
+
+- 加强更新说明 Markdown 链接过滤，覆盖实体、百分号编码和控制字符。
+- 修复终端脚本名称 shell 转义，避免 `package.json` 脚本键名触发命令注入。
+
 ## [0.1.3] - 2026-08-24
 
 ### 新增
@@ -56,6 +77,7 @@
 - 保持轻量、跨平台和离线优先，不包含联网 AI 补全、对话面板或 Agent 能力。
 - 移除编辑器 Minimap 及其设置项、Canvas 绘制和点击定位逻辑。
 
+[0.1.4]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.4
 [0.1.3]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.3
 [0.1.2]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.2
 [0.1.1]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.1
