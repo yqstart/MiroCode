@@ -33,17 +33,29 @@ async function detectPackageManager(root: string): Promise<PackageManager> {
   return "npm";
 }
 
+/**
+ * shell 单引号转义：键名来自项目 package.json（不可信输入），防止键名内嵌
+ * `;` / `&` / `|` / `$()` / 反引号 被 shell 拆成额外命令执行（如恶意键名
+ * `x; echo INJECTED` 会被拆成两条命令）。单引号内除 `'` 外一切字面；
+ * 内嵌单引号按 shell 惯例 `'\''` 拼接（结束引号 → 转义引号 → 重开引号）。
+ * 含空格的合法键名（如 `dev server`）转义后仍是单个参数，不受影响。
+ */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 /** 生成在本地终端执行的命令（末尾不含换行） */
 export function formatRunCommand(manager: PackageManager, scriptName: string): string {
+  const name = shellQuote(scriptName);
   switch (manager) {
     case "pnpm":
-      return `pnpm run ${scriptName}`;
+      return `pnpm run ${name}`;
     case "yarn":
-      return `yarn ${scriptName}`;
+      return `yarn ${name}`;
     case "bun":
-      return `bun run ${scriptName}`;
+      return `bun run ${name}`;
     default:
-      return `npm run ${scriptName}`;
+      return `npm run ${name}`;
   }
 }
 
