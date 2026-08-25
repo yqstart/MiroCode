@@ -42,6 +42,8 @@ let term: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
 let pty: IPty | null = null;
 let disposed = false;
+/** PTY 是否曾成功启动过：区分「尚未就绪」与「已退出」（后者不等 2s 轮询） */
+let ptySpawnedOnce = false;
 let resizeObserver: ResizeObserver | null = null;
 let detachInput: (() => void) | null = null;
 let idleTracker: PromptIdleTracker | null = null;
@@ -102,6 +104,7 @@ function spawnPty() {
       // TERM=xterm-256color，让行编辑器按真实终端做擦除回显。
       env,
     });
+    ptySpawnedOnce = true;
 
     commandTracker = createTerminalCommandTracker((command) => {
       sessions.setLocalTitle(props.sessionId, command);
@@ -126,6 +129,13 @@ function spawnPty() {
 
     pty.onExit(() => {
       term?.writeln("\r\n\x1b[90m[进程已退出]\x1b[0m");
+      // 防止僵尸终端：置空 pty 引用、上报非空闲。否则 shell 退出后组件仍挂载、
+      // pty 引用非空，芯片命令判定「非 busy」复用本终端 → pty.write 落到已死
+      // 会话被 tauri-pty 内部吞错，命令静默丢失无任何反馈。
+      // 置空后下次 tryFitAndSpawn 会重建新 shell。
+      pty = null;
+      commandTracker?.reset();
+      sessions.setLocalIdle(props.sessionId, false);
     });
 
     idleTracker = createPromptIdleTracker((idle) => {
@@ -238,14 +248,21 @@ watch(
   async (job) => {
     if (!job || job.terminalId !== props.sessionId) return;
     for (let i = 0; i < 40 && !pty; i += 1) {
+      // 曾成功启动但已退出（onExit 置空 pty）：不再空等 2s，
+      // 立即走失败提示分支，避免命令被静默吞掉。
+      if (ptySpawnedOnce) break;
       await new Promise((r) => window.setTimeout(r, 50));
       if (disposed) return;
     }
     if (!pty || disposed) {
-      // PTY 启动失败（非桌面环境 / 权限错误）：任务作废并消费，
+      // PTY 启动失败（非桌面环境 / 权限错误）或已退出：任务作废并消费，
       // 否则残留 store 永远无人消费（旧 terminalId 已无对应终端）
       if (!disposed) {
-        term?.writeln("\r\n\x1b[31m终端尚未就绪，命令未执行\x1b[0m");
+        term?.writeln(
+          ptySpawnedOnce
+            ? "\r\n\x1b[31m终端进程已退出，命令未执行\x1b[0m"
+            : "\r\n\x1b[31m终端尚未就绪，命令未执行\x1b[0m",
+        );
         sessions.consumePendingLocalWrite(job.seq);
       }
       return;
