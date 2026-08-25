@@ -258,6 +258,7 @@ function onWindowFocus() {
 /** 关闭/退出前同步该窗口当前工作区的文件和终端快照。窗口索引在打开工作区时已写入。 */
 function persistWindowState() {
   const root = workspace.rootPath;
+  settings.persistNow();
   editor.persistSession(root);
   sessions.persistSession(root);
 }

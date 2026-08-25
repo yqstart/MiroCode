@@ -173,6 +173,29 @@ function applyTheme(theme: ThemeId) {
 
 export const useSettingsStore = defineStore("settings", () => {
   const settings = reactive<AppSettings>(loadSettings());
+  let settingsPersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function persistNow() {
+    if (settingsPersistTimer !== null) {
+      clearTimeout(settingsPersistTimer);
+      settingsPersistTimer = null;
+    }
+    // 存储不可用（隐私模式 / 配额超限）时静默降级：本次会话设置仍生效
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    } catch {
+      // ignore
+    }
+  }
+
+  function schedulePersist() {
+    if (settingsPersistTimer !== null) clearTimeout(settingsPersistTimer);
+    settingsPersistTimer = setTimeout(() => {
+      settingsPersistTimer = null;
+      persistNow();
+    }, 200);
+  }
+
   applyTheme(settings.theme);
   setI18nLocale(settings.locale);
   void syncNativeWindowTheme(settings.theme);
@@ -197,12 +220,7 @@ export const useSettingsStore = defineStore("settings", () => {
   watch(
     settings,
     () => {
-      // 存储不可用（隐私模式 / 配额超限）时静默降级：本次会话设置仍生效
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-      } catch {
-        // ignore
-      }
+      schedulePersist();
     },
     { deep: true },
   );
@@ -308,5 +326,6 @@ export const useSettingsStore = defineStore("settings", () => {
     setTerminalPanelHeight,
     setLocale,
     setAutoCheckUpdates,
+    persistNow,
   };
 });
