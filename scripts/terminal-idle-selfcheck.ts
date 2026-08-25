@@ -85,6 +85,11 @@ async function main() {
     "以 % 开头的长统计行（top）→ 忙碌",
   );
 
+  assert(!(await settleIdle("progress 42%")), "无换行进度输出 42% → 忙碌");
+  assert(!(await settleIdle("build >")), "无换行构建输出 build > → 忙碌");
+  assert(!(await settleIdle("toolkit $")), "无换行日志 toolkit $ → 忙碌");
+  assert(!(await settleIdle("42%\r52%\r62%\r72%")), "回车刷屏进度 → 忙碌");
+
   console.log("完整场景时序（运行中忙 → 停止后闲）：");
   const order: string[] = [];
   const t = createPromptIdleTracker((idle) =>

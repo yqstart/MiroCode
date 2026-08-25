@@ -12,9 +12,10 @@
  * 任务）输出行既不以符号收尾、也不以符号开头，判定为忙碌。
  */
 
-/** 提示符行尾特征：剥除 ANSI 后以这些字符之一结尾（后跟可选空白）。
- *  $ % bash/zsh/csh 默认；# root；> 续行提示符/Windows；❯ » oh-my-zsh 常见主题 */
-const PROMPT_TAIL = /[$%#>❯»]\s*$/;
+/** 传统提示符的上下文形态：避免把任意输出行尾的 `$`/`%`/`>` 当成提示符。
+ * 覆盖 user@host:dir$、~/project%、bash-3.2$、PS C:\\> 与裸 `$`/`#`/`>`。
+ * 单独的 `progress 42%`、`build >`、`toolkit $` 不满足上下文。 */
+const PROMPT_CONTEXT = /^(?:[$#%>]\s*|[^ \t]+@[^ \t]+(?::\S*)?[$#%>]\s*|(?:bash|zsh|sh|fish)(?:-[\d.]+)?[$#%>]\s*|PS(?:\s+\S+)*[$#%>]\s*|.*(?:[~/:\\])\S*[$#%>]\s*)$/;
 
 /** 提示符符号：仅当位于行首时视作提示符行（提示符的符号恒在开头，如 omz 主题
  *  行首的 ➜ / ❯ / »；✗ ✓ 较少见但同样只出现在部分主题的行首）。❯ » ➜ 为 omz
@@ -41,7 +42,7 @@ function isPromptLine(line: string): boolean {
   // 剔除后符号检测才不因前导 \r 失位。
   const clean = stripAnsi(line).replace(/\r/g, "");
   if (!clean || clean.length > PROMPT_MAX_LEN) return false;
-  if (PROMPT_TAIL.test(clean)) return true;
+  if (PROMPT_CONTEXT.test(clean)) return true;
   if (clean.length <= PROMPT_SYMBOL_MAX_LEN && PROMPT_SYMBOL_LEADING.test(clean)) return true;
   return false;
 }
