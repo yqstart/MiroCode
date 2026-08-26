@@ -1203,6 +1203,10 @@ onBeforeUnmount(() =>
   font-family: var(--font-ui);
   font-size: var(--font-size-md);   /* 13px，紧凑 */
   line-height: 1.65;               /* 段落 1.65，从原 1.7 微降 */
+  /* body 全局 user-select:none（应用型 UI 防误选）；预览是只读内容区，
+     恢复文本选择以支持「选中 + ⌘C 复制」（与 CodeMirror 编辑区同策略） */
+  user-select: text;
+  -webkit-user-select: text;
 }
 .md-preview-content {
   /* 顶部多 48px 留给编辑内容区内的 Segmented Control；左右宽松；底部留 40vh 滚动余量 */
