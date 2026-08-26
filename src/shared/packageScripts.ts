@@ -44,9 +44,18 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+/**
+ * 安全的脚本键名无需引号：仅由字母数字及常见键名符号（: . _ @ / -）组成。
+ * 命中时原样拼接（npm run dev），避免正常键名出现 `npm run 'dev'` 的多余引号；
+ * 含空格/分号等 shell 特殊字符的键名仍走 shellQuote 转义（保留注入防护）。
+ */
+const SAFE_SCRIPT_NAME = /^[A-Za-z0-9][A-Za-z0-9:._@/-]*$/;
+
 /** 生成在本地终端执行的命令（末尾不含换行） */
 export function formatRunCommand(manager: PackageManager, scriptName: string): string {
-  const name = shellQuote(scriptName);
+  const name = SAFE_SCRIPT_NAME.test(scriptName)
+    ? scriptName
+    : shellQuote(scriptName);
   switch (manager) {
     case "pnpm":
       return `pnpm run ${name}`;

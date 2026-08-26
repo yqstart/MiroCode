@@ -624,9 +624,9 @@ async function runMenu(action: string) {
       return;
     }
     if (action === "open-in-terminal") {
-      // 目录取该目录，文件取其父目录
+      // 目录取该目录，文件取其父目录；打开面板并在目标目录落一个终端
       const target = isDir ? path : dirname(path);
-      sessions.openSessions(target);
+      sessions.openTerminalAt(target);
       return;
     }
     if (action === "reveal-in-os") {

@@ -20,7 +20,6 @@
     "test:window-session": "node --experimental-strip-types scripts/window-session-selfcheck.ts",
     "test:security-scoped": "node --experimental-strip-types scripts/security-scoped-selfcheck.ts",
     "test:terminal-idle": "node --experimental-strip-types scripts/terminal-idle-selfcheck.ts",
-    "test:terminal-command": "node --experimental-strip-types scripts/terminal-command-selfcheck.ts",
     "test:custom-scripts": "node --experimental-strip-types scripts/custom-scripts-selfcheck.ts",
     "test:editor-keymap": "node --experimental-strip-types scripts/editor-keymap-selfcheck.ts",
     "test:formatting": "node --experimental-strip-types scripts/formatting-selfcheck.ts",

@@ -19,10 +19,7 @@ import {
   type PromptIdleTracker,
 } from "@/features/sessions/terminalIdle";
 import { terminalThemeColors } from "@/features/sessions/terminalTheme";
-import {
-  createTerminalCommandTracker,
-  type TerminalCommandTracker,
-} from "@/shared/terminalCommand";
+import { defaultShellPath } from "@/shared/terminalShell";
 import { useSessionsStore } from "@/stores/sessions";
 import { useSettingsStore } from "@/stores/settings";
 
@@ -47,15 +44,7 @@ let ptySpawnedOnce = false;
 let resizeObserver: ResizeObserver | null = null;
 let detachInput: (() => void) | null = null;
 let idleTracker: PromptIdleTracker | null = null;
-let commandTracker: TerminalCommandTracker | null = null;
 let outputQueue: TerminalOutputQueue | null = null;
-
-function defaultShell(): string {
-  const platform = navigator.platform.toLowerCase();
-  if (platform.includes("win")) return "powershell.exe";
-  if (platform.includes("mac")) return "/bin/zsh";
-  return "/bin/bash";
-}
 
 /** 宿主是否真正可见（尺寸非 0）：v-show 隐藏（display:none）时不可见 */
 function hostVisible(): boolean {
@@ -63,14 +52,8 @@ function hostVisible(): boolean {
   return Boolean(el && el.clientWidth > 0 && el.clientHeight > 0);
 }
 
-/** 只在普通 shell 输入态跟踪命令，避免把 Vim 等全屏终端的按键当成命令标题。 */
 function writePty(data: string): void {
   if (!pty || disposed) return;
-  if (term && term.buffer.active.type === term.buffer.normal.type) {
-    commandTracker?.feed(data);
-  } else {
-    commandTracker?.reset();
-  }
   pty.write(data);
 }
 
@@ -90,7 +73,7 @@ function spawnPty() {
     if (navigator.platform.toLowerCase().includes("mac")) {
       env.LANG = "en_US.UTF-8";
     }
-    pty = spawn(defaultShell(), [], {
+    pty = spawn(defaultShellPath(), [], {
       cols: term.cols,
       rows: term.rows,
       cwd: props.cwd ?? undefined,
@@ -105,10 +88,6 @@ function spawnPty() {
       env,
     });
     ptySpawnedOnce = true;
-
-    commandTracker = createTerminalCommandTracker((command) => {
-      sessions.setLocalTitle(props.sessionId, command);
-    });
 
     outputQueue = createTerminalOutputQueue((text) => {
       if (!term || disposed) return;
@@ -134,7 +113,6 @@ function spawnPty() {
       // 会话被 tauri-pty 内部吞错，命令静默丢失无任何反馈。
       // 置空后下次 tryFitAndSpawn 会重建新 shell。
       pty = null;
-      commandTracker?.reset();
       sessions.setLocalIdle(props.sessionId, false);
     });
 
@@ -208,8 +186,6 @@ onBeforeUnmount(() => {
   resizeObserver = null;
   idleTracker?.dispose();
   idleTracker = null;
-  commandTracker?.dispose();
-  commandTracker = null;
   outputQueue?.dispose();
   outputQueue = null;
   detachInput?.();

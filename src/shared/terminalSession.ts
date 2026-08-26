@@ -8,6 +8,8 @@ const MAX_TERMINALS = 32;
 export interface TerminalSessionItem {
   id: string;
   title: string;
+  /** 标签标题对应的 shell 名（zsh / bash / powershell）；旧快照可能缺失，由调用方推断 */
+  shell?: string;
   cwd: string | null;
 }
 
@@ -51,6 +53,7 @@ function parseSession(raw: string): TerminalSession | null {
       const candidate = item as {
         id?: unknown;
         title?: unknown;
+        shell?: unknown;
         cwd?: unknown;
       };
       if (
@@ -58,6 +61,7 @@ function parseSession(raw: string): TerminalSession | null {
         !candidate.id.trim() ||
         seen.has(candidate.id) ||
         typeof candidate.title !== "string" ||
+        (candidate.shell !== undefined && typeof candidate.shell !== "string") ||
         (candidate.cwd !== null && typeof candidate.cwd !== "string")
       ) {
         continue;
@@ -66,6 +70,7 @@ function parseSession(raw: string): TerminalSession | null {
       localTerminals.push({
         id: candidate.id,
         title: candidate.title,
+        ...(typeof candidate.shell === "string" ? { shell: candidate.shell } : {}),
         cwd: candidate.cwd,
       });
     }
@@ -114,6 +119,7 @@ export function saveTerminalSession(
       .map((item) => ({
         id: item.id,
         title: item.title,
+        shell: item.shell,
         cwd: item.cwd,
       }));
     const open = session.open && localTerminals.length > 0;

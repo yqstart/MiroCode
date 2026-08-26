@@ -5,12 +5,17 @@ import {
   saveTerminalSession,
   type TerminalSession,
 } from "@/shared/terminalSession";
-import { summarizeTerminalCommand } from "@/shared/terminalCommand";
+import {
+  defaultShellName,
+  inferShellFromTitle,
+} from "@/shared/terminalShell";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 export interface LocalTerminalSession {
   id: string;
   title: string;
+  /** 终端标签标题对应的 shell 名（zsh / bash / powershell），用于同 shell 序号重排 */
+  shell: string;
   cwd: string | null;
 }
 
@@ -89,8 +94,11 @@ export const useSessionsStore = defineStore("sessions", () => {
     localTerminals.value = saved.localTerminals.map((terminal) => ({
       id: terminal.id,
       title: terminal.title,
+      shell: terminal.shell ?? inferShellFromTitle(terminal.title),
       cwd: terminal.cwd,
     }));
+    // 恢复后统一按新规则重排标题（旧快照可能是「终端 N」/命令摘要）
+    applyShellTitles();
     syncSequenceFromIds();
     activeLocalId.value = saved.activeLocalId;
     open.value = saved.open;
@@ -116,9 +124,11 @@ export const useSessionsStore = defineStore("sessions", () => {
     if (localTerminals.value.length > 0) return;
     seq += 1;
     const id = `local-${seq}`;
+    const shell = defaultShellName();
     localTerminals.value.push({
       id,
-      title: "终端 1",
+      title: shell,
+      shell,
       cwd,
     });
     activeLocalId.value = id;
@@ -194,35 +204,45 @@ export const useSessionsStore = defineStore("sessions", () => {
     return true;
   }
 
-  function renumberLocalTitles() {
-    localTerminals.value.forEach((t, i) => {
-      // 只调整仍使用默认名称的标签，最近一次命令名称必须保留。
-      if (/^终端 \d+$/.test(t.title)) {
-        t.title = `终端 ${i + 1}`;
-      }
-    });
-  }
-
-  /** 根据最近一次提交到 shell 的命令更新终端标签。 */
-  function setLocalTitle(id: string, command: string) {
-    const terminal = localTerminals.value.find((item) => item.id === id);
-    const title = summarizeTerminalCommand(command);
-    if (!terminal || !title || terminal.title === title) return;
-    terminal.title = title;
-    schedulePersistSession();
+  /**
+   * 终端标签标题：shell 名 + 同 shell 序号（对齐 Cursor / VS Code 终端标签）。
+   * 首个实例显示 shell 名（如 zsh），第二个起加序号（zsh (2)、zsh (3)…）。
+   */
+  function applyShellTitles() {
+    const counts = new Map<string, number>();
+    for (const terminal of localTerminals.value) {
+      const count = (counts.get(terminal.shell) ?? 0) + 1;
+      counts.set(terminal.shell, count);
+      terminal.title = count <= 1 ? terminal.shell : `${terminal.shell} (${count})`;
+    }
   }
 
   function addLocalTerminal(cwd: string | null = null) {
     seq += 1;
     const id = `local-${seq}`;
+    const shell = defaultShellName();
     localTerminals.value.push({
       id,
-      title: `终端 ${localTerminals.value.length + 1}`,
+      title: shell,
+      shell,
       cwd,
     });
-    renumberLocalTitles();
+    applyShellTitles();
     activeLocalId.value = id;
     openSessions(cwd);
+  }
+
+  /**
+   * 在指定目录打开本地终端（资源树右键「在终端中打开」）：
+   * 面板展开；活动终端已在该目录且空闲则直接复用，否则新开终端（cwd=目录），
+   * 保证「文件 → 所在目录、文件夹 → 自身目录」最终落地为终端工作目录。
+   */
+  function openTerminalAt(cwd: string | null) {
+    openSessions(cwd);
+    const active = localTerminals.value.find((t) => t.id === activeLocalId.value);
+    if (!active) return; // 无终端时 ensureDefaultLocal 已按 cwd 创建
+    if (active.cwd === cwd && localIdle.value[active.id] !== false) return;
+    addLocalTerminal(cwd);
   }
 
   /**
@@ -275,7 +295,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     if (idx < 0) return;
     localTerminals.value.splice(idx, 1);
     delete localIdle.value[id];
-    renumberLocalTitles();
+    applyShellTitles();
     if (activeLocalId.value === id) {
       const next = localTerminals.value[idx] || localTerminals.value[idx - 1] || null;
       activeLocalId.value = next?.id ?? null;
@@ -306,7 +326,6 @@ export const useSessionsStore = defineStore("sessions", () => {
       id = activeLocalId.value;
     }
     if (!id) return;
-    setLocalTitle(id, command);
     focusSessions();
     const data = command.endsWith("\r") || command.endsWith("\n")
       ? command
@@ -348,10 +367,10 @@ export const useSessionsStore = defineStore("sessions", () => {
     blurSessions,
     closeSessions,
     addLocalTerminal,
+    openTerminalAt,
     resetLocalForWorkspace,
     closeLocalTerminal,
     activateLocal,
-    setLocalTitle,
     setLocalIdle,
     runInLocalTerminal,
     consumePendingLocalWrite,
