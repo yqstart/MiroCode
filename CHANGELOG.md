@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-26
+
 ### 修复
 
 - 修复打开文件后「标签已出现但编辑区黑屏/空白、必须重启」的问题：画布视图切换不再依赖 out-in 过渡与 CSS transition（其进入/离场动画依赖双 rAF 与动画事件，WKWebView 长时间空闲或被遮挡后 rAF 可能被丢弃，旧视图永久卡在离场、新视图永不挂载）；改为同时过渡 + 绝对定位叠放（新视图在上层、离场视图在下层并禁用交互），动画改用 CSS animation（事件丢失时元素回到自身样式保持可见）并加 :duration 兜底清理残留过渡类。大文件打开与长时间空闲后打开文件的场景均不再黑屏。
@@ -97,6 +99,7 @@
 - 保持轻量、跨平台和离线优先，不包含联网 AI 补全、对话面板或 Agent 能力。
 - 移除编辑器 Minimap 及其设置项、Canvas 绘制和点击定位逻辑。
 
+[0.1.6]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.6
 [0.1.5]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.5
 [0.1.4]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.4
 [0.1.3]: https://github.com/yqstart/MiroCode/releases/tag/v0.1.3
