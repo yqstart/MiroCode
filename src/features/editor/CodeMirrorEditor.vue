@@ -74,14 +74,23 @@ let measureRaf: number | null = null;
  * CodeMirror 首次测量若拿到 0 高度，后续不会因为父级布局变化自动恢复绘制，
  * 最终表现为「标签和状态栏都在，但编辑区空白」。用 ResizeObserver 监听真实
  * 容器尺寸，并合并到下一帧重新测量，避免启动恢复/拖拽面板时留下空白编辑器。
+ * rAF 之外再加 setTimeout 兜底：WKWebView 长时间空闲后恢复绘制时可能丢弃
+ * rAF 回调（WebKit resumePainting 时序缺陷），定时器恢复后必然执行。
  */
+let measureTimer: ReturnType<typeof setTimeout> | null = null;
+
 function scheduleEditorMeasure(): void {
-  if (!view || measureRaf !== null) return;
-  measureRaf = requestAnimationFrame(() => {
+  if (!view || measureRaf !== null || measureTimer !== null) return;
+  const run = () => {
+    if (measureRaf !== null) cancelAnimationFrame(measureRaf);
     measureRaf = null;
+    if (measureTimer !== null) clearTimeout(measureTimer);
+    measureTimer = null;
     if (!view || !host.value?.isConnected) return;
     view.requestMeasure();
-  });
+  };
+  measureRaf = requestAnimationFrame(run);
+  measureTimer = setTimeout(run, 150);
 }
 
 const navHandlers = {
@@ -436,6 +445,15 @@ function createEditor() {
   scheduleEditorMeasure();
 }
 
+/** 窗口恢复（空闲后被遮挡/最小化再回到前台）时强制重测。
+ *  WKWebView 长时间空闲后恢复绘制时可能丢掉 rAF/测量循环，
+ *  表现为「标签已打开但编辑区空白/黑屏」；focus 与 visibilitychange
+ *  必然伴随用户回到窗口，此时补一次 requestMeasure 兜底。 */
+function handleWindowRestore(): void {
+  if (document.hidden) return;
+  scheduleEditorMeasure();
+}
+
 onMounted(() => {
   createEditor();
   if (host.value && typeof ResizeObserver !== "undefined") {
@@ -446,14 +464,22 @@ onMounted(() => {
   }
   // 编辑器首次挂载时拉一次 git status，避免刚打开文件右键看不到 git 菜单
   void git.scheduleRefresh();
+  window.addEventListener("focus", handleWindowRestore);
+  document.addEventListener("visibilitychange", handleWindowRestore);
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("focus", handleWindowRestore);
+  document.removeEventListener("visibilitychange", handleWindowRestore);
   resizeObserver?.disconnect();
   resizeObserver = null;
   if (measureRaf !== null) {
     cancelAnimationFrame(measureRaf);
     measureRaf = null;
+  }
+  if (measureTimer !== null) {
+    clearTimeout(measureTimer);
+    measureTimer = null;
   }
   if (cursorRaf !== null) {
     cancelAnimationFrame(cursorRaf);

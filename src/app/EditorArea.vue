@@ -636,7 +636,15 @@ onBeforeUnmount(() =>
         />
       </TransitionGroup>
 
-      <Transition name="canvas" mode="out-in">
+      <!--
+        画布切换：默认同时过渡 + 绝对定位叠放（enter 在上层、leave 在下层）。
+        不用 out-in：其 afterLeave 依赖 nextFrame（双 rAF）内注册的动画结束
+        监听，WKWebView 长时间空闲/被遮挡后 rAF 可能被丢弃，旧视图会永久
+        卡在 leave、新分支永不挂载（表现为编辑区黑屏/空白，必须重启）。
+        同时模式下即使动画完全未播放，新内容也已挂载且位于上层可见。
+        :duration 兜底「动画事件丢失」场景（清理残留过渡类）。
+      -->
+      <Transition name="canvas" :duration="{ enter: 320, leave: 220 }">
         <template v-if="showFileEditor && activeTab">
           <ImagePreview
             v-if="showImagePreview"
@@ -871,7 +879,6 @@ onBeforeUnmount(() =>
   font-size: 12px;
   max-width: 240px;
   transition: color var(--transition-fast), background var(--transition-fast);
-  animation: miro-tab-in 160ms var(--ease-out);
 }
 
 /* 底部 active 指示条：单时间轴（统一 --transition-medium） */
@@ -922,20 +929,34 @@ onBeforeUnmount(() =>
   transform: scaleX(1);
 }
 
-/* TransitionGroup：标签进出场过渡 */
-.tab-enter-active,
-.tab-leave-active {
-  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
+/* TransitionGroup：标签进出场过渡。
+   进出场用 animation（动画事件丢失时元素保持可见，不会出现标签隐形）；
+   move 必须保留 transition（位置补间需要持续过渡，且不涉及可见性）。 */
+.tab-enter-active {
+  animation: miro-tab-in 160ms var(--ease-out);
 }
-
-.tab-enter-from,
-.tab-leave-to {
-  opacity: 0;
-  transform: translateY(2px);
-}
-
 .tab-leave-active {
+  animation: miro-tab-out 160ms var(--ease-out);
   position: absolute;
+}
+@keyframes miro-tab-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes miro-tab-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(2px);
+  }
 }
 
 .tab-move {
@@ -1046,18 +1067,35 @@ onBeforeUnmount(() =>
   overflow: hidden;
 }
 
+/* 画布全部直接子视图（SSH/GitLog/Compare/编辑器/welcome）统一绝对定位叠放：
+   同时过渡模式下新旧分支共存，靠 z-index 分层（enter 在上）。
+   旧视图即使动画卡住留在 DOM，也被上层新视图盖住，不影响显示与操作。 */
+.canvas > :not(.md-mode-toggle) {
+  position: absolute;
+  inset: 0;
+}
+
 .canvas > :deep(.log-panel) {
   height: 100%;
 }
 
-/* canvas-fade：v-show 视图（sessions/ssh/gitlog/compare）显隐淡入淡出 */
-.canvas-fade-enter-active,
-.canvas-fade-leave-active {
-  transition: opacity var(--transition-medium) var(--ease-out);
+/* canvas-fade：v-show 视图（sessions/ssh/gitlog/compare）显隐淡入淡出。
+   用 animation 而非 transition：WKWebView 空闲恢复时 rAF/动画事件可能丢失，
+   transition 会把元素永久卡在 enter-from（opacity 0 = 黑屏）；
+   animation 不播放时元素回到自身样式（可见），不会黑屏。 */
+.canvas-fade-enter-active {
+  animation: miro-canvas-fade-in var(--transition-medium) var(--ease-out);
 }
-.canvas-fade-enter-from,
-.canvas-fade-leave-to {
-  opacity: 0;
+.canvas-fade-leave-active {
+  animation: miro-canvas-fade-out var(--transition-medium) var(--ease-out);
+}
+@keyframes miro-canvas-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes miro-canvas-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 /* canvas-stack：CompareView TransitionGroup 容器——叠放所有 compare 实例（v-show 切换） */
@@ -1071,40 +1109,68 @@ onBeforeUnmount(() =>
   height: 100%;
 }
 
-/* canvas：互斥视图（CM/Image/md/welcome）淡入淡出 + 轻微上移 */
+/* canvas：互斥视图（CM/Image/md/welcome）交叉淡化 + 轻微上移。
+   用 animation 而非 transition（理由同 canvas-fade）：动画事件/rAF 丢失时
+   元素回到自身样式（opacity 1）保持可见，杜绝「标签已打开但编辑区黑屏」。
+   同时模式下 enter 元素压在上层（z 2），leave 元素在下层（z 1）。 */
 .canvas-enter-active {
-  transition: opacity var(--transition-slow) var(--ease-out),
-    transform var(--transition-slow) var(--ease-out);
+  animation: miro-canvas-in var(--transition-slow) var(--ease-out);
+  z-index: 2;
 }
 .canvas-leave-active {
-  transition: opacity var(--transition-fast) var(--ease-out),
-    transform var(--transition-fast) var(--ease-out);
+  animation: miro-canvas-out var(--transition-fast) var(--ease-out);
+  z-index: 1;
+  /* 离场视图不接收交互：动画卡住残留时也不能挡住新视图 */
+  pointer-events: none;
 }
-.canvas-enter-from {
-  opacity: 0;
-  transform: translateY(4px);
+@keyframes miro-canvas-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
-.canvas-leave-to {
-  opacity: 0;
-  transform: translateY(-2px);
+@keyframes miro-canvas-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
 }
 
-/* ctx：tab-ctx / editor-ctx 右键菜单 popover */
+/* ctx：tab-ctx / editor-ctx 右键菜单 popover。
+   同 canvas：用 animation，动画事件丢失时菜单仍可见可点（transparent 也不挡点击）。 */
 .ctx-enter-active {
-  transition: opacity var(--transition-medium) var(--ease-out),
-    transform var(--transition-medium) var(--ease-out);
+  animation: miro-ctx-in var(--transition-medium) var(--ease-out);
 }
 .ctx-leave-active {
-  transition: opacity var(--transition-fast) var(--ease-out),
-    transform var(--transition-fast) var(--ease-out);
+  animation: miro-ctx-out var(--transition-fast) var(--ease-out);
 }
-.ctx-enter-from {
-  opacity: 0;
-  transform: scale(0.96);
+@keyframes miro-ctx-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
-.ctx-leave-to {
-  opacity: 0;
-  transform: scale(0.98);
+@keyframes miro-ctx-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
 }
 
 /* welcome 内部按钮 hover 平滑（之前是硬切） */
