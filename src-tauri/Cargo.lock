@@ -2280,10 +2280,11 @@ dependencies = [
 
 [[package]]
 name = "mirocode"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "dispatch2",
  "git2",
  "ignore",
  "objc2",

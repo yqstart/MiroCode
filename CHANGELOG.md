@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-08-26
+
+### 修复
+
+- 修复 macOS 红绿灯首次点击红色关闭按钮时只清理终端或文件、窗口无法关闭或需要二次点击的问题。
+- 关闭窗口时先执行 `closeSessions` 并保存状态，再由 AppKit 主线程关闭当前窗口；关闭过程中的重复点击不会重复触发清理。
+
 ## [1.0.0] - 2026-08-26
 
 ### 首个可用大版本
@@ -69,4 +76,5 @@ Miro Code 1.0.0 是当前代码基线的首个可用大版本，定位为轻量�
 - 文件访问、Git、搜索、SSH 和更新说明渲染均加入路径校验、错误处理、超时清理、敏感信息隔离和 Markdown 链接过滤。
 - 采用 MIT 许可证，纯开源免费；本版本坚持离线优先，不包含联网 AI 补全、AI 对话面板、AI Agent、MCP/Skills 生态或插件市场。
 
+[1.0.1]: https://github.com/yqstart/MiroCode/releases/tag/v1.0.1
 [1.0.0]: https://github.com/yqstart/MiroCode/releases/tag/v1.0.0

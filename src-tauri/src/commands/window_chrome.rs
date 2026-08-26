@@ -2,6 +2,18 @@
 
 use tauri::WebviewWindow;
 
+#[cfg(target_os = "macos")]
+struct MainThreadSafe<T>(T);
+
+#[cfg(target_os = "macos")]
+// SAFETY: 该包装值只会被投递到 GCD 主队列，并只在那里访问。
+unsafe impl<T> Send for MainThreadSafe<T> {}
+
+#[cfg(target_os = "macos")]
+fn close_main_thread_window(window: MainThreadSafe<objc2::rc::Retained<objc2_app_kit::NSWindow>>) {
+    window.0.close();
+}
+
 /// CSS 端 `--titlebar-height: 38px`；macOS 上 1 CSS px = 1 逻辑点（pt），
 /// 与 backingScaleFactor 无关（Retina 屏 1pt = 2×2 物理像素，但 NSView 坐标始终用逻辑点）。
 const TITLEBAR_HEIGHT: f64 = 38.0;
@@ -92,6 +104,43 @@ pub fn sync_traffic_lights(window: WebviewWindow) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = window;
+    }
+    Ok(())
+}
+
+/// 在清理完前端会话后，从 AppKit 主线程直接关闭当前窗口。
+///
+/// 红绿灯的 close-requested 事件可能仍处于 Tauri IPC 事件链中，此时再从
+/// WebView 调用 `Window.close/destroy` 会排在同一条链后面，导致窗口只完成
+/// 前端清理却没有真正消失。直接调用 NSWindow.close 绕过这条等待链；前端
+/// 已先把 allowNativeClose 置为 true，因此由此产生的关闭事件会正常放行。
+#[tauri::command]
+pub fn close_window(window: WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use dispatch2::DispatchQueue;
+        use objc2::rc::Retained;
+        use objc2_app_kit::NSWindow;
+
+        let ns_window_ptr = window
+            .ns_window()
+            .map_err(|e| format!("无法获取 NSWindow：{e}"))?
+            as *mut NSWindow;
+        if ns_window_ptr.is_null() {
+            return Err("无法获取 NSWindow".into());
+        }
+
+        // Tauri 的 run_on_main_thread 依赖同一条事件循环消息队列；红叉关闭
+        // 事件处于等待状态时，该任务可能排在当前事件之后。改用 GCD 主队列，
+        // 并额外 retain 窗口，确保异步执行时原生对象仍然有效。
+        let ns_window = unsafe { Retained::retain(ns_window_ptr) }
+            .ok_or_else(|| "无法保留 NSWindow".to_string())?;
+        let ns_window = MainThreadSafe(ns_window);
+        DispatchQueue::main().exec_async(move || close_main_thread_window(ns_window));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.destroy().map_err(|e| e.to_string())?;
     }
     Ok(())
 }

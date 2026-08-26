@@ -373,6 +373,7 @@ pub fn run() {
             commands::security_scoped::release_security_scoped_bookmarks,
             commands::window_chrome::set_titlebar_background,
             commands::window_chrome::sync_traffic_lights,
+            commands::window_chrome::close_window,
             // dev-only：模拟"push 卡住 N ms"，让 __ipcSelfCheck 在真机
             // 量化"卡住期间并发 IPC 的最大耗时"。release 构建下函数立即返回错误。
             commands::git::dev_fake_block,

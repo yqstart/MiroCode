@@ -2,7 +2,6 @@ import { nextTick, watch, type WatchStopHandle } from "vue";
 import { useEditorStore } from "@/stores/editor";
 import { useSettingsStore } from "@/stores/settings";
 import { useSessionsStore } from "@/stores/sessions";
-import type { Window as TauriWindow } from "@tauri-apps/api/window";
 
 /**
  * 自动保存：
@@ -97,14 +96,15 @@ export function setupAutoSave(options: AutoSaveOptions = {}): () => void {
     window.removeEventListener("pagehide", onPageHide);
   });
 
-  // Tauri 窗口关闭：先完成终端清理，再强制关闭窗口。
-  // 关闭处理器必须立即返回（而不是在 close-requested 回调里 await destroy），
-  // 否则 macOS 红绿灯的关闭事件可能被当前回调链消费，表现为需要再次点击。
-  let closeUnlisten: (() => void) | undefined;
-  let closeStarted = false;
+  // Tauri 窗口关闭：先完成终端清理，再继续原生关闭流程。
+  // close-requested 由 Tauri API 的异步事件包装器派发；清理期间必须拦截
+  // 后续点击，清理完成后允许原生关闭事件通过，避免红绿灯事件再次进入
+  // 同一个关闭处理器而把窗口留在已拦截状态。
+  let closeUnlisten: (() => void | Promise<void>) | undefined;
+  let closePromise: Promise<void> | null = null;
   let allowNativeClose = false;
 
-  async function finishWindowClose(win: TauriWindow) {
+  async function finishWindowClose(win: { destroy: () => Promise<void> }) {
     try {
       await options.beforeClose?.();
     } catch {
@@ -122,14 +122,20 @@ export function setupAutoSave(options: AutoSaveOptions = {}): () => void {
       // 自动保存失败也不能阻止窗口关闭。
     }
 
-    // 脱离 close-requested 当前事件调用栈后再 destroy，确保本次红叉点击
-    // 对应的关闭请求不会被 Tauri 的事件包装器再次拦截。
+    // 允许后续原生 close 请求通过。不能只依赖异步注销监听，否则 macOS
+    // 可能在注销完成前再次把请求拦住。
+    allowNativeClose = true;
+    closeUnlisten?.();
+    closeUnlisten = undefined;
+
+    // macOS 红绿灯的原生关闭请求可能仍在等待 Tauri 的事件链；通过 Rust
+    // 在 AppKit 主线程直接关闭 NSWindow，避免再次排队到同一条 IPC 链后面。
     window.setTimeout(() => {
-      allowNativeClose = true;
-      void win.destroy().catch(() => {
-        // 极少数平台实现只接受 close；allowNativeClose 让该兜底调用
-        // 触发的 close-requested 直接放行，不会重新进入清理流程。
-        void win.close().catch(() => undefined);
+      void import("@tauri-apps/api/core").then(({ invoke }) =>
+        invoke("close_window"),
+      ).catch(() => {
+        // 原生关闭命令不可用时再使用 Tauri 的强制销毁兜底。
+        void win.destroy().catch(() => undefined);
       });
     }, 0);
   }
@@ -140,12 +146,19 @@ export function setupAutoSave(options: AutoSaveOptions = {}): () => void {
       const win = getCurrentWindow();
       closeUnlisten = await win.onCloseRequested((event) => {
         if (allowNativeClose) return;
-        // 清理期间的重复点击只阻止重复启动清理；第一次请求对应的
-        // finishWindowClose 会在完成后自动 destroy，不需要用户再次点击。
         event.preventDefault();
-        if (closeStarted) return;
-        closeStarted = true;
-        void finishWindowClose(win);
+        // 清理期间的重复点击只阻止重复启动清理；第一次请求对应的
+        // finishWindowClose 会在完成后继续原生 close，不需要用户再次点击。
+        if (closePromise) return;
+        closePromise = finishWindowClose(win);
+        void closePromise.then(
+          () => {
+            closePromise = null;
+          },
+          () => {
+            closePromise = null;
+          },
+        );
       });
     } catch {
       // 纯浏览器预览无 Tauri
