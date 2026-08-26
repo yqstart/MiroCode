@@ -1344,6 +1344,26 @@ watch(selectedId, (id) => {
   user-select: none;
   white-space: nowrap;
 }
+
+/* 文字描述区域恢复文本选择（body 全局 user-select:none 防误选）：
+   提交描述列与详情面板的文字可选中复制（⌘/Ctrl+C），
+   工具栏按钮 / 勾选框 / 图列仍保持不可选。 */
+.tr .desc-c,
+.tr .date-c,
+.tr .author-c,
+.tr .hash-c,
+.detail .detail-title,
+.detail .meta,
+.detail .commit-body,
+.detail .ref-row,
+.detail .muted,
+.detail .files-head,
+.detail .file-list .file,
+.detail .parents .parent,
+.detail .parents .section-label {
+  user-select: text;
+  -webkit-user-select: text;
+}
 .check input,
 .branch-option input {
   accent-color: var(--accent);
