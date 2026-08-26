@@ -124,9 +124,8 @@ async function onDiscard(path: string) {
 }
 
 async function onStageAll() {
-  const paths = unstagedEntries.value.map((e) => e.path);
-  if (!paths.length) return;
-  await git.stage(paths);
+  // 交给后端按当前仓库状态全量暂存，避免前端快照与实际文件变化之间漏项。
+  await git.stageAll();
 }
 
 async function onUnstageAll() {

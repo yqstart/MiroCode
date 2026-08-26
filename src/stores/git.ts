@@ -112,6 +112,8 @@ export const useGitStore = defineStore("git", () => {
   let scheduledRefreshResolvers: Array<() => void> = [];
   /** 当前刷新循环的 Promise；并发调用会排队补刷，并等待最终结果。 */
   let activeRefreshPromise: Promise<void> | null = null;
+  /** Git 索引写入队列：多窗口或快速点击暂存时不能让后写入的旧索引覆盖前一次结果。 */
+  let indexOperationQueue: Promise<void> = Promise.resolve();
   /** 日志加载专用序号：与 refreshSeq 解耦。
    *  loadLog 与 refresh 并发时（GitLogPanel ensureLog 的 Promise.all），
    *  refresh 自增 refreshSeq 会把 loadLog 结果系统性作废——面板打开/刷新
@@ -294,6 +296,12 @@ export const useGitStore = defineStore("git", () => {
     return settled;
   }
 
+  function enqueueIndexOperation(operation: () => Promise<void>): Promise<void> {
+    const next = indexOperationQueue.then(operation, operation);
+    indexOperationQueue = next.catch(() => {});
+    return next;
+  }
+
   async function initRepo() {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
@@ -311,30 +319,44 @@ export const useGitStore = defineStore("git", () => {
 
   async function stage(paths: string[]) {
     const workspace = useWorkspaceStore();
-    if (!workspace.rootPath || !paths.length) return;
-    try {
-      await gitStage(workspace.rootPath, paths);
-      await refresh();
-    } catch (error) {
-      workspace.showNotice(
-        error instanceof Error ? error.message : String(error),
-        3200,
-      );
-    }
+    const root = workspace.rootPath;
+    if (!root) return;
+    await enqueueIndexOperation(async () => {
+      // 请求排队期间可能已经切换工作区，不能把旧工作区的操作写入新工作区。
+      if (workspace.rootPath !== root) return;
+      try {
+        // 空 paths 是后端约定的「全部暂存」，比依赖某一帧前端状态枚举更可靠。
+        await gitStage(root, paths);
+        await refresh();
+      } catch (error) {
+        workspace.showNotice(
+          error instanceof Error ? error.message : String(error),
+          3200,
+        );
+      }
+    });
+  }
+
+  async function stageAll() {
+    await stage([]);
   }
 
   async function unstage(paths: string[]) {
     const workspace = useWorkspaceStore();
-    if (!workspace.rootPath || !paths.length) return;
-    try {
-      await gitUnstage(workspace.rootPath, paths);
-      await refresh();
-    } catch (error) {
-      workspace.showNotice(
-        error instanceof Error ? error.message : String(error),
-        3200,
-      );
-    }
+    const root = workspace.rootPath;
+    if (!root || !paths.length) return;
+    await enqueueIndexOperation(async () => {
+      if (workspace.rootPath !== root) return;
+      try {
+        await gitUnstage(root, paths);
+        await refresh();
+      } catch (error) {
+        workspace.showNotice(
+          error instanceof Error ? error.message : String(error),
+          3200,
+        );
+      }
+    });
   }
 
   async function commit(message?: string, paths?: string[]) {
@@ -1467,6 +1489,7 @@ export const useGitStore = defineStore("git", () => {
     scheduleRefresh,
     initRepo,
     stage,
+    stageAll,
     unstage,
     commit,
     commitAndPush,

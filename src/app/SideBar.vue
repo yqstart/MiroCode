@@ -60,32 +60,32 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Transition name="sidebar">
-    <aside
-      v-if="!layout.sidebarCollapsed"
-      class="sidebar"
-      :style="{ width: `${layout.sidebarWidth}px` }"
-      :aria-label="t('app.sidebar')"
-    >
-      <Transition name="panel-fade" mode="out-in">
-        <KeepAlive>
-          <ExplorerPanel
-            v-if="layout.activePanel === 'explorer'"
-            key="explorer"
-          />
-          <CommitPanel
-            v-else-if="layout.activePanel === 'commit'"
-            key="commit"
-          />
-        </KeepAlive>
-      </Transition>
-      <div
-        class="resizer"
-        :title="t('app.resizeSidebar')"
-        @mousedown="onResizeStart"
+  <!-- 侧边栏显隐使用 v-show + 纯 CSS animation，而不是 Vue Transition：
+       前者由渲染引擎驱动、display 切换立即可见，不依赖 transitionend 事件；
+       后者在 WKWebView 窗口失焦/遮挡时过渡事件会丢失，导致侧边栏
+       卡在收起态「消失后点不出来」。 -->
+  <aside
+    v-show="!layout.sidebarCollapsed"
+    class="sidebar"
+    :style="{ width: `${layout.sidebarWidth}px` }"
+    :aria-label="t('app.sidebar')"
+  >
+    <KeepAlive>
+      <ExplorerPanel
+        v-if="layout.activePanel === 'explorer'"
+        key="explorer"
       />
-    </aside>
-  </Transition>
+      <CommitPanel
+        v-else-if="layout.activePanel === 'commit'"
+        key="commit"
+      />
+    </KeepAlive>
+    <div
+      class="resizer"
+      :title="t('app.resizeSidebar')"
+      @mousedown="onResizeStart"
+    />
+  </aside>
 </template>
 
 <style scoped>
@@ -101,6 +101,16 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* 展开动画：display:none → 显示时 animation 自动从头播放，
+     播放结束元素自然停在终态；动画被暂停/跳过也不会影响最终可见性 */
+  animation: sidebar-reveal var(--transition-medium) var(--ease-out);
+}
+
+@keyframes sidebar-reveal {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
 }
 
 .sidebar > :deep(*) {
@@ -115,30 +125,5 @@ onBeforeUnmount(() => {
   height: 100%;
   cursor: col-resize;
   z-index: 2;
-}
-
-/* sidebar：展开/收起：宽度 + 透明度 */
-.sidebar-enter-active {
-  transition: width var(--transition-medium) var(--ease-out),
-    opacity var(--transition-medium) var(--ease-out);
-}
-.sidebar-leave-active {
-  transition: width var(--transition-fast) var(--ease-out),
-    opacity var(--transition-fast) var(--ease-out);
-}
-.sidebar-enter-from,
-.sidebar-leave-to {
-  width: 0 !important;
-  opacity: 0;
-}
-
-/* panel-fade：explorer ↔ commit 切换淡入 */
-.panel-fade-enter-active,
-.panel-fade-leave-active {
-  transition: opacity var(--transition-fast) var(--ease-out);
-}
-.panel-fade-enter-from,
-.panel-fade-leave-to {
-  opacity: 0;
 }
 </style>

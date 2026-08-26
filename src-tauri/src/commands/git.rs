@@ -91,6 +91,13 @@ fn cache_status_result(
     let _ = try_store_status_result(&mut state, root, request_generation, result);
 }
 
+/// 进程内串行化会写 Git 索引的操作。
+/// 多窗口或快速连续点击时，各操作若同时读取旧 index 再写回，后写入者会覆盖前一次结果。
+fn index_operation_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStatusEntry {
@@ -401,6 +408,9 @@ fn index_add(repo: &Repository, paths: &[String]) -> Result<(), String> {
 
 #[tauri::command]
 pub fn git_stage(root: String, paths: Vec<String>) -> Result<(), String> {
+    let _index_guard = index_operation_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
     let result = (|| {
@@ -413,6 +423,9 @@ pub fn git_stage(root: String, paths: Vec<String>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn git_unstage(root: String, paths: Vec<String>) -> Result<(), String> {
+    let _index_guard = index_operation_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
     let result = (|| {
@@ -471,6 +484,9 @@ fn commit_internal(
     amend: Option<bool>,
     extra_parent: Option<git2::Oid>,
 ) -> Result<String, String> {
+    let _index_guard = index_operation_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let repo = open_repo(&root)?;
     if message.trim().is_empty() {
         return Err("提交说明不能为空".into());
@@ -3762,6 +3778,41 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.path == "README.md" && entry.staged));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn git_stage_all_stages_modified_new_and_deleted_files() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+        std::fs::write(root.join("modified.txt"), "before\n").expect("写入文件");
+        std::fs::write(root.join("deleted.txt"), "remove me\n").expect("写入文件");
+        run_git_ok(root, &["add", "."]);
+        run_git_ok(root, &["commit", "-m", "init"]);
+
+        std::fs::write(root.join("modified.txt"), "after\n").expect("修改文件");
+        std::fs::remove_file(root.join("deleted.txt")).expect("删除文件");
+        std::fs::write(root.join("new.txt"), "new\n").expect("新增文件");
+
+        let root_string = root.to_string_lossy().into_owned();
+        let before = git_status(root_string.clone()).await.expect("读取修改前状态");
+        assert_eq!(before.entries.len(), 3, "修改/删除/新增都应出现在更改列表");
+
+        // 空路径代表真正的「全部暂存」，不能依赖前端某一帧快照枚举路径。
+        git_stage(root_string.clone(), vec![]).expect("全部暂存");
+        let after = git_status(root_string).await.expect("读取暂存后状态");
+        assert!(
+            after.entries.iter().all(|entry| !entry.unstaged),
+            "全部暂存后不应残留未暂存项: {:?}",
+            after.entries
+        );
+        assert_eq!(after.entries.len(), 3, "三类变更都应保留为已暂存状态");
+        assert!(after
+            .entries
+            .iter()
+            .all(|entry| entry.staged), "全部变更都应标记为已暂存: {:?}", after.entries);
     }
 
     #[test]

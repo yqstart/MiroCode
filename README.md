@@ -16,7 +16,7 @@
 
 - 工作区资源树（**Material Icon Theme** 文件图标）/ 文件右键操作 / 外部变更监听
 - CodeMirror 6 多标签编辑：高亮 / 折叠 / 查找替换 / 格式化 / 诊断 / 补全 / 跳转
-- **AI 行内智能补全**（ghost text，类 Copilot）：DeepSeek / 自定义 provider，流式生成，Tab 接受
+- 离线代码补全与本地语言智能：JavaScript / TypeScript 类型服务、Vue 单文件组件辅助、HTML / CSS 语言服务
 - ⌘P 文件查找、⌘⇧F 全局搜索与替换
 - Git 全功能：左侧 Commit、编辑区 Git Log、Branches、交互式 Rebase、冲突分栏解决、HTTPS 登录
 - 本地终端（⌘J）与 SSH 远程（状态栏入口，远程终端）

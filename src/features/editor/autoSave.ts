@@ -2,6 +2,7 @@ import { nextTick, watch, type WatchStopHandle } from "vue";
 import { useEditorStore } from "@/stores/editor";
 import { useSettingsStore } from "@/stores/settings";
 import { useSessionsStore } from "@/stores/sessions";
+import type { Window as TauriWindow } from "@tauri-apps/api/window";
 
 /**
  * 自动保存：
@@ -20,7 +21,6 @@ export function setupAutoSave(options: AutoSaveOptions = {}): () => void {
 
   let delayTimer: number | undefined;
   let flushPromise: Promise<void> | null = null;
-  let closePromise: Promise<void> | null = null;
   const stops: WatchStopHandle[] = [];
   const cleanups: Array<() => void> = [];
 
@@ -97,37 +97,55 @@ export function setupAutoSave(options: AutoSaveOptions = {}): () => void {
     window.removeEventListener("pagehide", onPageHide);
   });
 
-  // Tauri 窗口关闭：先落盘再销毁，作为崩溃/退出兜底
+  // Tauri 窗口关闭：先完成终端清理，再强制关闭窗口。
+  // 关闭处理器必须立即返回（而不是在 close-requested 回调里 await destroy），
+  // 否则 macOS 红绿灯的关闭事件可能被当前回调链消费，表现为需要再次点击。
   let closeUnlisten: (() => void) | undefined;
+  let closeStarted = false;
+  let allowNativeClose = false;
+
+  async function finishWindowClose(win: TauriWindow) {
+    try {
+      await options.beforeClose?.();
+    } catch {
+      // 状态快照失败也不能跳过终端清理或阻止窗口关闭。
+    }
+    try {
+      await sessions.closeSessions({ preserveSession: true });
+      await nextTick();
+    } catch {
+      // 终端清理失败也不能把窗口留在半关闭状态。
+    }
+    try {
+      await flushNow();
+    } catch {
+      // 自动保存失败也不能阻止窗口关闭。
+    }
+
+    // 脱离 close-requested 当前事件调用栈后再 destroy，确保本次红叉点击
+    // 对应的关闭请求不会被 Tauri 的事件包装器再次拦截。
+    window.setTimeout(() => {
+      allowNativeClose = true;
+      void win.destroy().catch(() => {
+        // 极少数平台实现只接受 close；allowNativeClose 让该兜底调用
+        // 触发的 close-requested 直接放行，不会重新进入清理流程。
+        void win.close().catch(() => undefined);
+      });
+    }, 0);
+  }
+
   void (async () => {
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const win = getCurrentWindow();
-      closeUnlisten = await win.onCloseRequested(async (event) => {
+      closeUnlisten = await win.onCloseRequested((event) => {
+        if (allowNativeClose) return;
+        // 清理期间的重复点击只阻止重复启动清理；第一次请求对应的
+        // finishWindowClose 会在完成后自动 destroy，不需要用户再次点击。
         event.preventDefault();
-        // macOS 红点关闭可能在清理期间重复触发；复用同一个 Promise，
-        // 避免多个 close handler 同时保存、销毁同一个窗口。
-        if (closePromise) return;
-        closePromise = (async () => {
-          try {
-            await options.beforeClose?.();
-          } catch {
-            // 会话快照是退出兜底，写入失败不能阻止窗口关闭。
-          }
-          // 先卸载本窗口的终端组件，让 PTY kill 尽早发出；常驻终端不能
-          // 继续占用运行时线程，否则保存和 destroy 也会被拖住。
-          await sessions.closeSessions({ preserveSession: true });
-          await nextTick();
-          await flushNow();
-          closeUnlisten?.();
-          closeUnlisten = undefined;
-          await win.destroy();
-        })();
-        try {
-          await closePromise;
-        } finally {
-          closePromise = null;
-        }
+        if (closeStarted) return;
+        closeStarted = true;
+        void finishWindowClose(win);
       });
     } catch {
       // 纯浏览器预览无 Tauri

@@ -24,6 +24,7 @@ import PushDialog from "@/features/git/PushDialog.vue";
 import UpdateProjectDialog from "@/features/git/UpdateProjectDialog.vue";
 import InteractiveRebaseDialog from "@/features/git/InteractiveRebaseDialog.vue";
 import { basename } from "@/shared/fs";
+import { dispatchDockMenuEvent, type DockMenuEvent } from "@/shared/dockMenu";
 import { setupAutoSave } from "@/features/editor/autoSave";
 import { checkForAppUpdate } from "@/shared/appUpdate";
 import { isMacOS } from "@/shared/platform";
@@ -265,22 +266,20 @@ function persistWindowState() {
 
 function onBeforeUnload() {
   persistWindowState();
+  // 关闭单个窗口时移除索引；应用整体退出由 app://will-exit 标记后保留。
+  if (!appQuitting) removeWindowSession(windowSessionId);
 }
 
-/** 主进程发出应用退出通知后，各 WebView 先保存，随后关闭处理器才会销毁 PTY。 */
+/** 主进程发出应用退出通知后，各 WebView 先保存，再按原生流程退出。 */
 function onAppWillExit() {
   appQuitting = true;
   persistWindowState();
 }
 
-async function isApplicationQuitting(): Promise<boolean> {
-  if (appQuitting) return true;
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke<boolean>("is_app_quitting");
-  } catch {
-    return appQuitting;
-  }
+function openRecentProjectInNewWindow(path: string) {
+  void openFolderInNewWindow(path).catch((error) => {
+    workspace.showNotice(error instanceof Error ? error.message : String(error), 3200);
+  });
 }
 
 async function restoreApplicationWindows(bootFolder: string | null) {
@@ -319,12 +318,10 @@ onMounted(async () => {
   window.addEventListener("focus", onWindowFocus);
   window.addEventListener("beforeunload", onBeforeUnload);
   teardownAutoSave = setupAutoSave({
-    beforeClose: async () => {
+    beforeClose: () => {
       persistWindowState();
       // 正常关闭单个窗口时不应在下次启动重新打开；应用整体退出则保留。
-      if (!(await isApplicationQuitting())) {
-        removeWindowSession(windowSessionId);
-      }
+      if (!appQuitting) removeWindowSession(windowSessionId);
     },
   });
   // macOS：启动后立即把主窗口拉前（解决自动更新后需手动点 dock 才能前置的问题）。
@@ -353,22 +350,24 @@ onMounted(async () => {
     // 纯 Vite 预览时无 Tauri runtime
   }
   // macOS Dock 菜单（右键 Dock 图标弹出的菜单）点击事件。
-  // payload = { id: "recent" | "open_folder", path?: string }
-  // Rust 端由 commands/dock_menu.rs 的 DockMenuTarget emit。
-  try {
-    unlistenDockMenu = await listen<{ id: string; path?: string }>(
-      "menu://dock",
-      (event) => {
-        const { id, path } = event.payload;
-        if (id === "open_folder") {
-          void workspace.openFolder();
-        } else if (id === "recent" && path) {
-          void workspace.openFolder(path, { quiet: true });
-        }
-      },
-    );
-  } catch {
-    // 非 macOS / 纯 Vite 预览时无此事件源
+  // Rust 端用 app.emit 广播给全部 WebView，因此只让主窗口注册监听，
+  // 避免已有多个窗口时一次点击被重复处理。
+  if (isPrimaryWindow) {
+    try {
+      unlistenDockMenu = await listen<DockMenuEvent>(
+        "menu://dock",
+        (event) => {
+          dispatchDockMenuEvent(event.payload, {
+            openFolder: () => {
+              void workspace.openFolder();
+            },
+            openRecentInNewWindow: openRecentProjectInNewWindow,
+          });
+        },
+      );
+    } catch {
+      // 非 macOS / 纯 Vite 预览时无此事件源
+    }
   }
 
   const { folder: bootFolder } = readBootState();

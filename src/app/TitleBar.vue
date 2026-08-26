@@ -119,10 +119,22 @@ onUnmounted(() => {
       :aria-pressed="!collapsed"
       @click="settings.toggleSidebar()"
     >
-      <Transition name="icon" mode="out-in">
-        <PanelLeftClose v-if="!collapsed" :key="'open'" :size="15" :stroke-width="1.75" />
-        <PanelLeft v-else :key="'closed'" :size="15" :stroke-width="1.75" />
-      </Transition>
+      <!-- 图标切换用纯 CSS animation（key 变化重挂载即重播），
+           不依赖 transitionend 事件，避免 WKWebView 下卡住后图标消失 -->
+      <PanelLeftClose
+        v-if="!collapsed"
+        :key="'open'"
+        class="icon-swap"
+        :size="15"
+        :stroke-width="1.75"
+      />
+      <PanelLeft
+        v-else
+        :key="'closed'"
+        class="icon-swap"
+        :size="15"
+        :stroke-width="1.75"
+      />
     </button>
     <div class="drag-fill" data-tauri-drag-region />
     <!-- 全局项目标题：项目名（粗）+ 路径（淡灰），点击复制完整路径 -->
@@ -253,19 +265,17 @@ onUnmounted(() => {
   opacity: 1;
 }
 
-/* icon crossfade：sidebar 折叠按钮切换 */
-.icon-enter-active,
-.icon-leave-active {
-  transition: opacity var(--transition-fast) var(--ease-out),
-    transform var(--transition-medium) var(--ease-out);
+/* icon crossfade：sidebar 折叠按钮切换（纯 CSS animation，
+   不依赖 transitionend，WKWebView 失焦/遮挡下不会卡住导致图标消失） */
+.icon-swap {
+  animation: icon-swap-in var(--transition-fast) var(--ease-out);
 }
-.icon-enter-from {
-  opacity: 0;
-  transform: rotate(-90deg) scale(0.85);
-}
-.icon-leave-to {
-  opacity: 0;
-  transform: rotate(90deg) scale(0.85);
+
+@keyframes icon-swap-in {
+  from {
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.85);
+  }
 }
 
 /* 复制成功 tick 淡入淡出 */
