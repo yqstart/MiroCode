@@ -1,10 +1,10 @@
 use serde::Serialize;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use walkdir::WalkDir;
 
-use super::path_util::{ensure_inside_workspace, is_tree_ignored, normalize};
+use super::path_util::{is_tree_ignored, resolve_inside_workspace};
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -37,8 +37,7 @@ fn list_dir_blocking(
     extra_ignores: Option<Vec<String>>,
 ) -> Result<Vec<DirEntryInfo>, String> {
     let root_path = PathBuf::from(&root);
-    let dir = normalize(&path)?;
-    ensure_inside_workspace(&root_path, &dir)?;
+    let dir = resolve_inside_workspace(&root_path, Path::new(&path))?;
 
     if !dir.is_dir() {
         return Err("目标不是目录".into());
@@ -87,8 +86,7 @@ pub async fn read_text_file(root: String, path: String) -> Result<String, String
 fn read_text_file_blocking(root: String, path: String) -> Result<String, String> {
     const MAX_BYTES: u64 = 20 * 1024 * 1024; // 20MB（对齐 read_file_base64 的上限策略）
     let root_path = PathBuf::from(&root);
-    let file = normalize(&path)?;
-    ensure_inside_workspace(&root_path, &file)?;
+    let file = resolve_inside_workspace(&root_path, Path::new(&path))?;
     if !file.is_file() {
         return Err("目标不是文件".into());
     }
@@ -121,8 +119,7 @@ pub async fn read_file_base64(root: String, path: String) -> Result<String, Stri
 fn read_file_base64_blocking(root: String, path: String) -> Result<String, String> {
     const MAX_BYTES: usize = 40 * 1024 * 1024; // 40MB
     let root_path = PathBuf::from(&root);
-    let file = normalize(&path)?;
-    ensure_inside_workspace(&root_path, &file)?;
+    let file = resolve_inside_workspace(&root_path, Path::new(&path))?;
     if !file.is_file() {
         return Err("目标不是文件".into());
     }
@@ -138,8 +135,7 @@ fn read_file_base64_blocking(root: String, path: String) -> Result<String, Strin
 #[tauri::command]
 pub fn write_text_file(root: String, path: String, content: String) -> Result<(), String> {
     let root_path = PathBuf::from(&root);
-    let file = PathBuf::from(&path);
-    ensure_inside_workspace(&root_path, &file)?;
+    let file = resolve_inside_workspace(&root_path, Path::new(&path))?;
     if let Some(parent) = file.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -149,8 +145,7 @@ pub fn write_text_file(root: String, path: String, content: String) -> Result<()
 #[tauri::command]
 pub fn create_entry(root: String, path: String, is_dir: bool) -> Result<(), String> {
     let root_path = PathBuf::from(&root);
-    let target = PathBuf::from(&path);
-    ensure_inside_workspace(&root_path, &target)?;
+    let target = resolve_inside_workspace(&root_path, Path::new(&path))?;
     if target.exists() {
         return Err("路径已存在".into());
     }
@@ -167,10 +162,9 @@ pub fn create_entry(root: String, path: String, is_dir: bool) -> Result<(), Stri
 #[tauri::command]
 pub fn rename_entry(root: String, from: String, to: String) -> Result<(), String> {
     let root_path = PathBuf::from(&root);
-    let from_path = normalize(&from)?;
-    let to_path = PathBuf::from(&to);
-    ensure_inside_workspace(&root_path, &from_path)?;
-    ensure_inside_workspace(&root_path, &to_path)?;
+    let from_path = resolve_inside_workspace(&root_path, Path::new(&from))?;
+    let to_path = resolve_inside_workspace(&root_path, Path::new(&to))?;
+    ensure_not_workspace_root(&root_path, &from_path, "不能重命名工作区根目录")?;
     if to_path.exists() {
         return Err("目标路径已存在".into());
     }
@@ -190,13 +184,22 @@ pub async fn delete_entry(root: String, path: String) -> Result<(), String> {
 
 fn delete_entry_blocking(root: String, path: String) -> Result<(), String> {
     let root_path = PathBuf::from(&root);
-    let target = normalize(&path)?;
-    ensure_inside_workspace(&root_path, &target)?;
+    let target = resolve_inside_workspace(&root_path, Path::new(&path))?;
+    ensure_not_workspace_root(&root_path, &target, "不能删除工作区根目录")?;
     if target.is_dir() {
         fs::remove_dir_all(&target).map_err(|e| e.to_string())
     } else {
         fs::remove_file(&target).map_err(|e| e.to_string())
     }
+}
+
+fn ensure_not_workspace_root(root: &Path, target: &Path, message: &str) -> Result<(), String> {
+    let root_canon = fs::canonicalize(root).map_err(|e| format!("工作区无效: {e}"))?;
+    let target_canon = fs::canonicalize(target).map_err(|e| e.to_string())?;
+    if target_canon == root_canon {
+        return Err(message.into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -212,10 +215,12 @@ pub async fn copy_entry(root: String, from: String, to: String) -> Result<(), St
 
 fn copy_entry_blocking(root: String, from: String, to: String) -> Result<(), String> {
     let root_path = PathBuf::from(&root);
-    let from_path = normalize(&from)?;
-    let to_path = PathBuf::from(&to);
-    ensure_inside_workspace(&root_path, &from_path)?;
-    ensure_inside_workspace(&root_path, &to_path)?;
+    let from_path = resolve_inside_workspace(&root_path, Path::new(&from))?;
+    let to_path = resolve_inside_workspace(&root_path, Path::new(&to))?;
+
+    if to_path.exists() {
+        return Err("目标路径已存在".into());
+    }
 
     if from_path.is_file() {
         if let Some(parent) = to_path.parent() {
@@ -227,6 +232,11 @@ fn copy_entry_blocking(root: String, from: String, to: String) -> Result<(), Str
 
     if !from_path.is_dir() {
         return Err("不支持的复制源".into());
+    }
+    let from_canon = fs::canonicalize(&from_path).map_err(|e| e.to_string())?;
+    let destination_canon = canonicalize_for_creation(&to_path)?;
+    if destination_canon.starts_with(&from_canon) {
+        return Err("不能将文件夹复制到自身或其子目录内".into());
     }
 
     for entry in WalkDir::new(&from_path) {
@@ -248,12 +258,117 @@ fn copy_entry_blocking(root: String, from: String, to: String) -> Result<(), Str
     Ok(())
 }
 
+/// 目标尚不存在时，按最近的现存祖先解析其真实路径，识别通过符号链接
+/// 指向源目录的复制目标，避免递归复制把新文件继续纳入 WalkDir。
+fn canonicalize_for_creation(path: &Path) -> Result<PathBuf, String> {
+    let mut existing = path;
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(existing) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let name = existing
+                    .file_name()
+                    .ok_or_else(|| "无效目标路径".to_string())?;
+                missing.push(name.to_os_string());
+                existing = existing
+                    .parent()
+                    .ok_or_else(|| "无效目标路径".to_string())?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let mut canonical = fs::canonicalize(existing).map_err(|e| e.to_string())?;
+    for component in missing.iter().rev() {
+        canonical.push(component);
+    }
+    Ok(canonical)
+}
+
 #[tauri::command]
 pub fn path_exists(root: String, path: String) -> Result<bool, String> {
     let root_path = PathBuf::from(&root);
-    let target = PathBuf::from(&path);
-    ensure_inside_workspace(&root_path, &target)?;
+    let target = resolve_inside_workspace(&root_path, Path::new(&path))?;
     Ok(target.exists())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_workspace_paths_use_the_selected_root() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path().join("repo");
+        std::fs::create_dir_all(&root).expect("创建工作区");
+
+        write_text_file(
+            root.to_string_lossy().into_owned(),
+            "nested/config.json".into(),
+            "{}".into(),
+        )
+        .expect("写入相对路径");
+
+        let target = root.join("nested/config.json");
+        assert_eq!(std::fs::read_to_string(&target).expect("读取文件"), "{}");
+        assert!(path_exists(
+            root.to_string_lossy().into_owned(),
+            "nested/config.json".into(),
+        )
+        .expect("检查相对路径"));
+    }
+
+    #[test]
+    fn workspace_root_cannot_be_renamed_or_deleted() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path().join("repo");
+        std::fs::create_dir_all(&root).expect("创建工作区");
+        let root_string = root.to_string_lossy().into_owned();
+
+        let delete_error = delete_entry_blocking(root_string.clone(), ".".into())
+            .expect_err("不应删除工作区根目录");
+        assert!(delete_error.contains("不能删除工作区根目录"));
+        assert!(root.is_dir());
+
+        let rename_error = rename_entry(root_string, ".".into(), "renamed".into())
+            .expect_err("不应重命名工作区根目录");
+        assert!(rename_error.contains("不能重命名工作区根目录"));
+        assert!(root.is_dir());
+    }
+
+    #[test]
+    fn copy_directory_into_itself_is_rejected_for_dot_alias() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path().join("repo");
+        std::fs::create_dir_all(&root).expect("创建工作区");
+        let root_string = root.to_string_lossy().into_owned();
+
+        let error = copy_entry_blocking(root_string, ".".into(), "nested".into())
+            .expect_err("工作区根目录不能复制到自身子目录");
+        assert!(error.contains("不能将文件夹复制到自身或其子目录内"));
+        assert!(!root.join("nested").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_directory_into_symlinked_child_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path().join("repo");
+        let source = root.join("source");
+        std::fs::create_dir_all(&source).expect("创建源目录");
+        symlink(&source, root.join("alias")).expect("创建目录符号链接");
+
+        let error = copy_entry_blocking(
+            root.to_string_lossy().into_owned(),
+            "source".into(),
+            "alias/nested".into(),
+        )
+        .expect_err("符号链接别名下不应递归复制");
+        assert!(error.contains("不能将文件夹复制到自身或其子目录内"));
+        assert!(!source.join("nested").exists());
+    }
 }
 
 /// 读取全局用户 snippets 目录（~/.mirocode/snippets/*.json），返回（文件名, 内容）列表。

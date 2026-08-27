@@ -54,7 +54,12 @@ function hostVisible(): boolean {
 
 function writePty(data: string): void {
   if (!pty || disposed) return;
-  pty.write(data);
+  try {
+    pty.write(data);
+  } catch {
+    // PTY 可能在输入事件与 onExit 之间刚好退出；输入桥接不能因此抛出
+    // 未处理异常，后续脚本仍可通过会话状态重新创建终端。
+  }
 }
 
 function spawnPty() {
@@ -107,6 +112,7 @@ function spawnPty() {
     });
 
     pty.onExit(() => {
+      if (disposed) return;
       term?.writeln("\r\n\x1b[90m[进程已退出]\x1b[0m");
       // 防止僵尸终端：置空 pty 引用、上报非空闲。否则 shell 退出后组件仍挂载、
       // pty 引用非空，芯片命令判定「非 busy」复用本终端 → pty.write 落到已死
@@ -228,9 +234,10 @@ watch(
       // 立即走失败提示分支，避免命令被静默吞掉。
       if (ptySpawnedOnce) break;
       await new Promise((r) => window.setTimeout(r, 50));
-      if (disposed) return;
+      if (disposed || pendingLocalWrite.value?.seq !== job.seq) return;
     }
-    if (!pty || disposed) {
+    if (disposed || pendingLocalWrite.value?.seq !== job.seq) return;
+    if (!pty) {
       // PTY 启动失败（非桌面环境 / 权限错误）或已退出：任务作废并消费，
       // 否则残留 store 永远无人消费（旧 terminalId 已无对应终端）
       if (!disposed) {
@@ -243,11 +250,7 @@ watch(
       }
       return;
     }
-    try {
-      writePty(job.data);
-    } catch {
-      // ignore
-    }
+    writePty(job.data);
     sessions.consumePendingLocalWrite(job.seq);
     if (props.active) {
       term?.focus();

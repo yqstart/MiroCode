@@ -91,6 +91,9 @@ const comparisonFiles = ref<GitFileChange[]>([]);
 const reviewState = ref<Record<string, boolean>>({});
 const reviewActive = ref(false);
 let loadSeq = 0;
+let comparisonSeq = 0;
+let sidesSeq = 0;
+let workspaceGeneration = 0;
 
 const dirtyCount = computed(() => changelistEntries.value.length);
 const graphWidth = computed(() => {
@@ -364,13 +367,28 @@ function rowTitle(row: GraphRow) {
 
 async function ensureLog() {
   if (!workspace.rootPath) return;
-  if (!snapshot.value.initialized) await git.refresh();
-  if (!snapshot.value.initialized) return;
+  const root = workspace.rootPath;
+  const generation = workspaceGeneration;
   const seq = ++loadSeq;
+  if (!snapshot.value.initialized) await git.refresh();
+  if (
+    !snapshot.value.initialized ||
+    seq !== loadSeq ||
+    workspace.rootPath !== root ||
+    workspaceGeneration !== generation
+  ) {
+    return;
+  }
   // loadLog 不传 limit：沿用 store 权威 logLimit，避免 loadMore 到 240 条后
   // 任意 ensureLog（刷新/checkout）把日志缩回硬编码的 120 条。
   await Promise.all([git.loadLog(), git.refresh()]);
-  if (seq !== loadSeq) return;
+  if (
+    seq !== loadSeq ||
+    workspace.rootPath !== root ||
+    workspaceGeneration !== generation
+  ) {
+    return;
+  }
   if (!selectedKey.value && rows.value[0]) selectedKey.value = rows.value[0].key;
 }
 
@@ -380,6 +398,7 @@ async function loadMore() {
 }
 
 function clearComparison(resetBase = false) {
+  comparisonSeq += 1;
   compareIds.value = [];
   comparisonFiles.value = [];
   reviewActive.value = false;
@@ -412,15 +431,32 @@ async function selectForComparison(id: string) {
 
 async function loadComparison() {
   if (!workspace.rootPath || compareIds.value.length !== 2) return;
+  const root = workspace.rootPath;
+  const generation = workspaceGeneration;
+  const seq = ++comparisonSeq;
+  const ids = [compareIds.value[0]!, compareIds.value[1]!] as const;
   try {
-    comparisonFiles.value = await gitCommitFiles(
-      workspace.rootPath,
-      compareIds.value[0]!,
-      compareIds.value[1]!,
-    );
+    const files = await gitCommitFiles(root, ids[0], ids[1]);
+    if (
+      seq !== comparisonSeq ||
+      workspace.rootPath !== root ||
+      workspaceGeneration !== generation ||
+      compareIds.value[0] !== ids[0] ||
+      compareIds.value[1] !== ids[1]
+    ) {
+      return;
+    }
+    comparisonFiles.value = files;
     reviewActive.value = false;
     loadReviewState();
   } catch (error) {
+    if (
+      seq !== comparisonSeq ||
+      workspace.rootPath !== root ||
+      workspaceGeneration !== generation
+    ) {
+      return;
+    }
     workspace.showNotice(
       error instanceof Error ? error.message : String(error),
       3200,
@@ -548,14 +584,26 @@ async function openSides(
   title: string,
 ) {
   if (!workspace.rootPath) return;
+  const root = workspace.rootPath;
+  const generation = workspaceGeneration;
+  const seq = ++sidesSeq;
   try {
-    const sides = await gitBranchSides(
-      workspace.rootPath,
-      leftRef,
-      rightRef,
-      path,
-    );
+    const sides = await gitBranchSides(root, leftRef, rightRef, path);
+    if (
+      seq !== sidesSeq ||
+      workspace.rootPath !== root ||
+      workspaceGeneration !== generation
+    ) {
+      return;
+    }
     const { useCompareStore } = await import("@/stores/compare");
+    if (
+      seq !== sidesSeq ||
+      workspace.rootPath !== root ||
+      workspaceGeneration !== generation
+    ) {
+      return;
+    }
     const compare = useCompareStore();
     compare.upsertTab({
       id: `log-diff-${Date.now()}`,
@@ -570,6 +618,13 @@ async function openSides(
     });
     gitLog.blurLog();
   } catch (error) {
+    if (
+      seq !== sidesSeq ||
+      workspace.rootPath !== root ||
+      workspaceGeneration !== generation
+    ) {
+      return;
+    }
     workspace.showNotice(
       error instanceof Error ? error.message : String(error),
       3200,
@@ -579,8 +634,11 @@ async function openSides(
 
 async function onOpenCurrentFile(path: string) {
   if (!workspace.rootPath) return;
+  const root = workspace.rootPath;
+  const generation = workspaceGeneration;
   const { useEditorStore } = await import("@/stores/editor");
-  await useEditorStore().openFile(joinPath(workspace.rootPath, path));
+  if (workspace.rootPath !== root || workspaceGeneration !== generation) return;
+  await useEditorStore().openFile(joinPath(root, path));
 }
 
 async function onCopyPath(path: string) {
@@ -894,9 +952,23 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  loadSeq += 1;
+  comparisonSeq += 1;
+  sidesSeq += 1;
   document.removeEventListener("mousedown", onDocMouseDown, true);
   window.removeEventListener("keydown", onKeydown);
 });
+
+watch(
+  () => workspace.rootPath,
+  () => {
+    workspaceGeneration += 1;
+    loadSeq += 1;
+    sidesSeq += 1;
+    clearComparison(true);
+    selectedKey.value = null;
+  },
+);
 
 watch(logOpen, (open) => {
   if (open) void ensureLog();

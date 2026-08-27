@@ -32,6 +32,8 @@ export const useCompareStore = defineStore("compare", () => {
   const activeId = ref<string | null>(null);
   const focused = ref(false);
   let seq = 0;
+  /** 工作区切换代际：阻止 A→B→A 时旧的 Diff/合并请求回写。 */
+  let workspaceGeneration = 0;
 
   const activeTab = computed(
     () => tabs.value.find((t) => t.id === activeId.value) ?? null,
@@ -71,6 +73,7 @@ export const useCompareStore = defineStore("compare", () => {
 
   /** 切换工作区时关闭全部对比标签 */
   function clearAll() {
+    workspaceGeneration += 1;
     tabs.value = [];
     activeId.value = null;
     focused.value = false;
@@ -98,10 +101,11 @@ export const useCompareStore = defineStore("compare", () => {
       return;
     }
     const root = workspace.rootPath;
+    const generation = workspaceGeneration;
     try {
-      const sides = await gitFileSides(workspace.rootPath, path, staged);
+      const sides = await gitFileSides(root, path, staged);
       // 等待期间已切换工作区：旧仓库的对比标签不得落入新工作区
-      if (workspace.rootPath !== root) return;
+      if (workspace.rootPath !== root || workspaceGeneration !== generation) return;
       seq += 1;
       upsertTab({
         id: `diff-${seq}`,
@@ -116,6 +120,7 @@ export const useCompareStore = defineStore("compare", () => {
         editableRight: false,
       });
     } catch (error) {
+      if (workspace.rootPath !== root || workspaceGeneration !== generation) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -127,10 +132,11 @@ export const useCompareStore = defineStore("compare", () => {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
     const root = workspace.rootPath;
+    const generation = workspaceGeneration;
     try {
-      const sides = await gitConflictSides(workspace.rootPath, path);
+      const sides = await gitConflictSides(root, path);
       // 等待期间已切换工作区：旧仓库的合并标签不得落入新工作区
-      if (workspace.rootPath !== root) return;
+      if (workspace.rootPath !== root || workspaceGeneration !== generation) return;
       seq += 1;
       upsertTab({
         id: `merge-${seq}`,
@@ -151,6 +157,7 @@ export const useCompareStore = defineStore("compare", () => {
         tab.rightLabel = "合并结果";
       }
     } catch (error) {
+      if (workspace.rootPath !== root || workspaceGeneration !== generation) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,

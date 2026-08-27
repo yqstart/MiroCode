@@ -117,6 +117,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   let refreshTimer: number | undefined;
   let gitRefreshTimer: number | undefined;
   let lastWatchFlushAt = 0;
+  let locateSearchSeq = 0;
+  let openFolderSeq = 0;
+  let refreshRunSeq = 0;
+  let refreshingEpoch = -1;
   const selfWriteUntil = new Map<string, number>();
   let pendingWatchPaths = new Set<string>();
   let pendingWatchNeedsTreeRefresh = false;
@@ -126,6 +130,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
    * 防止旧工作区的在途结果整表覆盖新工作区的资源树。
    */
   let workspaceEpoch = 0;
+
+  function isPathWithinRoot(root: string, path: string): boolean {
+    const normalizedRoot = root === "/" ? "/" : normalizeAbsPath(root);
+    const normalizedPath = path === "/" ? "/" : normalizeAbsPath(path);
+    if (normalizedRoot === "/") return normalizedPath.startsWith("/");
+    return (
+      normalizedPath === normalizedRoot ||
+      normalizedPath.startsWith(`${normalizedRoot}/`)
+    );
+  }
 
   function showNotice(message: string, ms = 2400, action?: ToastAction) {
     const id = ++noticeSeq;
@@ -205,19 +219,23 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   });
 
   async function loadChildren(path: string) {
-    if (!rootPath.value) return;
+    const root = rootPath.value;
+    if (!root) return;
     const epoch = workspaceEpoch;
-    const entries = await listDir(rootPath.value, path, extraIgnores.value);
+    const entries = await listDir(root, path, extraIgnores.value);
     // 等待期间已切换工作区：旧结果作废，不污染新工作区的资源树
-    if (epoch !== workspaceEpoch) return;
+    if (rootPath.value !== root || epoch !== workspaceEpoch) return;
     childrenMap.value = { ...childrenMap.value, [path]: entries };
   }
 
   async function loadChildrenSafely(path: string): Promise<boolean> {
+    const root = rootPath.value;
+    const epoch = workspaceEpoch;
     try {
       await loadChildren(path);
       return true;
     } catch (error) {
+      if (rootPath.value !== root || workspaceEpoch !== epoch) return false;
       showNotice(
         `无法读取目录：${error instanceof Error ? error.message : String(error)}`,
         3200,
@@ -264,22 +282,24 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   async function startWatch(root: string) {
     stopWatch();
+    const epoch = workspaceEpoch;
     try {
       const unwatch = await watchFs(
         root,
         (event) => {
-          onWatchEvent(event);
+          onWatchEvent(event, root, epoch);
         },
         { recursive: true, delayMs: 350 },
       );
       // 等待期间已切换到别的文件夹：释放刚建立的监听，避免监听目标与 rootPath 错位
-      if (rootPath.value !== root) {
+      if (rootPath.value !== root || workspaceEpoch !== epoch) {
         unwatch();
         return;
       }
       unwatchFn = unwatch;
       watchActive.value = true;
     } catch {
+      if (rootPath.value !== root || workspaceEpoch !== epoch) return;
       watchActive.value = false;
       showNotice("无法自动监听文件变更，请使用刷新按钮", 3200);
     }
@@ -308,8 +328,18 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }, wait);
   }
 
-  function onWatchEvent(event: WatchEvent) {
-    if (!rootPath.value) return;
+  function onWatchEvent(
+    event: WatchEvent,
+    expectedRoot: string,
+    expectedEpoch: number,
+  ) {
+    if (
+      !rootPath.value ||
+      rootPath.value !== expectedRoot ||
+      workspaceEpoch !== expectedEpoch
+    ) {
+      return;
+    }
     let gitTouched = false;
     for (const p of event.paths || []) {
       if (isSelfWrite(p)) continue;
@@ -330,7 +360,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   async function flushWatchChanges() {
     if (!rootPath.value || !pendingWatchPaths.size) return;
-    if (refreshing.value) {
+    if (refreshing.value && refreshingEpoch === workspaceEpoch) {
       // 当前刷新结束后由 finally 重新安排，不能提前清空这批路径。
       refreshAgain = true;
       scheduleWatchFlush();
@@ -353,11 +383,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     options: { quiet?: boolean; refreshTree?: boolean } = {},
   ) {
     if (!rootPath.value) return;
-    if (refreshing.value) {
+    if (refreshing.value && refreshingEpoch === workspaceEpoch) {
       refreshAgain = true;
       return;
     }
+    // 工作区切换时，旧工作区的刷新可能仍在 await 中；允许新代际立即开始
+    // 刷新，并让旧任务的 finally 通过 runSeq 校验，不能清掉新任务的状态。
+    if (refreshing.value) refreshAgain = false;
+    const root = rootPath.value;
+    const epoch = workspaceEpoch;
+    const runSeq = ++refreshRunSeq;
+    const isCurrent = () =>
+      rootPath.value === root && workspaceEpoch === epoch;
     refreshing.value = true;
+    refreshingEpoch = epoch;
     try {
       // 仅重列受影响的父目录（文件变更局部刷新），避免大目录全量重列卡顿
       if (changedAbsPaths.length && options.refreshTree !== false) {
@@ -365,12 +404,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       } else if (!changedAbsPaths.length) {
         await refreshTree();
       }
-      const root = rootPath.value;
+      if (!isCurrent()) return;
       const { useEditorStore } = await import("@/stores/editor");
       const editor = useEditorStore();
       const openAbs = new Set(editor.tabs.map((t) => t.path));
       const touched = changedAbsPaths.filter(
-        (p) => p.startsWith(root) && openAbs.has(p),
+        (p) => isPathWithinRoot(root, p) && openAbs.has(p),
       );
       // 若未给出具体路径（手动刷新），同步全部打开标签
       if (!changedAbsPaths.length) {
@@ -378,15 +417,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       } else if (touched.length) {
         await editor.syncExternalChanges(touched);
       }
+      if (!isCurrent()) return;
       void useGitStore().refresh();
       if (!options.quiet) {
         showNotice("资源管理器已刷新");
       }
     } finally {
-      refreshing.value = false;
-      if (refreshAgain && pendingWatchPaths.size) {
-        refreshAgain = false;
-        scheduleWatchFlush();
+      if (runSeq === refreshRunSeq) {
+        refreshing.value = false;
+        refreshingEpoch = -1;
+        if (epoch === workspaceEpoch && refreshAgain && pendingWatchPaths.size) {
+          refreshAgain = false;
+          scheduleWatchFlush();
+        }
       }
     }
   }
@@ -395,6 +438,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     path?: string | null,
     options?: OpenFolderOptions,
   ): Promise<boolean> {
+    const requestId = ++openFolderSeq;
+    const isLatestRequest = () => requestId === openFolderSeq;
     try {
       let selected = path;
       if (!selected) {
@@ -405,6 +450,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         });
       }
       if (!selected || Array.isArray(selected)) return false;
+      if (!isLatestRequest()) return false;
 
       const previousRoot = rootPath.value;
       const isWorkspaceSwitch = Boolean(previousRoot && previousRoot !== selected);
@@ -427,17 +473,21 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (!options?.bookmarkResolved) {
         await resolveBookmark(selected);
       }
+      if (!isLatestRequest()) return false;
 
       // 先把所有会抛错的异步操作（list_dir、reset stores）跑完并吞错。
       // 任一步失败都只 toast 通知 + 提前 return，绝不污染 rootPath 等已显示状态。
       let entries: DirEntryInfo[] = [];
       try {
         entries = await listDir(selected, selected, extraIgnores.value);
+        if (!isLatestRequest()) return false;
       } catch (error) {
-        showNotice(
-          `无法打开 ${selected}：${error instanceof Error ? error.message : String(error)}`,
-          3200,
-        );
+        if (isLatestRequest()) {
+          showNotice(
+            `无法打开 ${selected}：${error instanceof Error ? error.message : String(error)}`,
+            3200,
+          );
+        }
         return false;
       }
 
@@ -453,6 +503,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
       // 提交语义：先改 UI 状态（rootPath 等），再触发 reset/refresh。
       // 即使后续 reset 全部失败，UI 至少是「打开了」——比「半残状态」更可恢复。
+      if (!isLatestRequest()) return false;
       stopWatch();
       refreshAgain = false;
       if (previousRoot !== selected) {
@@ -467,7 +518,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       expanded.value = new Set([selected]);
       selectedPath.value = selected;
       filter.value = "";
-      locateHits.value = [];
+      invalidateLocateSearch();
       clipboard.value = null;
       selfWriteUntil.clear();
       recentFolders.value = pushRecentFolder(selected);
@@ -483,9 +534,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         await safeCall("sessions", () =>
           useSessionsStore().resetLocalForWorkspace(selected),
         );
+        if (!isLatestRequest()) return false;
         if (isWorkspaceSwitch) {
           const { useSshStore } = await import("@/stores/ssh");
           await safeCall("ssh", () => useSshStore().resetForWorkspace());
+          if (!isLatestRequest()) return false;
           const search = useSearchStore();
           search.clearResults();
           search.closeQuickOpen();
@@ -501,9 +554,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await safeCall("editor session", () =>
         useEditorStore().restoreSession(selected),
       );
+      if (!isLatestRequest()) return false;
 
       // 首次恢复工作区时也要加载已勾选的脚本，供终端顶栏直接展示。
       const { usePackageScriptsStore } = await import("@/stores/packageScripts");
+      if (!isLatestRequest()) return false;
       void usePackageScriptsStore().refresh(true);
 
       if (sideErrors.length) {
@@ -522,9 +577,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       // 下次自动更新后启动可走书签激活，不被 TCC 再问一次。
       // 等待写入完成，避免用户刚打开就重新进入项目时遇到保存竞态。
       await saveBookmark(selected);
-      return true;
+      return isLatestRequest();
     } catch (error) {
-      if (!options?.quiet) {
+      if (isLatestRequest() && !options?.quiet) {
         showNotice(error instanceof Error ? error.message : String(error), 3200);
       }
       return false;
@@ -534,11 +589,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   /** 启动时恢复最近一次成功打开的工作区 */
   async function restoreLastFolder() {
     if (rootPath.value) return;
+    const openRequestAtStart = openFolderSeq;
     for (const path of recentFolders.value) {
       // macOS：先 resolve security-scoped bookmark 激活访问权（避免 TCC 弹问）
       // 失败（路径失效）继续尝试下一个；resolve 失败时 helper 会自动清掉旧 bookmark
       const ok = await resolveBookmark(path);
       if (!ok) continue;
+      // 用户在恢复期间主动打开了其他项目：主动操作优先，不能被旧恢复请求覆盖。
+      if (rootPath.value || openFolderSeq !== openRequestAtStart) return;
       const opened = await openFolder(path, {
         quiet: true,
         bookmarkResolved: true,
@@ -548,6 +606,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   async function toggleExpand(path: string) {
+    const root = rootPath.value;
+    const epoch = workspaceEpoch;
+    if (!root) return;
     const next = new Set(expanded.value);
     if (next.has(path)) {
       next.delete(path);
@@ -555,10 +616,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       next.add(path);
       if (!childrenMap.value[path]) {
         if (!(await loadChildrenSafely(path))) {
+          if (rootPath.value !== root || workspaceEpoch !== epoch) return;
           next.delete(path);
           expanded.value = next;
           return;
         }
+        if (rootPath.value !== root || workspaceEpoch !== epoch) return;
       }
     }
     expanded.value = next;
@@ -600,10 +663,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const epoch = workspaceEpoch;
     const dirs = new Set<string>();
     for (const p of changedAbsPaths) {
-      if (!p.startsWith(root)) continue;
+      if (!isPathWithinRoot(root, p)) continue;
       // 变更本身是目录则刷新它，否则刷新其父目录
       const target = childrenMap.value[p] !== undefined ? p : dirname(p);
-      if (target.startsWith(root) && childrenMap.value[target] !== undefined) {
+      if (
+        isPathWithinRoot(root, target) &&
+        childrenMap.value[target] !== undefined
+      ) {
         dirs.add(target);
       }
     }
@@ -628,7 +694,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   async function createIn(parent: string, isDir: boolean) {
-    if (!rootPath.value) return;
+    const root = rootPath.value;
+    if (!root) return;
+    const epoch = workspaceEpoch;
+    const isCurrent = () => rootPath.value === root && workspaceEpoch === epoch;
     const label = isDir ? "新建文件夹" : "新建文件";
     const name = await promptInput({
       title: label,
@@ -636,25 +705,31 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       placeholder: isDir ? "components" : "index.ts",
       confirmText: "创建",
     });
-    if (!name?.trim()) return;
+    if (!name?.trim() || !isCurrent()) return;
     const target = joinPath(parent, name.trim());
     try {
       markSelfWrite(target);
       markSelfWrite(parent);
-      await createEntry(rootPath.value, target, isDir);
+      await createEntry(root, target, isDir);
+      if (!isCurrent()) return;
       await loadChildren(parent);
+      if (!isCurrent()) return;
       expanded.value = new Set([...expanded.value, parent]);
       selectedPath.value = target;
       showNotice(`${label}成功`);
       return target;
     } catch (error) {
+      if (!isCurrent()) return;
       showNotice(error instanceof Error ? error.message : String(error), 3200);
     }
   }
 
   async function renamePath(path: string) {
-    if (!rootPath.value) return;
-    if (path === rootPath.value) {
+    const root = rootPath.value;
+    if (!root) return;
+    const epoch = workspaceEpoch;
+    const isCurrent = () => rootPath.value === root && workspaceEpoch === epoch;
+    if (path === root) {
       showNotice("不能重命名工作区根目录");
       return;
     }
@@ -664,25 +739,37 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       defaultValue: basename(path),
       confirmText: "重命名",
     });
-    if (!nextName?.trim() || nextName.trim() === basename(path)) return;
+    if (
+      !nextName?.trim() ||
+      nextName.trim() === basename(path) ||
+      !isCurrent()
+    ) {
+      return;
+    }
     const target = joinPath(dirname(path), nextName.trim());
     try {
       markSelfWrite(path);
       markSelfWrite(target);
       markSelfWrite(dirname(path));
-      await renameEntry(rootPath.value, path, target);
+      await renameEntry(root, path, target);
+      if (!isCurrent()) return;
       await refreshAffected(path, target);
+      if (!isCurrent()) return;
       selectedPath.value = target;
       showNotice("已重命名");
       return { from: path, to: target };
     } catch (error) {
+      if (!isCurrent()) return;
       showNotice(error instanceof Error ? error.message : String(error), 3200);
     }
   }
 
   async function removePath(path: string) {
-    if (!rootPath.value) return;
-    if (path === rootPath.value) {
+    const root = rootPath.value;
+    if (!root) return;
+    const epoch = workspaceEpoch;
+    const isCurrent = () => rootPath.value === root && workspaceEpoch === epoch;
+    if (path === root) {
       showNotice("不能删除工作区根目录");
       return false;
     }
@@ -690,17 +777,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       title: "确认删除",
       kind: "warning",
     });
-    if (!ok) return false;
+    if (!ok || !isCurrent()) return false;
     try {
       markSelfWrite(path);
       markSelfWrite(dirname(path));
-      await deleteEntry(rootPath.value, path);
+      await deleteEntry(root, path);
+      if (!isCurrent()) return false;
       const parent = dirname(path);
       await loadChildren(parent);
+      if (!isCurrent()) return false;
       if (selectedPath.value === path) selectedPath.value = parent;
       showNotice("已删除");
       return true;
     } catch (error) {
+      if (!isCurrent()) return false;
       showNotice(error instanceof Error ? error.message : String(error), 3200);
       return false;
     }
@@ -712,15 +802,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   async function pasteInto(parent: string) {
-    if (!rootPath.value || !clipboard.value) return;
-    const source = clipboard.value.path;
-    const mode = clipboard.value.mode;
-    const isDir = clipboard.value.isDir;
+    const root = rootPath.value;
+    const clipboardAtStart = clipboard.value;
+    if (!root || !clipboardAtStart) return;
+    const epoch = workspaceEpoch;
+    const isCurrent = () => rootPath.value === root && workspaceEpoch === epoch;
+    const source = clipboardAtStart.path;
+    const mode = clipboardAtStart.mode;
+    const isDir = clipboardAtStart.isDir;
     const name = basename(source);
     let target = joinPath(parent, name);
     try {
       let n = 1;
-      while (await pathExists(rootPath.value, target)) {
+      while (await pathExists(root, target)) {
+        if (!isCurrent()) return;
         const stem = name.includes(".")
           ? name.replace(/(\.[^.]+)?$/, `-copy${n}$1`)
           : `${name}-copy${n}`;
@@ -728,23 +823,33 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         n += 1;
         if (n > 50) throw new Error("目标名称冲突过多");
       }
+      if (!isCurrent()) return;
 
       markSelfWrite(source);
       markSelfWrite(target);
       markSelfWrite(parent);
       if (mode === "copy") {
-        await copyEntry(rootPath.value, source, target);
+        await copyEntry(root, source, target);
       } else {
-        await renameEntry(rootPath.value, source, target);
-        clipboard.value = null;
+        await renameEntry(root, source, target);
+        if (
+          clipboard.value?.path === source &&
+          clipboard.value.mode === mode &&
+          clipboard.value.isDir === isDir
+        ) {
+          clipboard.value = null;
+        }
       }
+      if (!isCurrent()) return;
       await loadChildren(parent);
       await loadChildren(dirname(source));
+      if (!isCurrent()) return;
       expanded.value = new Set([...expanded.value, parent]);
       selectedPath.value = target;
       showNotice("已粘贴");
       return { from: source, to: target, cut: mode === "cut", isDir };
     } catch (error) {
+      if (!isCurrent()) return;
       showNotice(error instanceof Error ? error.message : String(error), 3200);
     }
   }
@@ -762,6 +867,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   ): Promise<MovePathResult | null> {
     if (!rootPath.value) return null;
     const root = rootPath.value;
+    const epoch = workspaceEpoch;
+    const isCurrent = () => rootPath.value === root && workspaceEpoch === epoch;
     const err = validateMoveTarget(from, toParent, root, isDir);
     if (err) {
       if (normalizeAbsPath(dirname(from)) !== normalizeAbsPath(toParent)) {
@@ -771,22 +878,27 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
     const dest = joinPath(toParent, basename(from));
     if (await pathExists(root, dest)) {
+      if (!isCurrent()) return null;
       showNotice(`目标位置已存在「${basename(from)}」`, 3200);
       return null;
     }
+    if (!isCurrent()) return null;
     try {
       markSelfWrite(from);
       markSelfWrite(dest);
       markSelfWrite(toParent);
       markSelfWrite(dirname(from));
       await renameEntry(root, from, dest);
+      if (!isCurrent()) return null;
       await loadChildren(toParent);
       await loadChildren(dirname(from));
+      if (!isCurrent()) return null;
       expanded.value = new Set([...expanded.value, toParent]);
       selectedPath.value = dest;
       showNotice(`已移动 ${basename(from)}`);
       return { from, to: dest, isDir };
     } catch (error) {
+      if (!isCurrent()) return null;
       showNotice(error instanceof Error ? error.message : String(error), 3200);
       return null;
     }
@@ -796,17 +908,24 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     selectedPath.value = path;
   }
 
+  /** 返回当前工作区代际，供跨组件异步操作判断结果是否仍属于当前项目。 */
+  function getWorkspaceEpoch(): number {
+    return workspaceEpoch;
+  }
+
   function pathPartsUnderRoot(path: string): string[] {
     if (!rootPath.value) return [];
-    const root = rootPath.value.replace(/[/\\]+$/, "");
-    if (!path.startsWith(root)) return [];
-    const relative = path.slice(root.length).replace(/^[/\\]+/, "");
+    const root = rootPath.value === "/" ? "/" : normalizeAbsPath(rootPath.value);
+    if (!isPathWithinRoot(root, path)) return [];
+    const normalizedPath = path === "/" ? "/" : normalizeAbsPath(path);
+    const relative = normalizedPath.slice(root.length).replace(/^[/\\]+/, "");
     return relative ? relative.split(/[/\\]/) : [];
   }
 
   async function revealPath(path: string) {
     if (!rootPath.value) return;
     const root = rootPath.value;
+    const epoch = workspaceEpoch;
     const parts = pathPartsUnderRoot(path);
     if (!parts.length && path !== root) {
       showNotice("文件不在当前工作区内", 2800);
@@ -815,11 +934,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
     // 定位时清空过滤，避免目标被隐藏
     filter.value = "";
-    locateHits.value = [];
+    invalidateLocateSearch();
 
     let cursor = root;
     if (!childrenMap.value[cursor]) {
       if (!(await loadChildrenSafely(cursor))) return;
+      if (rootPath.value !== root || workspaceEpoch !== epoch) return;
     }
     const next = new Set(expanded.value);
     next.add(root);
@@ -828,8 +948,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       next.add(cursor);
       if (!childrenMap.value[cursor]) {
         if (!(await loadChildrenSafely(cursor))) return;
+        if (rootPath.value !== root || workspaceEpoch !== epoch) return;
       }
     }
+    if (rootPath.value !== root || workspaceEpoch !== epoch) return;
     expanded.value = next;
     selectedPath.value = path;
     revealTarget.value = path;
@@ -837,36 +959,67 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   async function runLocateSearch(query?: string) {
-    if (!rootPath.value) return;
+    const seq = ++locateSearchSeq;
+    if (!rootPath.value) {
+      locateLoading.value = false;
+      locateHits.value = [];
+      return;
+    }
+    const root = rootPath.value;
+    const epoch = workspaceEpoch;
     const q = (query ?? filter.value).trim();
     if (q.length < 1) {
       locateHits.value = [];
+      locateLoading.value = false;
       return;
     }
     locateLoading.value = true;
     try {
-      locateHits.value = await searchFiles(rootPath.value, q, {
+      const result = await searchFiles(root, q, {
         maxResults: 40,
         extraIgnores: extraIgnores.value,
       });
+      if (
+        seq !== locateSearchSeq ||
+        rootPath.value !== root ||
+        workspaceEpoch !== epoch
+      ) {
+        return;
+      }
+      locateHits.value = result;
     } catch {
-      locateHits.value = [];
+      if (
+        seq === locateSearchSeq &&
+        rootPath.value === root &&
+        workspaceEpoch === epoch
+      ) {
+        locateHits.value = [];
+      }
     } finally {
-      locateLoading.value = false;
+      if (seq === locateSearchSeq) locateLoading.value = false;
     }
   }
 
   function scheduleLocateSearch(query?: string) {
     window.clearTimeout(locateTimer);
     locateTimer = window.setTimeout(() => {
+      locateTimer = undefined;
       void runLocateSearch(query);
     }, 220);
   }
 
+  function invalidateLocateSearch() {
+    window.clearTimeout(locateTimer);
+    locateTimer = undefined;
+    locateSearchSeq += 1;
+    locateLoading.value = false;
+    locateHits.value = [];
+  }
+
   function setFilter(value: string) {
     filter.value = value;
+    invalidateLocateSearch();
     if (!value.trim()) {
-      locateHits.value = [];
       return;
     }
     scheduleLocateSearch(value);
@@ -874,7 +1027,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   function clearFilter() {
     filter.value = "";
-    locateHits.value = [];
+    invalidateLocateSearch();
   }
 
   function collapseAll() {
@@ -986,6 +1139,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     pasteInto,
     movePath,
     selectPath,
+    getWorkspaceEpoch,
     revealPath,
     loadChildren,
     runLocateSearch,

@@ -12,13 +12,13 @@
 //   （VS Code 的 tab stop 导航 v1 不做，光标落位后直接输入即可）
 // - documentation 渲染为 markdown（懒渲染，避免每次补全都 parse）
 
-import { marked } from "marked";
 import type { Completion } from "@codemirror/autocomplete";
 import type { EditorView } from "@codemirror/view";
 import type {
   CompletionItem,
   MarkupContent,
 } from "vscode-languageserver-types";
+import { renderMarkdown } from "../markdown/preview.ts";
 
 /** LSP Position → 文档 offset（按行累加，自行实现避免依赖 TextDocument） */
 export function positionToOffset(
@@ -86,7 +86,9 @@ export function docToInfo(
     const el = document.createElement("div");
     el.className = "miro-completion-doc";
     try {
-      el.innerHTML = marked.parse(text) as string;
+      // 补全文档可能来自项目文件或语言服务，统一走安全 Markdown
+      // renderer，禁止 raw HTML 和危险链接绕过预览层防线。
+      el.innerHTML = renderMarkdown(text);
     } catch {
       el.textContent = text;
     }

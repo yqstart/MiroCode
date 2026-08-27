@@ -25,6 +25,14 @@ export const useSearchStore = defineStore("search", () => {
   // 请求序号：只应用最后一次发起的搜索，丢弃过期（被后续搜索/关闭覆盖）的结果
   let contentSearchSeq = 0;
   let fileSearchSeq = 0;
+  let replaceSeq = 0;
+  const SEARCH_SUPERSEDED = "__MIROCODE_SEARCH_SUPERSEDED__";
+
+  function isSupersededSearch(error: unknown): boolean {
+    return (
+      error instanceof Error ? error.message : String(error)
+    ) === SEARCH_SUPERSEDED;
+  }
 
   function parseExtensions(): string[] | undefined {
     const raw = extensions.value.trim();
@@ -57,13 +65,13 @@ export const useSearchStore = defineStore("search", () => {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
     const q = (query ?? fileQuery.value).trim();
-    fileQuery.value = q;
+    const seq = ++fileSearchSeq;
     if (!q) {
       fileResults.value = [];
+      loading.value = false;
       return;
     }
     // 请求序号：快速输入时只保留最后一次的响应，旧的返回直接丢弃
-    const seq = ++fileSearchSeq;
     const root = workspace.rootPath;
     loading.value = true;
     const guard = withTimeout(
@@ -81,7 +89,7 @@ export const useSearchStore = defineStore("search", () => {
       if (seq !== fileSearchSeq || workspace.rootPath !== root) return;
       fileResults.value = result;
     } catch (error) {
-      if (seq !== fileSearchSeq) return;
+      if (seq !== fileSearchSeq || isSupersededSearch(error)) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -96,11 +104,12 @@ export const useSearchStore = defineStore("search", () => {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
     const q = contentQuery.value.trim();
+    const seq = ++contentSearchSeq;
     if (!q) {
       contentResults.value = [];
+      loading.value = false;
       return;
     }
-    const seq = ++contentSearchSeq;
     const root = workspace.rootPath;
     loading.value = true;
     const guard = withTimeout(
@@ -120,25 +129,28 @@ export const useSearchStore = defineStore("search", () => {
       if (seq !== contentSearchSeq || workspace.rootPath !== root) return;
       contentResults.value = result;
     } catch (error) {
-      if (seq !== contentSearchSeq) return;
+      if (seq !== contentSearchSeq || isSupersededSearch(error)) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
       );
     } finally {
+      guard.clear();
       if (seq === contentSearchSeq) loading.value = false;
     }
   }
 
   async function previewReplace() {
     const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const root = workspace.rootPath;
+    if (!root) return;
     const q = contentQuery.value.trim();
     if (!q) return;
+    const seq = ++replaceSeq;
     loading.value = true;
     try {
-      replacePreview.value = await replaceInFiles(
-        workspace.rootPath,
+      const result = await replaceInFiles(
+        root,
         q,
         replaceText.value,
         {
@@ -148,25 +160,32 @@ export const useSearchStore = defineStore("search", () => {
           extensions: parseExtensions(),
         },
       );
+      if (seq !== replaceSeq || workspace.rootPath !== root) return;
+      replacePreview.value = result;
     } catch (error) {
+      if (seq !== replaceSeq || workspace.rootPath !== root) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
       );
     } finally {
-      loading.value = false;
+      if (seq === replaceSeq && workspace.rootPath === root) {
+        loading.value = false;
+      }
     }
   }
 
   async function applyReplace() {
     const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const root = workspace.rootPath;
+    if (!root) return;
     const q = contentQuery.value.trim();
     if (!q) return;
+    const seq = ++replaceSeq;
     loading.value = true;
     try {
       const result = await replaceInFiles(
-        workspace.rootPath,
+        root,
         q,
         replaceText.value,
         {
@@ -176,6 +195,7 @@ export const useSearchStore = defineStore("search", () => {
           extensions: parseExtensions(),
         },
       );
+      if (seq !== replaceSeq || workspace.rootPath !== root) return;
       replacePreview.value = result;
       const skippedNote =
         (result.skippedLargeFiles ?? 0) > 0
@@ -186,40 +206,55 @@ export const useSearchStore = defineStore("search", () => {
       );
       await runContentSearch();
     } catch (error) {
+      if (seq !== replaceSeq || workspace.rootPath !== root) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
       );
     } finally {
-      loading.value = false;
+      if (seq === replaceSeq && workspace.rootPath === root) {
+        loading.value = false;
+      }
     }
   }
 
   function openQuickOpen() {
     findInFilesVisible.value = false;
+    invalidateFileSearch();
     quickOpenVisible.value = true;
     fileQuery.value = "";
-    fileResults.value = [];
   }
 
   function closeQuickOpen() {
+    invalidateFileSearch();
     quickOpenVisible.value = false;
+  }
+
+  /** 输入框变化或组件销毁时使旧文件搜索失效，避免旧结果重新填回界面。 */
+  function invalidateFileSearch() {
+    fileSearchSeq += 1;
+    fileResults.value = [];
+    loading.value = false;
   }
 
   function openFindInFiles() {
     quickOpenVisible.value = false;
     // 每次打开都重置状态，避免上次卡住的 loading / 残留结果影响体验
-    contentSearchSeq += 1;
-    loading.value = false;
-    contentResults.value = [];
-    replacePreview.value = null;
+    fileSearchSeq += 1;
+    invalidateFindInFiles();
     findInFilesVisible.value = true;
   }
 
   function closeFindInFiles() {
     findInFilesVisible.value = false;
     // 使进行中的搜索结果失效 + 重置 loading
+    invalidateFindInFiles();
+  }
+
+  /** 查询条件变化时使旧搜索/替换结果失效，避免旧请求回写新条件的结果。 */
+  function invalidateFindInFiles() {
     contentSearchSeq += 1;
+    replaceSeq += 1;
     loading.value = false;
     contentResults.value = [];
     replacePreview.value = null;
@@ -233,6 +268,7 @@ export const useSearchStore = defineStore("search", () => {
     // 否则工作区切换后旧工作区的在途结果仍会写回）
     fileSearchSeq += 1;
     contentSearchSeq += 1;
+    replaceSeq += 1;
     loading.value = false;
   }
 
@@ -254,6 +290,8 @@ export const useSearchStore = defineStore("search", () => {
     applyReplace,
     openQuickOpen,
     closeQuickOpen,
+    invalidateFileSearch,
+    invalidateFindInFiles,
     openFindInFiles,
     closeFindInFiles,
     clearResults,

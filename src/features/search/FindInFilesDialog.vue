@@ -48,6 +48,10 @@ watch(contentResults, () => {
   activeIndex.value = 0;
 });
 
+watch([contentQuery, replaceText, caseSensitive, extensions], () => {
+  search.invalidateFindInFiles();
+});
+
 function close() {
   search.closeFindInFiles();
 }

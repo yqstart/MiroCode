@@ -63,6 +63,9 @@ export const useEditorStore = defineStore("editor", () => {
   let referencesRequestSeq = 0;
   let sessionTimer: ReturnType<typeof setTimeout> | null = null;
   let restoringSession = false;
+  /** 工作区切换代际：使 A→B→A 时旧的异步编辑器任务也失效。 */
+  let workspaceGeneration = 0;
+  let restoreGeneration = 0;
 
   /**
    * 外部修改标记：当 syncFromDisk / reloadAfterDiscard / formatDocument /
@@ -95,6 +98,10 @@ export const useEditorStore = defineStore("editor", () => {
   const activeTab = computed(
     () => tabs.value.find((t) => t.path === activePath.value) ?? null,
   );
+
+  function isLiveTab(tab: EditorTab, path: string): boolean {
+    return tabs.value.some((item) => item === tab && item.path === path);
+  }
 
   // dirty 集合缓存：只在集合内容真正变化时替换 Set 引用。dirty 由 setContent
   // O(1) 维护（不读 content 字符串），连续输入时引用不变，资源树/状态栏等
@@ -155,9 +162,11 @@ export const useEditorStore = defineStore("editor", () => {
   }
 
   async function openReferences(path: string, content: string, position: number) {
-    const root = useWorkspaceStore().rootPath;
+    const workspace = useWorkspaceStore();
+    const root = workspace.rootPath;
     const word = wordAt(content, position)?.word ?? "";
     if (!root || !word) return;
+    const generation = workspaceGeneration;
     const requestId = ++referencesRequestSeq;
     referenceWord.value = word;
     referencesVisible.value = true;
@@ -168,10 +177,22 @@ export const useEditorStore = defineStore("editor", () => {
         position,
         maxDepth: 8,
       });
-      if (requestId !== referencesRequestSeq) return;
+      if (
+        requestId !== referencesRequestSeq ||
+        workspace.rootPath !== root ||
+        generation !== workspaceGeneration
+      ) {
+        return;
+      }
       referenceResults.value = results;
     } catch (error) {
-      if (requestId !== referencesRequestSeq) return;
+      if (
+        requestId !== referencesRequestSeq ||
+        workspace.rootPath !== root ||
+        generation !== workspaceGeneration
+      ) {
+        return;
+      }
       referencesVisible.value = false;
       useWorkspaceStore().showNotice(
         `查找引用失败：${error instanceof Error ? error.message : String(error)}`,
@@ -230,11 +251,35 @@ export const useEditorStore = defineStore("editor", () => {
     const saved = loadEditorSession(root);
     if (!saved?.tabs.length) return;
 
+    const workspace = useWorkspaceStore();
+    const generation = workspaceGeneration;
+    const restoreId = ++restoreGeneration;
     restoringSession = true;
     try {
       for (const savedTab of saved.tabs) {
+        if (
+          generation !== workspaceGeneration ||
+          workspace.rootPath !== root ||
+          restoreId !== restoreGeneration
+        ) {
+          return;
+        }
         if (!(await pathExists(root, savedTab.path))) continue;
+        if (
+          generation !== workspaceGeneration ||
+          workspace.rootPath !== root ||
+          restoreId !== restoreGeneration
+        ) {
+          return;
+        }
         await openFile(savedTab.path);
+        if (
+          generation !== workspaceGeneration ||
+          workspace.rootPath !== root ||
+          restoreId !== restoreGeneration
+        ) {
+          return;
+        }
         const tab = tabs.value.find((item) => item.path === savedTab.path);
         if (!tab) continue;
 
@@ -251,19 +296,28 @@ export const useEditorStore = defineStore("editor", () => {
           tab.dirty = savedTab.content !== tab.original;
         }
       }
+      if (
+        generation !== workspaceGeneration ||
+        workspace.rootPath !== root ||
+        restoreId !== restoreGeneration
+      ) {
+        return;
+      }
       const active = saved.activePath && tabs.value.some((tab) => tab.path === saved.activePath)
         ? saved.activePath
         : tabs.value[0]?.path ?? null;
       if (active) activate(active);
       persistSession(root);
     } finally {
-      restoringSession = false;
+      if (restoreId === restoreGeneration) restoringSession = false;
     }
   }
 
   async function openFile(path: string) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
+    const root = workspace.rootPath;
+    const generation = workspaceGeneration;
     useSessionsStore().blurSessions();
     useCompareStore().blurCompare();
     void import("@/stores/gitLog").then(({ useGitLogStore }) => {
@@ -283,16 +337,15 @@ export const useEditorStore = defineStore("editor", () => {
 
     try {
       // 栅格图：不读文本，仅作预览标签
-      const root = workspace.rootPath;
       // 发起时刻的活动标签：读盘是异步 IPC，期间用户可能已切到别的标签。
       // 完成后若无新激活则不抢占（避免「点了大文件后又被强制切走」）；
       // 若期间已激活其它标签，本标签只加入列表，不打断用户当前编辑。
       const beforeActive = activePath.value;
       const content = isRasterImagePath(path)
         ? ""
-        : await readTextFile(workspace.rootPath, path);
+        : await readTextFile(root, path);
       // 读取期间已切换工作区：旧文件标签不得落入新工作区
-      if (workspace.rootPath !== root) return;
+      if (workspace.rootPath !== root || generation !== workspaceGeneration) return;
       // 并发打开同一文件的场景（双击、快速打开连续回车等）：两个请求都
       // 通过了上面的 existing 检查，后完成的请求会在此发现重复标签。
       // 此时绝不能再 push，否则同一 path 出现两个标签，:key 冲突导致
@@ -325,6 +378,7 @@ export const useEditorStore = defineStore("editor", () => {
         workspace.revealPath(path);
       }
     } catch (error) {
+      if (workspace.rootPath !== root || generation !== workspaceGeneration) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -333,6 +387,10 @@ export const useEditorStore = defineStore("editor", () => {
   }
 
   async function openFileAt(path: string, line: number, column: number) {
+    const workspace = useWorkspaceStore();
+    const root = workspace.rootPath;
+    if (!root) return;
+    const generation = workspaceGeneration;
     const current = activeTab.value;
     if (current) {
       pushJump({
@@ -342,6 +400,8 @@ export const useEditorStore = defineStore("editor", () => {
       });
     }
     await openFile(path);
+    if (workspace.rootPath !== root || generation !== workspaceGeneration) return;
+    if (!tabs.value.some((tab) => tab.path === path)) return;
     requestOpenAt(path, line, column);
   }
 
@@ -372,16 +432,23 @@ export const useEditorStore = defineStore("editor", () => {
   async function syncExternalChanges(changedPaths: string[]) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath || !changedPaths.length) return;
+    const root = workspace.rootPath;
+    const generation = workspaceGeneration;
+    const isCurrent = () =>
+      workspace.rootPath === root && generation === workspaceGeneration;
 
     for (const path of changedPaths) {
+      if (!isCurrent()) return;
       const tab = tabs.value.find((t) => t.path === path);
       if (!tab) continue;
 
       try {
-        const exists = await pathExists(workspace.rootPath, path);
+        const exists = await pathExists(root, path);
+        if (!isCurrent()) return;
         if (!exists) {
           if (tab.content === tab.original) {
             await closeTab(path);
+            if (!isCurrent()) return;
             workspace.showNotice(`「${tab.name}」已被外部删除`);
           } else {
             autoSaveBlockedPaths.add(path);
@@ -401,7 +468,8 @@ export const useEditorStore = defineStore("editor", () => {
           continue;
         }
 
-        const disk = await readTextFile(workspace.rootPath, path);
+        const disk = await readTextFile(root, path);
+        if (!isCurrent() || !isLiveTab(tab, path)) return;
         if (disk === tab.content) {
           if (tab.original !== disk || tab.dirty) {
             tab.original = disk;
@@ -432,6 +500,7 @@ export const useEditorStore = defineStore("editor", () => {
         const overwrite = window.confirm(
           `「${tab.name}」已被外部修改，且本地有未保存更改。\n\n确定：用磁盘版本覆盖\n取消：保留编辑器内容`,
         );
+        if (!isCurrent()) return;
         if (overwrite) {
           markExternalUpdate(path);
           tab.content = disk;
@@ -450,6 +519,7 @@ export const useEditorStore = defineStore("editor", () => {
           workspace.showNotice(`「${tab.name}」外部已变更，已保留本地编辑`, 3200);
         }
       } catch (error) {
+        if (!isCurrent() || !isLiveTab(tab, path)) return;
         workspace.showNotice(
           error instanceof Error ? error.message : String(error),
           3200,
@@ -466,6 +536,9 @@ export const useEditorStore = defineStore("editor", () => {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath || !repoRelativePaths.length) return;
     const root = workspace.rootPath;
+    const generation = workspaceGeneration;
+    const isCurrent = () =>
+      workspace.rootPath === root && generation === workspaceGeneration;
 
     const absList = repoRelativePaths.map((p) => toAbsolutePath(root, p));
     const relSet = new Set(
@@ -473,10 +546,12 @@ export const useEditorStore = defineStore("editor", () => {
     );
 
     for (const abs of absList) {
+      if (!isCurrent()) return;
       const tab = tabs.value.find((t) => t.path === abs);
       if (!tab) continue;
       try {
         const exists = await pathExists(root, abs);
+        if (!isCurrent()) return;
         if (!exists) {
           await closeTab(abs);
           continue;
@@ -486,6 +561,7 @@ export const useEditorStore = defineStore("editor", () => {
           continue;
         }
         const disk = await readTextFile(root, abs);
+        if (!isCurrent() || !isLiveTab(tab, abs)) return;
         markExternalUpdate(abs);
         tab.content = disk;
         tab.original = disk;
@@ -494,6 +570,7 @@ export const useEditorStore = defineStore("editor", () => {
         autoSaveBlockedPaths.delete(abs);
         externalConflictVersions.delete(abs);
       } catch (error) {
+        if (!isCurrent() || !isLiveTab(tab, abs)) return;
         workspace.showNotice(
           error instanceof Error ? error.message : String(error),
           3200,
@@ -501,6 +578,7 @@ export const useEditorStore = defineStore("editor", () => {
       }
     }
 
+    if (!isCurrent()) return;
     const compare = useCompareStore();
     for (const tab of [...compare.tabs]) {
       const norm = tab.path.replace(/\\/g, "/");
@@ -564,6 +642,10 @@ export const useEditorStore = defineStore("editor", () => {
     const workspace = useWorkspaceStore();
     const settings = useSettingsStore();
     if (!workspace.rootPath) return;
+    const root = workspace.rootPath;
+    const generation = workspaceGeneration;
+    const isCurrent = () =>
+      workspace.rootPath === root && generation === workspaceGeneration;
     if (!settings.editor.prettierEnabled) {
       if (!options?.quiet) workspace.showNotice("请先在设置中启用代码格式化");
       return;
@@ -578,18 +660,30 @@ export const useEditorStore = defineStore("editor", () => {
     let tab = tabs.value.find((t) => t.path === targetPath) ?? null;
     if (!tab) {
       await openFile(targetPath);
+      if (!isCurrent()) return;
       tab = tabs.value.find((t) => t.path === targetPath) ?? null;
     }
     if (!tab) return;
 
+    const tabPath = tab.path;
+    const contentAtStart = tab.content;
     try {
       const formatted = await formatDocumentContent(
-        workspace.rootPath,
-        tab.path,
-        tab.content,
+        root,
+        tabPath,
+        contentAtStart,
       );
+      // 格式化是异步的；用户可能在等待期间继续输入或关闭/重命名标签。
+      // 只在同一个标签仍存在且内容未变时应用结果，避免覆盖新输入。
+      if (
+        !isCurrent() ||
+        !isLiveTab(tab, tabPath) ||
+        tab.content !== contentAtStart
+      ) {
+        return;
+      }
       if (formatted !== tab.content) {
-        markExternalUpdate(tab.path);
+        markExternalUpdate(tabPath);
         tab.content = formatted;
         tab.dirty = true;
         if (!options?.quiet) workspace.showNotice(`已格式化 ${tab.name}`);
@@ -597,6 +691,7 @@ export const useEditorStore = defineStore("editor", () => {
         workspace.showNotice("无需格式化");
       }
     } catch (error) {
+      if (!isCurrent()) return;
       // quiet 仅隐藏成功提示；格式化失败必须告知用户具体原因。
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
@@ -617,6 +712,7 @@ export const useEditorStore = defineStore("editor", () => {
     const tab = activeTab.value;
     if (isRasterImagePath(tab.path)) return;
     if (options?.auto && autoSaveBlockedPaths.has(tab.path)) return;
+    const tabPath = tab.path;
 
     if (!workspace.rootPath) {
       if (!options?.quiet) {
@@ -624,6 +720,10 @@ export const useEditorStore = defineStore("editor", () => {
       }
       return;
     }
+    const root = workspace.rootPath;
+    const generation = workspaceGeneration;
+    const isCurrent = () =>
+      workspace.rootPath === root && generation === workspaceGeneration;
 
     // 保存时格式化：先格式化再写盘（失败静默，保留原内容继续保存）
     const settings = useSettingsStore();
@@ -631,11 +731,15 @@ export const useEditorStore = defineStore("editor", () => {
       await formatDocument(tab.path, { quiet: true });
     }
 
+    if (!isCurrent() || !isLiveTab(tab, tabPath)) return;
     let content = tab.content;
     if (!tab.dirty) return;
     try {
-      workspace.markSelfWrite(tab.path);
-      await writeTextFile(workspace.rootPath, tab.path, content);
+      workspace.markSelfWrite(tabPath);
+      await writeTextFile(root, tabPath, content);
+      if (!isCurrent() || !isLiveTab(tab, tabPath)) return;
+      // 写盘期间的新输入属于下一次保存，不能被本次快照错误标记为已保存。
+      if (tab.content !== content) return;
       tab.original = content;
       tab.dirty = false;
       autoSaveBlockedPaths.delete(tab.path);
@@ -645,6 +749,7 @@ export const useEditorStore = defineStore("editor", () => {
       }
       void git.scheduleRefresh();
     } catch (error) {
+      if (!isCurrent()) return;
       if (!options?.quiet) {
         workspace.showNotice(
           error instanceof Error ? error.message : String(error),
@@ -657,6 +762,11 @@ export const useEditorStore = defineStore("editor", () => {
   async function saveAll(options?: { quiet?: boolean; auto?: boolean }) {
     const workspace = useWorkspaceStore();
     const git = useGitStore();
+    const root = workspace.rootPath;
+    if (!root) return;
+    const generation = workspaceGeneration;
+    const isCurrent = () =>
+      workspace.rootPath === root && generation === workspaceGeneration;
     const dirty = tabs.value.filter(
       (t) =>
         !isRasterImagePath(t.path) &&
@@ -668,14 +778,21 @@ export const useEditorStore = defineStore("editor", () => {
       let saved = 0;
       const settings = useSettingsStore();
       for (const tab of dirty) {
-        if (!workspace.rootPath) continue;
+        if (!isCurrent()) return;
+        const tabPath = tab.path;
+        if (!isLiveTab(tab, tabPath)) continue;
         // 保存时格式化：先格式化再写盘（失败静默，保留原内容继续保存）
         if (settings.editor.formatOnSave) {
-          await formatDocument(tab.path, { quiet: true });
+          await formatDocument(tabPath, { quiet: true });
         }
-        workspace.markSelfWrite(tab.path);
-        await writeTextFile(workspace.rootPath, tab.path, tab.content);
-        tab.original = tab.content;
+        if (!isCurrent() || !isLiveTab(tab, tabPath)) return;
+        const content = tab.content;
+        workspace.markSelfWrite(tabPath);
+        await writeTextFile(root, tabPath, content);
+        if (!isCurrent() || !isLiveTab(tab, tabPath)) return;
+        // 写盘期间的新输入仍保持 dirty，避免把未落盘内容误报为已保存。
+        if (tab.content !== content) continue;
+        tab.original = content;
         tab.dirty = false;
         autoSaveBlockedPaths.delete(tab.path);
         externalConflictVersions.delete(tab.path);
@@ -686,8 +803,9 @@ export const useEditorStore = defineStore("editor", () => {
           saved === 1 ? `已保存 ${dirty[0].name}` : `已保存 ${saved} 个文件`,
         );
       }
-      if (workspace.rootPath) void git.scheduleRefresh();
+      if (isCurrent()) void git.scheduleRefresh();
     } catch (error) {
+      if (!isCurrent()) return;
       if (!options?.quiet) {
         workspace.showNotice(
           error instanceof Error ? error.message : String(error),
@@ -779,6 +897,19 @@ export const useEditorStore = defineStore("editor", () => {
   function renameTabPath(from: string, to: string) {
     const tab = tabs.value.find((t) => t.path === from);
     if (!tab) return;
+    if (from !== to) {
+      if (pendingExternalUpdates.delete(from)) {
+        pendingExternalUpdates.add(to);
+      }
+      if (autoSaveBlockedPaths.delete(from)) {
+        autoSaveBlockedPaths.add(to);
+      }
+      if (externalConflictVersions.has(from)) {
+        const version = externalConflictVersions.get(from);
+        externalConflictVersions.delete(from);
+        if (version !== undefined) externalConflictVersions.set(to, version);
+      }
+    }
     tab.path = to;
     tab.id = to;
     tab.name = basename(to);
@@ -845,6 +976,12 @@ export const useEditorStore = defineStore("editor", () => {
 
   /** 切换工作区后清空文件标签与跳转栈 */
   function clearForWorkspaceSwitch() {
+    workspaceGeneration += 1;
+    restoreGeneration += 1;
+    restoringSession = false;
+    referencesRequestSeq += 1;
+    referencesVisible.value = false;
+    referenceResults.value = [];
     tabs.value = [];
     activePath.value = null;
     jumpStack.value = [];

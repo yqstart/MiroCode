@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use super::path_util::{ensure_inside_workspace, walk_files};
+use super::path_util::{ensure_inside_workspace, resolve_inside_workspace, walk_files};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -122,6 +122,13 @@ impl WalkCache {
     }
 
     fn insert(&mut self, key: String, files: Vec<PathBuf>) {
+        // 过期 key 重新计算时先移除旧的 LRU 位置；否则 order 会出现
+        // 重复项，后续淘汰可能误删刚写入的 map 条目。
+        if self.map.remove(&key).is_some() {
+            if let Some(pos) = self.order.iter().position(|k| k == &key) {
+                self.order.remove(pos);
+            }
+        }
         self.map.insert(key.clone(), (std::time::Instant::now(), files));
         self.order.push(key);
         while self.order.len() > self.max {
@@ -171,6 +178,7 @@ where
 /// 立即提前返回，释放 spawn_blocking 线程（Rust 无法取消线程，只能靠
 /// 自检快速退出——否则连续触发搜索会把线程池占满造成「卡死」假象）。
 static SEARCH_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const SEARCH_SUPERSEDED: &str = "__MIROCODE_SEARCH_SUPERSEDED__";
 
 /// 判断当前代际是否已过期（有更新的搜索启动即视为过期）。
 fn gen_stale(born: u64) -> bool {
@@ -193,7 +201,7 @@ pub async fn search_files(
     let extra = extra_ignores.unwrap_or_default();
     let max = max_results.unwrap_or(80);
     let q = query.trim().to_string();
-    if q.is_empty() {
+    if q.is_empty() || max == 0 {
         return Ok(vec![]);
     }
     // query 小写只算一次（segment_contains_score 不再重复 to_lowercase）
@@ -209,7 +217,9 @@ pub async fn search_files(
         for path in cached_walk_files(&root_path, &extra)? {
             // 每 256 个文件检查一次是否过期，过期立即返回释放线程
             if gen_stale(gen) {
-                return Ok(hits);
+                // 代际是进程级的，可能是另一个窗口发起了搜索；不能把当前
+                // 已收集的部分结果当成完整结果交给前端。
+                return Err(SEARCH_SUPERSEDED.into());
             }
             if !match_ext(&path, &extensions) {
                 continue;
@@ -256,6 +266,9 @@ pub async fn search_content(
     }
     let case_sensitive = case_sensitive.unwrap_or(false);
     let max = max_results.unwrap_or(500);
+    if max == 0 {
+        return Ok(vec![]);
+    }
     let extra = extra_ignores.unwrap_or_default();
     let query_lc = query.to_lowercase();
     let gen = next_gen();
@@ -268,7 +281,9 @@ pub async fn search_content(
         for path in cached_walk_files(&root_path, &extra)? {
             // 每 64 个文件检查一次是否过期（内容搜索读文件较慢，检查更频繁）
             if gen_stale(gen) {
-                return Ok(hits);
+                // 代际是进程级的，可能是另一个窗口发起了搜索；不能把当前
+                // 已收集的部分结果当成完整结果交给前端。
+                return Err(SEARCH_SUPERSEDED.into());
             }
             if !match_ext(&path, &extensions) {
                 continue;
@@ -288,6 +303,9 @@ pub async fn search_content(
                 .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
             for (idx, line) in text.lines().enumerate() {
+                if idx % 64 == 0 && gen_stale(gen) {
+                    return Err(SEARCH_SUPERSEDED.into());
+                }
                 let found = if case_sensitive {
                     line.find(&query)
                 } else {
@@ -302,6 +320,9 @@ pub async fn search_content(
                         preview: line.trim().chars().take(240).collect(),
                     });
                     if hits.len() >= max {
+                        if gen_stale(gen) {
+                            return Err(SEARCH_SUPERSEDED.into());
+                        }
                         return Ok(hits);
                     }
                 }
@@ -335,7 +356,10 @@ pub async fn replace_in_files(
         ensure_inside_workspace(&root_path, &root_path)?;
 
         let files: Vec<PathBuf> = if let Some(paths) = paths {
-            paths.into_iter().map(PathBuf::from).collect()
+            paths
+                .into_iter()
+                .map(|path| resolve_inside_workspace(&root_path, Path::new(&path)))
+                .collect::<Result<_, _>>()?
         } else {
             cached_walk_files(&root_path, &extra)?
                 .into_iter()

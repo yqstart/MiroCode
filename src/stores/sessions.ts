@@ -295,6 +295,11 @@ export const useSessionsStore = defineStore("sessions", () => {
     if (idx < 0) return;
     localTerminals.value.splice(idx, 1);
     delete localIdle.value[id];
+    // 组件卸载后 watcher 不一定还有机会消费异步等待中的任务；目标终端
+    // 已不存在时，待注入命令必须立即作废，避免残留到后续操作。
+    if (pendingLocalWrite.value?.terminalId === id) {
+      pendingLocalWrite.value = null;
+    }
     applyShellTitles();
     if (activeLocalId.value === id) {
       const next = localTerminals.value[idx] || localTerminals.value[idx - 1] || null;

@@ -114,12 +114,16 @@ export const useGitStore = defineStore("git", () => {
   let activeRefreshPromise: Promise<void> | null = null;
   /** Git 索引写入队列：多窗口或快速点击暂存时不能让后写入的旧索引覆盖前一次结果。 */
   let indexOperationQueue: Promise<void> = Promise.resolve();
+  /** 工作区切换代际：阻止排队中的暂存/取消暂存落到新工作区。 */
+  let workspaceOperationSeq = 0;
   /** 日志加载专用序号：与 refreshSeq 解耦。
    *  loadLog 与 refresh 并发时（GitLogPanel ensureLog 的 Promise.all），
    *  refresh 自增 refreshSeq 会把 loadLog 结果系统性作废——面板打开/刷新
    *  时日志永远停在旧数据。独立序号只对并发 loadLog 互斥（旧 limit 不
    *  覆盖新 limit），工作区切换防护改由 root 对比承担。 */
   let logSeq = 0;
+  /** 整组 Diff 弹层请求序号，关闭/切换工作区后使旧结果失效。 */
+  let diffSeq = 0;
 
   const statusMap = computed(() => {
     const map = new Map<string, GitStatusEntry>();
@@ -196,6 +200,20 @@ export const useGitStore = defineStore("git", () => {
 
   function selectChange(path: string | null) {
     selectedPath.value = path;
+  }
+
+  /** 捕获一次 Git 操作所属的工作区，避免等待期间切换项目后继续更新当前 UI。 */
+  function captureWorkspaceOperation() {
+    const workspace = useWorkspaceStore();
+    const root = workspace.rootPath;
+    if (!root) return null;
+    const operationSeq = workspaceOperationSeq;
+    return {
+      workspace,
+      root,
+      isCurrent: () =>
+        workspace.rootPath === root && workspaceOperationSeq === operationSeq,
+    };
   }
 
   function scheduleRefresh(): Promise<void> {
@@ -303,13 +321,16 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function initRepo() {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      await gitInit(workspace.rootPath);
+      await gitInit(root);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.initOk"));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -321,14 +342,32 @@ export const useGitStore = defineStore("git", () => {
     const workspace = useWorkspaceStore();
     const root = workspace.rootPath;
     if (!root) return;
+    const operationSeq = workspaceOperationSeq;
     await enqueueIndexOperation(async () => {
       // 请求排队期间可能已经切换工作区，不能把旧工作区的操作写入新工作区。
-      if (workspace.rootPath !== root) return;
+      if (
+        workspace.rootPath !== root ||
+        workspaceOperationSeq !== operationSeq
+      ) {
+        return;
+      }
       try {
         // 空 paths 是后端约定的「全部暂存」，比依赖某一帧前端状态枚举更可靠。
         await gitStage(root, paths);
+        if (
+          workspace.rootPath !== root ||
+          workspaceOperationSeq !== operationSeq
+        ) {
+          return;
+        }
         await refresh();
       } catch (error) {
+        if (
+          workspace.rootPath !== root ||
+          workspaceOperationSeq !== operationSeq
+        ) {
+          return;
+        }
         workspace.showNotice(
           error instanceof Error ? error.message : String(error),
           3200,
@@ -345,12 +384,30 @@ export const useGitStore = defineStore("git", () => {
     const workspace = useWorkspaceStore();
     const root = workspace.rootPath;
     if (!root || !paths.length) return;
+    const operationSeq = workspaceOperationSeq;
     await enqueueIndexOperation(async () => {
-      if (workspace.rootPath !== root) return;
+      if (
+        workspace.rootPath !== root ||
+        workspaceOperationSeq !== operationSeq
+      ) {
+        return;
+      }
       try {
         await gitUnstage(root, paths);
+        if (
+          workspace.rootPath !== root ||
+          workspaceOperationSeq !== operationSeq
+        ) {
+          return;
+        }
         await refresh();
       } catch (error) {
+        if (
+          workspace.rootPath !== root ||
+          workspaceOperationSeq !== operationSeq
+        ) {
+          return;
+        }
         workspace.showNotice(
           error instanceof Error ? error.message : String(error),
           3200,
@@ -360,8 +417,9 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function commit(message?: string, paths?: string[]) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return false;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return false;
+    const { workspace, root, isCurrent } = operation;
     const msg = (message ?? commitMessage.value).trim();
     if (!msg) {
       workspace.showNotice(t("git.needMessage"));
@@ -375,17 +433,19 @@ export const useGitStore = defineStore("git", () => {
     }
     try {
       await gitCommit(
-        workspace.rootPath,
+        root,
         msg,
         amendCommit.value ? undefined : explicit,
         amendCommit.value,
       );
+      if (!isCurrent()) return false;
       commitMessage.value = "";
       amendCommit.value = false;
       workspace.showNotice(t("git.commitOk"));
       await refresh();
       return true;
     } catch (error) {
+      if (!isCurrent()) return false;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -402,15 +462,16 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function checkout(name: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     if (snapshot.value.branch === name) return;
 
-    const root = workspace.rootPath;
     const dirty = snapshot.value.entries.length > 0;
 
     try {
       await gitCheckout(root, name, false);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.switchedTo", { name }));
       await refresh();
       return;
@@ -418,10 +479,13 @@ export const useGitStore = defineStore("git", () => {
       const msg = error instanceof Error ? error.message : String(error);
       // 干净工作区，或明显不是「本地变更阻挡」：直接提示
       if (!shouldOfferDirtyCheckout(msg, dirty)) {
+        if (!isCurrent()) return;
         workspace.showNotice(msg, 3200);
         return;
       }
     }
+
+    if (!isCurrent()) return;
 
     // 有未提交变更且安全切换失败 → VS Code / WebStorm 风格处理
     const { promptChoice } = await import("@/shared/choiceDialog");
@@ -436,16 +500,20 @@ export const useGitStore = defineStore("git", () => {
       dismissId: "cancel",
     });
 
-    if (!choice || choice === "cancel") return;
+    if (!isCurrent() || !choice || choice === "cancel") return;
 
     try {
       if (choice === "smart") {
         await gitStash(root, `Miro Code: checkout ${name}`, true);
+        if (!isCurrent()) return;
         await gitCheckout(root, name, false);
+        if (!isCurrent()) return;
         try {
           await gitStashPop(root);
+          if (!isCurrent()) return;
           workspace.showNotice(t("git.switchedRestored", { name }));
         } catch (popError) {
+          if (!isCurrent()) return;
           const popMsg =
             popError instanceof Error ? popError.message : String(popError);
           workspace.showNotice(
@@ -455,10 +523,13 @@ export const useGitStore = defineStore("git", () => {
         }
       } else if (choice === "force") {
         await gitCheckout(root, name, true);
+        if (!isCurrent()) return;
         workspace.showNotice(t("git.forceSwitched", { name }));
       }
+      if (!isCurrent()) return;
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -483,13 +554,16 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function createBranch(name: string, checkout = true) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      await gitCreateBranch(workspace.rootPath, name, checkout);
+      await gitCreateBranch(root, name, checkout);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.branchCreated", { name }));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -498,14 +572,18 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function deleteBranch(name: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     if (!window.confirm(t("git.deleteBranchConfirm", { name }))) return;
+    if (!isCurrent()) return;
     try {
-      await gitDeleteBranch(workspace.rootPath, name);
+      await gitDeleteBranch(root, name);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.branchDeleted", { name }));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -514,13 +592,16 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function renameBranch(from: string, to: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      await gitRenameBranch(workspace.rootPath, from, to);
+      await gitRenameBranch(root, from, to);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.branchRenamed", { name: to }));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -574,6 +655,9 @@ export const useGitStore = defineStore("git", () => {
     }
     remoteInFlight.value = true;
     const root = workspace.rootPath;
+    const operationSeq = workspaceOperationSeq;
+    const isCurrent = () =>
+      workspace.rootPath === root && workspaceOperationSeq === operationSeq;
     let auth: GitAuthPayload | undefined;
     let lastUser = "";
     // 最多 1 次重试：第 0 次尝试 → 失败弹窗 → 第 1 次尝试用新凭据；仍认证失败则停止弹窗
@@ -587,10 +671,20 @@ export const useGitStore = defineStore("git", () => {
       fetch: t("git.fetching"),
       update: t("git.updating"),
     };
-    workspace.showNotice(progressMessages[kind]);
+    if (isCurrent()) workspace.showNotice(progressMessages[kind]);
 
     try {
-      await runRemoteWithAuthInner(kind, force, updateStrategy, root, auth, lastUser, MAX_ATTEMPTS, workspace);
+      await runRemoteWithAuthInner(
+        kind,
+        force,
+        updateStrategy,
+        root,
+        auth,
+        lastUser,
+        MAX_ATTEMPTS,
+        workspace,
+        isCurrent,
+      );
     } finally {
       remoteInFlight.value = false;
     }
@@ -605,17 +699,20 @@ export const useGitStore = defineStore("git", () => {
     lastUserIn: string,
     maxAttempts: number,
     workspace: ReturnType<typeof useWorkspaceStore>,
+    isCurrent: () => boolean,
   ) {
     let authLocal = auth;
     let lastUser = lastUserIn;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (!isCurrent()) return;
       try {
         let msg = "";
         if (kind === "pull") msg = await gitPull(root, authLocal);
         else if (kind === "push") msg = await gitPush(root, force, authLocal);
         else if (kind === "fetch") msg = await gitFetch(root, "origin", authLocal);
         else msg = await gitUpdateProject(root, updateStrategy, authLocal);
+        if (!isCurrent()) return;
         const remembered = authLocal?.remember === true;
         const fallback = msg || t("git.done");
         workspace.showNotice(
@@ -624,6 +721,7 @@ export const useGitStore = defineStore("git", () => {
         await refresh();
         return;
       } catch (error) {
+        if (!isCurrent()) return;
         const raw = error instanceof Error ? error.message : String(error);
         const parsed = parseGitAuthError(raw);
         if (!parsed) {
@@ -639,6 +737,7 @@ export const useGitStore = defineStore("git", () => {
           return;
         }
         const { promptGitAuth } = await import("@/shared/gitAuthDialog");
+        if (!isCurrent()) return;
         const titles: Record<typeof kind, string> = {
           pull: t("git.authPull"),
           push: t("git.authPush"),
@@ -654,13 +753,14 @@ export const useGitStore = defineStore("git", () => {
             /* 忽略预填失败 */
           }
         }
+        if (!isCurrent()) return;
         const next = await promptGitAuth({
           title: titles[kind],
           remoteUrl: parsed.url,
           message: authLocal ? t("git.authRetry") : t("git.authRequired"),
           defaultUsername,
         });
-        if (!next) return;
+        if (!isCurrent() || !next) return;
         lastUser = next.username;
         authLocal = {
           username: next.username,
@@ -690,13 +790,16 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function stash(message?: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      await gitStash(workspace.rootPath, message);
+      await gitStash(root, message);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.stashOk"));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -705,13 +808,16 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function stashPop(index = 0) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      await gitStashPop(workspace.rootPath, index);
+      await gitStashPop(root, index);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.stashPopOk"));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -720,13 +826,16 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function stashApply(index: number) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      await gitStashApply(workspace.rootPath, index);
+      await gitStashApply(root, index);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.stashApplyOk"));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -735,14 +844,18 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function stashDrop(index: number) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     if (!confirm(t("git.stashDropConfirm", { index }))) return;
+    if (!isCurrent()) return;
     try {
-      await gitStashDrop(workspace.rootPath, index);
+      await gitStashDrop(root, index);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.stashDropOk"));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -751,12 +864,16 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function discard(paths: string[]) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath || !paths.length) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation || !paths.length) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      await gitDiscardPaths(workspace.rootPath, paths);
+      await gitDiscardPaths(root, paths);
+      if (!isCurrent()) return;
       const { useEditorStore } = await import("@/stores/editor");
+      if (!isCurrent()) return;
       await useEditorStore().reloadAfterDiscard(paths);
+      if (!isCurrent()) return;
       workspace.showNotice(
         paths.length === 1
           ? t("git.discardedOne")
@@ -764,6 +881,7 @@ export const useGitStore = defineStore("git", () => {
       );
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -828,20 +946,25 @@ export const useGitStore = defineStore("git", () => {
   async function showDiff(path?: string, staged?: boolean) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
+    const root = workspace.rootPath;
     // 分栏对比需要具体文件；整组 diff 仍回退为 patch 弹层
     if (path?.trim()) {
       const { useCompareStore } = await import("@/stores/compare");
+      if (workspace.rootPath !== root) return;
       await useCompareStore().openDiff(path, staged ?? false);
       return;
     }
+    const requestSeq = ++diffSeq;
     try {
-      const result = await gitDiff(workspace.rootPath, path, staged);
+      const result = await gitDiff(root, path, staged);
+      if (requestSeq !== diffSeq || workspace.rootPath !== root) return;
       diffResults.value = [result];
       diffTitle.value = staged
         ? t("git.stagedChanges")
         : t("git.workingChanges");
       diffVisible.value = true;
     } catch (error) {
+      if (requestSeq !== diffSeq || workspace.rootPath !== root) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -850,6 +973,7 @@ export const useGitStore = defineStore("git", () => {
   }
 
   function closeDiff() {
+    diffSeq += 1;
     diffVisible.value = false;
     diffResults.value = [];
     diffTitle.value = "";
@@ -857,6 +981,7 @@ export const useGitStore = defineStore("git", () => {
 
   /** 切换工作区时清空仓库相关临时 UI 状态（随后会 refresh） */
   function clearForWorkspaceSwitch() {
+    workspaceOperationSeq += 1;
     snapshot.value = { ...EMPTY };
     branches.value = [];
     tags.value = [];
@@ -871,6 +996,10 @@ export const useGitStore = defineStore("git", () => {
     selectedPath.value = null;
     closeDiff();
     refreshSeq += 1;
+    // 工作区可能在旧根与新根之间快速切回；仅比较 root 不能挡住
+    // ABA 竞态（旧根请求返回时 root 又相同），因此切换时也必须使所有
+    // 在途日志请求失效。
+    logSeq += 1;
     // 旧工作区的刷新无法取消，但必须与新工作区的刷新解耦；旧 run
     // 会因 refreshSeq/root 校验丢弃结果，且不会清理新 run 的 Promise。
     activeRefreshPromise = null;
@@ -879,23 +1008,32 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function openConflictCompare(path: string) {
+    const workspace = useWorkspaceStore();
+    const root = workspace.rootPath;
+    const operationSeq = workspaceOperationSeq;
+    if (!root) return;
     const { useCompareStore } = await import("@/stores/compare");
+    if (workspace.rootPath !== root || workspaceOperationSeq !== operationSeq) return;
     await useCompareStore().openMerge(path);
   }
 
   async function resetHard() {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     if (
       !window.confirm(t("git.resetHardConfirm"))
     ) {
       return;
     }
+    if (!isCurrent()) return;
     try {
-      await gitResetHard(workspace.rootPath);
+      await gitResetHard(root);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.resetHardOk"));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -904,18 +1042,22 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function undoCommit() {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     if (
       !window.confirm(t("git.undoCommitConfirm"))
     ) {
       return;
     }
+    if (!isCurrent()) return;
     try {
-      await gitUndoCommit(workspace.rootPath);
+      await gitUndoCommit(root);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.undoCommitOk"));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -924,8 +1066,9 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function revertTo(commitId: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     if (
       !window.confirm(
         t("git.revertToConfirm", { hash: commitId.slice(0, 7) }),
@@ -933,11 +1076,14 @@ export const useGitStore = defineStore("git", () => {
     ) {
       return;
     }
+    if (!isCurrent()) return;
     try {
-      await gitRevertTo(workspace.rootPath, commitId);
+      await gitRevertTo(root, commitId);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.revertToOk"));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -946,15 +1092,18 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function mergeBranch(name: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      const msg = await gitMergeBranch(workspace.rootPath, name);
+      const msg = await gitMergeBranch(root, name);
+      if (!isCurrent()) return;
       workspace.showNotice(
         typeof msg === "string" && msg ? msg : t("git.merged", { name }),
       );
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         4800,
@@ -965,14 +1114,18 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function mergeAbort() {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     if (!window.confirm(t("git.mergeAbortConfirm"))) return;
+    if (!isCurrent()) return;
     try {
-      const msg = await gitMergeAbort(workspace.rootPath);
+      const msg = await gitMergeAbort(root);
+      if (!isCurrent()) return;
       workspace.showNotice(msg || t("git.mergeAborted"));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -981,13 +1134,16 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function rebaseBranch(onto: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      const msg = await gitRebaseBranch(workspace.rootPath, onto);
+      const msg = await gitRebaseBranch(root, onto);
+      if (!isCurrent()) return;
       workspace.showNotice(msg || t("git.rebasedOnto", { onto }));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       const raw = error instanceof Error ? error.message : String(error);
       if (raw.includes("GIT_REBASE_CONFLICT|||")) noticeRebaseConflict(raw);
       else workspace.showNotice(raw, 4800);
@@ -996,14 +1152,17 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function rebaseContinue() {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      const msg = await gitRebaseContinue(workspace.rootPath);
+      const msg = await gitRebaseContinue(root);
+      if (!isCurrent()) return;
       workspace.showNotice(msg || t("git.rebaseContinued"));
       await refresh();
       await loadLog();
     } catch (error) {
+      if (!isCurrent()) return;
       const raw = error instanceof Error ? error.message : String(error);
       if (raw.includes("GIT_REBASE_CONFLICT|||")) noticeRebaseConflict(raw);
       else workspace.showNotice(raw, 4800);
@@ -1012,17 +1171,21 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function rebaseAbort() {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     if (!window.confirm(t("git.rebaseAbortConfirm"))) {
       return;
     }
+    if (!isCurrent()) return;
     try {
-      const msg = await gitRebaseAbort(workspace.rootPath);
+      const msg = await gitRebaseAbort(root);
+      if (!isCurrent()) return;
       workspace.showNotice(msg || t("git.rebaseAborted"));
       await refresh();
       await loadLog();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1031,14 +1194,17 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function rebaseSkip() {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      const msg = await gitRebaseSkip(workspace.rootPath);
+      const msg = await gitRebaseSkip(root);
+      if (!isCurrent()) return;
       workspace.showNotice(msg || t("git.rebaseSkipped"));
       await refresh();
       await loadLog();
     } catch (error) {
+      if (!isCurrent()) return;
       const raw = error instanceof Error ? error.message : String(error);
       if (raw.includes("GIT_REBASE_CONFLICT|||")) noticeRebaseConflict(raw);
       else workspace.showNotice(raw, 4800);
@@ -1047,14 +1213,17 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function startInteractiveRebase(onto: string, steps: GitRebaseStep[]) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      const msg = await gitRebaseInteractive(workspace.rootPath, onto, steps);
+      const msg = await gitRebaseInteractive(root, onto, steps);
+      if (!isCurrent()) return;
       workspace.showNotice(msg || t("git.interactiveRebaseDone"));
       await refresh();
       await loadLog();
     } catch (error) {
+      if (!isCurrent()) return;
       const raw = error instanceof Error ? error.message : String(error);
       if (raw.includes("GIT_REBASE_CONFLICT|||")) noticeRebaseConflict(raw);
       else workspace.showNotice(raw, 4800);
@@ -1064,11 +1233,14 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function loadRebasePlan(onto: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return [];
+    const operation = captureWorkspaceOperation();
+    if (!operation) return [];
+    const { workspace, root, isCurrent } = operation;
     try {
-      return await gitRebasePlan(workspace.rootPath, onto);
+      const plan = await gitRebasePlan(root, onto);
+      return isCurrent() ? plan : [];
     } catch (error) {
+      if (!isCurrent()) return [];
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1078,13 +1250,16 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function setUpstream(branch: string, upstream: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      await gitSetUpstream(workspace.rootPath, branch, upstream);
+      await gitSetUpstream(root, branch, upstream);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.upstreamSet", { upstream }));
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1093,18 +1268,22 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function deleteRemoteBranch(remoteRef: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     if (
       !window.confirm(t("git.deleteRemoteConfirm", { ref: remoteRef }))
     ) {
       return;
     }
+    if (!isCurrent()) return;
     try {
-      const msg = await gitDeleteRemoteBranch(workspace.rootPath, remoteRef);
+      const msg = await gitDeleteRemoteBranch(root, remoteRef);
+      if (!isCurrent()) return;
       workspace.showNotice(msg);
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         4800,
@@ -1116,15 +1295,17 @@ export const useGitStore = defineStore("git", () => {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath || !snapshot.value.branch) return;
     const root = workspace.rootPath;
+    const operationSeq = workspaceOperationSeq;
     try {
       const sides = await gitBranchSides(
-        workspace.rootPath,
+        root,
         snapshot.value.branch,
         other,
       );
       // 等待期间已切换工作区：旧仓库的对比标签不得落入新工作区
-      if (workspace.rootPath !== root) return;
+      if (workspace.rootPath !== root || workspaceOperationSeq !== operationSeq) return;
       const { useCompareStore } = await import("@/stores/compare");
+      if (workspace.rootPath !== root || workspaceOperationSeq !== operationSeq) return;
       const compare = useCompareStore();
       // upsert：同一分支重复对比时合并为同一标签，避免无限累积
       compare.upsertTab({
@@ -1139,6 +1320,9 @@ export const useGitStore = defineStore("git", () => {
         editableRight: false,
       });
     } catch (error) {
+      if (workspace.rootPath !== root || workspaceOperationSeq !== operationSeq) {
+        return;
+      }
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1151,10 +1335,12 @@ export const useGitStore = defineStore("git", () => {
     commitId: string,
     checkout: boolean,
   ) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      await gitCreateBranchAt(workspace.rootPath, name, commitId, checkout);
+      await gitCreateBranchAt(root, name, commitId, checkout);
+      if (!isCurrent()) return;
       workspace.showNotice(
         checkout
           ? t("git.createdAndSwitched", { name })
@@ -1163,6 +1349,7 @@ export const useGitStore = defineStore("git", () => {
       await refresh();
       await loadLog();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1175,14 +1362,17 @@ export const useGitStore = defineStore("git", () => {
     commitId: string,
     message?: string,
   ) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      await gitCreateTag(workspace.rootPath, name, commitId, message);
+      await gitCreateTag(root, name, commitId, message);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.tagCreated", { name }));
       await refresh();
       await loadLog();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1191,15 +1381,19 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function deleteTag(name: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     if (!window.confirm(t("git.deleteTagConfirm", { name }))) return;
+    if (!isCurrent()) return;
     try {
-      await gitDeleteTag(workspace.rootPath, name);
+      await gitDeleteTag(root, name);
+      if (!isCurrent()) return;
       workspace.showNotice(t("git.tagDeleted", { name }));
       await refresh();
       await loadLog();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1208,13 +1402,16 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function pushTag(name: string, remote?: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     const target = remote ?? snapshot.value.upstream?.split("/")[0] ?? "origin";
     try {
-      const message = await gitPushTag(workspace.rootPath, target, name);
+      const message = await gitPushTag(root, target, name);
+      if (!isCurrent()) return;
       workspace.showNotice(message);
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         4800,
@@ -1223,8 +1420,9 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function checkoutCommit(commitId: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     if (
       !window.confirm(
         t("git.checkoutCommitConfirm", { hash: commitId.slice(0, 7) }),
@@ -1232,12 +1430,15 @@ export const useGitStore = defineStore("git", () => {
     ) {
       return;
     }
+    if (!isCurrent()) return;
     try {
-      const msg = await gitCheckoutCommit(workspace.rootPath, commitId);
+      const msg = await gitCheckoutCommit(root, commitId);
+      if (!isCurrent()) return;
       workspace.showNotice(msg);
       await refresh();
       await loadLog();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1246,14 +1447,17 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function revertCommit(commitId: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      const msg = await gitRevertCommit(workspace.rootPath, commitId);
+      const msg = await gitRevertCommit(root, commitId);
+      if (!isCurrent()) return;
       workspace.showNotice(msg);
       await refresh();
       await loadLog();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         4800,
@@ -1263,19 +1467,23 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function resolveAllConflicts(strategy: "ours" | "theirs") {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     const paths = conflictEntries.value.map((e) => e.path);
     if (!paths.length) return;
     try {
       for (const path of paths) {
-        await gitResolveConflict(workspace.rootPath, path, strategy);
+        if (!isCurrent()) return;
+        await gitResolveConflict(root, path, strategy);
       }
+      if (!isCurrent()) return;
       workspace.showNotice(
         strategy === "ours" ? t("git.acceptAllOurs") : t("git.acceptAllTheirs"),
       );
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1291,17 +1499,20 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function checkoutRemote(remoteRef: string, localName?: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
       const msg = await gitCheckoutRemote(
-        workspace.rootPath,
+        root,
         remoteRef,
         localName,
       );
+      if (!isCurrent()) return;
       workspace.showNotice(msg);
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1310,14 +1521,17 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function cherryPick(commitId: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     try {
-      const msg = await gitCherryPick(workspace.rootPath, commitId);
+      const msg = await gitCherryPick(root, commitId);
+      if (!isCurrent()) return;
       workspace.showNotice(msg);
       await refresh();
       await loadLog();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         4800,
@@ -1330,8 +1544,9 @@ export const useGitStore = defineStore("git", () => {
     commitId: string,
     mode: "soft" | "mixed" | "hard",
   ) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return;
+    const operation = captureWorkspaceOperation();
+    if (!operation) return;
+    const { workspace, root, isCurrent } = operation;
     const label =
       mode === "hard"
         ? t("git.resetHardLabel")
@@ -1344,12 +1559,15 @@ export const useGitStore = defineStore("git", () => {
       )
     )
       return;
+    if (!isCurrent()) return;
     try {
-      const msg = await gitReset(workspace.rootPath, commitId, mode);
+      const msg = await gitReset(root, commitId, mode);
+      if (!isCurrent()) return;
       workspace.showNotice(msg);
       await refresh();
       await loadLog();
     } catch (error) {
+      if (!isCurrent()) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1358,11 +1576,14 @@ export const useGitStore = defineStore("git", () => {
   }
 
   async function blameFile(path: string) {
-    const workspace = useWorkspaceStore();
-    if (!workspace.rootPath) return [];
+    const operation = captureWorkspaceOperation();
+    if (!operation) return [];
+    const { workspace, root, isCurrent } = operation;
     try {
-      return await gitBlame(workspace.rootPath, path);
+      const result = await gitBlame(root, path);
+      return isCurrent() ? result : [];
     } catch (error) {
+      if (!isCurrent()) return [];
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,
@@ -1377,13 +1598,17 @@ export const useGitStore = defineStore("git", () => {
   ) {
     const workspace = useWorkspaceStore();
     if (!workspace.rootPath) return;
+    const root = workspace.rootPath;
+    const operationSeq = workspaceOperationSeq;
     try {
-      await gitResolveConflict(workspace.rootPath, path, strategy);
+      await gitResolveConflict(root, path, strategy);
+      if (workspace.rootPath !== root || workspaceOperationSeq !== operationSeq) return;
       workspace.showNotice(
         strategy === "manual" ? t("git.conflictManual") : t("git.conflictResolved"),
       );
       await refresh();
     } catch (error) {
+      if (workspace.rootPath !== root || workspaceOperationSeq !== operationSeq) return;
       workspace.showNotice(
         error instanceof Error ? error.message : String(error),
         3200,

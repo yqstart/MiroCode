@@ -190,14 +190,29 @@ function syncDocs() {
 async function saveResult() {
   const current = tab.value;
   if (!current || !workspace.rootPath || current.kind !== "merge") return;
+  const root = workspace.rootPath;
+  const tabId = current.id;
   const content = mergeView?.b.state.doc.toString() ?? current.right;
   try {
-    const abs = joinPath(workspace.rootPath, current.path);
-    await writeTextFile(workspace.rootPath, abs, content);
+    const abs = joinPath(root, current.path);
+    await writeTextFile(root, abs, content);
+    if (
+      workspace.rootPath !== root ||
+      !compare.tabs.some((item) => item.id === tabId)
+    ) {
+      return;
+    }
     await git.resolveConflict(current.path, "manual");
+    if (
+      workspace.rootPath !== root ||
+      !compare.tabs.some((item) => item.id === tabId)
+    ) {
+      return;
+    }
     workspace.showNotice(t("compare.savedResolved", { path: current.path }));
-    compare.closeTab(current.id);
+    compare.closeTab(tabId);
   } catch (error) {
+    if (workspace.rootPath !== root) return;
     workspace.showNotice(
       error instanceof Error ? error.message : String(error),
       3200,
@@ -207,16 +222,24 @@ async function saveResult() {
 
 async function acceptOurs() {
   const current = tab.value;
-  if (!current) return;
+  if (!current || !workspace.rootPath) return;
+  const root = workspace.rootPath;
+  const tabId = current.id;
   await git.resolveConflict(current.path, "ours");
-  compare.closeTab(current.id);
+  if (workspace.rootPath === root && compare.tabs.some((item) => item.id === tabId)) {
+    compare.closeTab(tabId);
+  }
 }
 
 async function acceptTheirs() {
   const current = tab.value;
-  if (!current) return;
+  if (!current || !workspace.rootPath) return;
+  const root = workspace.rootPath;
+  const tabId = current.id;
   await git.resolveConflict(current.path, "theirs");
-  compare.closeTab(current.id);
+  if (workspace.rootPath === root && compare.tabs.some((item) => item.id === tabId)) {
+    compare.closeTab(tabId);
+  }
 }
 
 function rebuild() {

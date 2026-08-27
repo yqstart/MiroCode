@@ -59,6 +59,8 @@ class WorkspaceSymbolCache {
   private globalIndex = new Map<string, Array<DocumentSymbol & { path: string }>>();
   /** 标记正在构建（避免重复 IO） */
   private inflight = new Map<string, Promise<FileSymbolTable | typeof PARSE_FAIL_MARKER>>();
+  /** 单文件失效代际：阻止失效前的异步解析结果回写缓存。 */
+  private fileGenerations = new Map<string, number>();
   /** LRU 上限 */
   private readonly MAX_FILES = 500;
   /** 文件大小上限（bytes），超出截断避免单文件拖死 */
@@ -84,6 +86,7 @@ class WorkspaceSymbolCache {
     this.fileCache.clear();
     this.globalIndex.clear();
     this.inflight.clear();
+    this.fileGenerations.clear();
     this.workspaceScanned = false;
     this.currentRoot = null;
   }
@@ -99,7 +102,9 @@ class WorkspaceSymbolCache {
 
   /** 使单文件缓存失效（编辑保存后调用） */
   invalidate(path: string): void {
+    this.fileGenerations.set(path, (this.fileGenerations.get(path) ?? 0) + 1);
     this.fileCache.delete(path);
+    this.inflight.delete(path);
     // 即使 fileCache 已被 LRU 淘汰，也要清理可能残留的聚合索引贡献。
     this.removeGlobalPath(path);
   }
@@ -110,6 +115,7 @@ class WorkspaceSymbolCache {
     this.fileCache.clear();
     this.globalIndex.clear();
     this.inflight.clear();
+    this.fileGenerations.clear();
     this.workspaceScanned = false;
   }
 
@@ -176,6 +182,7 @@ class WorkspaceSymbolCache {
     const pending = this.inflight.get(path);
     if (pending) return pending;
 
+    const fileGeneration = this.fileGenerations.get(path) ?? 0;
     const promise = (async () => {
       // 优先用传进来的 content（避免重复 readTextFile）
       let text: string;
@@ -193,10 +200,12 @@ class WorkspaceSymbolCache {
         content !== undefined
           ? indexDocumentSymbols(text, path)
           : await parseFile(root, path);
-      if (generation !== this.generation) {
+      if (
+        generation !== this.generation ||
+        fileGeneration !== (this.fileGenerations.get(path) ?? 0)
+      ) {
         // 工作区已切换/全量失效：结果仍可返回给旧调用方，但禁止写入当前缓存。
         // 不删除新代际可能已经登记的同路径 promise。
-        if (generation === this.generation) this.inflight.delete(path);
         return symbols;
       }
       this.fileCache.set(path, { hash, symbols });

@@ -63,6 +63,10 @@ pub(crate) fn clear_status_cache() {
     let mut state = status_cache().lock().unwrap_or_else(|e| e.into_inner());
     state.generation = state.generation.wrapping_add(1);
     state.entry = None;
+    // HEAD、索引、上游或远端引用变化后，未推送提交列表也不能继续复用旧结果。
+    if let Ok(mut cache) = unpushed_cache().lock() {
+        cache.clear();
+    }
 }
 
 fn try_store_status_result(
@@ -276,7 +280,7 @@ fn git_status_blocking(root: String) -> Result<GitStatusSnapshot, String> {
 
     let head_oid = repo.head().ok().and_then(|h| h.target()).map(|oid| {
         let s = oid.to_string();
-        s[..7.min(s.len())].to_string()
+        short_text(&s, 7)
     });
 
     let upstream = (|| {
@@ -364,25 +368,42 @@ fn git_status_blocking(root: String) -> Result<GitStatusSnapshot, String> {
 pub fn git_init(root: String) -> Result<(), String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
-    Repository::init(&root).map_err(|e| e.to_string())?;
-    Ok(())
+    let result = Repository::init(&root).map(|_| ()).map_err(|e| e.to_string());
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
 pub fn git_set_remote(root: String, name: String, url: String) -> Result<(), String> {
-    let repo = open_repo(&root)?;
-    match repo.find_remote(&name) {
-        Ok(_) => repo
-            .remote_set_url(&name, &url)
-            .map_err(|e| e.to_string())?,
-        Err(_) => {
-            repo.remote(&name, &url).map_err(|e| e.to_string())?;
+    clear_status_cache();
+    let result = (|| {
+        let repo = open_repo(&root)?;
+        match repo.find_remote(&name) {
+            Ok(_) => repo
+                .remote_set_url(&name, &url)
+                .map_err(|e| e.to_string())?,
+            Err(_) => {
+                repo.remote(&name, &url).map_err(|e| e.to_string())?;
+            }
         }
+        Ok(())
+    })();
+    clear_status_cache();
+    result
+}
+
+fn ensure_repo_paths(repo: &Repository, paths: &[String]) -> Result<(), String> {
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| "裸仓库不支持工作区路径".to_string())?;
+    for path in paths {
+        crate::commands::path_util::ensure_inside_workspace(workdir, &workdir.join(path))?;
     }
     Ok(())
 }
 
 fn index_add(repo: &Repository, paths: &[String]) -> Result<(), String> {
+    ensure_repo_paths(repo, paths)?;
     let mut index = repo.index().map_err(|e| e.to_string())?;
     if paths.is_empty() {
         index
@@ -430,6 +451,9 @@ pub fn git_unstage(root: String, paths: Vec<String>) -> Result<(), String> {
     clear_status_cache();
     let result = (|| {
         let repo = open_repo(&root)?;
+        if !paths.is_empty() {
+            ensure_repo_paths(&repo, &paths)?;
+        }
         match repo.head() {
             Ok(head) => {
                 let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
@@ -499,6 +523,9 @@ fn commit_internal(
         if paths.is_empty() {
             return Err("请至少勾选一个文件再提交".into());
         }
+        // 必须在重置索引前校验路径；否则非法路径会先清空当前索引，
+        // 随后才在 index_add 失败，造成用户已有暂存状态被意外撤销。
+        ensure_repo_paths(&repo, paths)?;
         if !merging {
             match repo.head() {
                 Ok(head) => {
@@ -553,10 +580,25 @@ fn commit_internal(
         }
     };
     let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+    let is_amend = amend.unwrap_or(false);
+    let amend_ref = if is_amend {
+        repo.head().ok().and_then(|head| {
+            if head.is_branch() {
+                head.name().ok().map(str::to_owned)
+            } else {
+                None
+            }
+        })
+    } else {
+        None
+    };
 
     let oid = repo
         .commit(
-            Some("HEAD"),
+            // amend 的父提交是旧 HEAD 的父，而不是旧 HEAD 本身；git2 在
+            // update_ref=HEAD 时会拒绝这种非快进更新，所以先只创建对象，
+            // 再强制更新当前分支引用。
+            if is_amend { None } else { Some("HEAD") },
             &sig,
             &sig,
             message.trim(),
@@ -564,6 +606,15 @@ fn commit_internal(
             &parent_refs,
         )
         .map_err(|e| e.to_string())?;
+    if is_amend {
+        if let Some(refname) = amend_ref {
+            repo.reference(&refname, oid, true, "commit --amend")
+                .map_err(|e| format!("更新 amend 后的分支引用失败: {e}"))?;
+        } else {
+            repo.set_head_detached(oid)
+                .map_err(|e| format!("更新 amend 后的分离 HEAD 失败: {e}"))?;
+        }
+    }
     // 合并提交落库后清掉 MERGE_HEAD/MERGE_MSG（对齐 git commit 结束合并的行为）
     if let Ok(dir) = git_dir(&root) {
         let _ = std::fs::remove_file(dir.join("MERGE_HEAD"));
@@ -638,11 +689,13 @@ pub async fn git_checkout(
     let handle = tokio::task::spawn_blocking(move || {
         git_checkout_blocking(root, name, force)
     });
-    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("切换分支任务失败: {join}")),
         Err(_) => Err("切换分支超时（120s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_checkout_blocking(root: String, name: String, force: Option<bool>) -> Result<(), String> {
@@ -692,35 +745,45 @@ pub async fn git_create_branch(
     });
     let branch_result = match tokio::time::timeout(Duration::from_secs(30), handle).await {
         Ok(Ok(r)) => r,
-        Ok(Err(join)) => return Err(format!("创建分支任务失败: {join}")),
-        Err(_) => return Err("创建分支超时（30s）".into()),
+        Ok(Err(join)) => Err(format!("创建分支任务失败: {join}")),
+        Err(_) => Err("创建分支超时（30s）".into()),
     };
+    clear_status_cache();
     branch_result?;
     if checkout {
-        git_checkout(root, name, Some(false)).await?;
+        let result = git_checkout(root, name, Some(false)).await;
+        clear_status_cache();
+        return result;
     }
     Ok(())
 }
 
 #[tauri::command]
 pub fn git_delete_branch(root: String, name: String) -> Result<(), String> {
-    let repo = open_repo(&root)?;
-    let mut branch = repo
-        .find_branch(&name, BranchType::Local)
-        .map_err(|e| e.to_string())?;
-    if branch.is_head() {
-        return Err("不能删除当前分支".into());
-    }
-    branch.delete().map_err(|e| e.to_string())
+    clear_status_cache();
+    let result = (|| {
+        let repo = open_repo(&root)?;
+        let mut branch = repo
+            .find_branch(&name, BranchType::Local)
+            .map_err(|e| e.to_string())?;
+        if branch.is_head() {
+            return Err("不能删除当前分支".into());
+        }
+        branch.delete().map_err(|e| e.to_string())
+    })();
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
 pub fn git_rename_branch(root: String, from: String, to: String) -> Result<(), String> {
+    clear_status_cache();
     let repo = open_repo(&root)?;
     let mut branch = repo
         .find_branch(&from, BranchType::Local)
         .map_err(|e| e.to_string())?;
     branch.rename(&to, false).map_err(|e| e.to_string())?;
+    clear_status_cache();
     Ok(())
 }
 
@@ -1073,6 +1136,7 @@ pub fn git_create_tag(
         repo.tag_lightweight(&name, commit.as_object(), force)
             .map_err(|e| format!("创建标签失败: {e}"))?;
     }
+    clear_status_cache();
     Ok(())
 }
 
@@ -1082,6 +1146,7 @@ pub fn git_delete_tag(root: String, name: String) -> Result<(), String> {
     let repo = open_repo(&root)?;
     repo.tag_delete(&name)
         .map_err(|e| format!("删除标签失败: {e}"))?;
+    clear_status_cache();
     Ok(())
 }
 
@@ -1091,15 +1156,21 @@ pub async fn git_push_tag(
     remote: String,
     name: String,
 ) -> Result<String, String> {
+    // remote/tag 名来自前端和仓库配置，不能让其被 Git 当作选项解析。
+    clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || {
+        validate_git_positional_arg(&remote, "远程名称")?;
+        validate_git_positional_arg(&name, "标签名称")?;
         run_git(&root, &["push", &remote, &name])
             .map(|_| format!("已推送标签 {name} 到 {remote}"))
     });
-    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(Duration::from_secs(120), handle).await {
         Ok(Ok(result)) => result,
         Ok(Err(join)) => Err(format!("推送标签任务失败: {join}")),
         Err(_) => Err("推送标签超时（120s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 /// 丢弃工作区指定路径的未提交变更（已跟踪还原到 HEAD；未跟踪则删除）。
@@ -1109,11 +1180,13 @@ pub async fn git_discard_paths(root: String, paths: Vec<String>) -> Result<(), S
     let handle = tokio::task::spawn_blocking(move || {
         git_discard_paths_blocking(root, paths)
     });
-    match tokio::time::timeout(Duration::from_secs(60), handle).await {
+    let result = match tokio::time::timeout(Duration::from_secs(60), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("丢弃变更任务失败: {join}")),
         Err(_) => Err("丢弃变更超时（60s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_discard_paths_blocking(root: String, paths: Vec<String>) -> Result<(), String> {
@@ -1250,6 +1323,9 @@ fn git_diff_blocking(
     staged: Option<bool>,
 ) -> Result<GitDiffResult, String> {
     let repo = open_repo(&root)?;
+    if let Some(ref path) = path {
+        ensure_repo_paths(&repo, std::slice::from_ref(path))?;
+    }
     let staged = staged.unwrap_or(false);
     let mut opts = DiffOptions::new();
     if let Some(ref p) = path {
@@ -1317,6 +1393,7 @@ fn head_file_text(repo: &Repository, path: &str) -> Result<String, String> {
 pub async fn git_head_text(root: String, path: String) -> Result<String, String> {
     let handle = tokio::task::spawn_blocking(move || {
         let repo = open_repo(&root)?;
+        ensure_repo_paths(&repo, std::slice::from_ref(&path))?;
         head_file_text(&repo, &path)
     });
     match tokio::time::timeout(Duration::from_secs(10), handle).await {
@@ -1326,17 +1403,18 @@ pub async fn git_head_text(root: String, path: String) -> Result<String, String>
     }
 }
 
-fn index_file_text(repo: &Repository, path: &str) -> Result<String, String> {
+fn index_file_text(repo: &Repository, path: &str) -> Result<Option<String>, String> {
     let index = repo.index().map_err(|e| e.to_string())?;
     match index.get_path(Path::new(path), 0) {
-        Some(entry) => blob_text(repo, entry.id),
-        None => Ok(String::new()),
+        Some(entry) => blob_text(repo, entry.id).map(Some),
+        None => Ok(None),
     }
 }
 
 fn workdir_file_text(repo: &Repository, path: &str) -> Result<String, String> {
     let wd = repo.workdir().ok_or("无工作区")?;
     let full = wd.join(path);
+    crate::commands::path_util::ensure_inside_workspace(wd, &full)?;
     if !full.exists() {
         return Ok(String::new());
     }
@@ -1373,23 +1451,20 @@ fn git_file_sides_blocking(
         return Err("请选择具体文件进行分栏对比".into());
     }
     let repo = open_repo(&root)?;
+    ensure_repo_paths(&repo, std::slice::from_ref(&path))?;
     let staged = staged.unwrap_or(false);
     if staged {
         Ok(GitFileSides {
             path: path.clone(),
             left: head_file_text(&repo, &path)?,
-            right: index_file_text(&repo, &path)?,
+            right: index_file_text(&repo, &path)?.unwrap_or_default(),
             left_label: "HEAD".into(),
             right_label: "已暂存".into(),
         })
     } else {
         let left = {
             let indexed = index_file_text(&repo, &path)?;
-            if indexed.is_empty() {
-                head_file_text(&repo, &path)?
-            } else {
-                indexed
-            }
+            indexed.map_or_else(|| head_file_text(&repo, &path), Ok)?
         };
         Ok(GitFileSides {
             path: path.clone(),
@@ -1423,6 +1498,7 @@ fn git_conflict_sides_blocking(
         return Err("路径不能为空".into());
     }
     let repo = open_repo(&root)?;
+    ensure_repo_paths(&repo, std::slice::from_ref(&path))?;
     let index = repo.index().map_err(|e| e.to_string())?;
     let conflict = index
         .conflict_get(Path::new(&path))
@@ -1892,11 +1968,13 @@ pub async fn git_pull(
     clear_status_cache();
     let handle =
         tokio::task::spawn_blocking(move || git_pull_blocking(root, username, password, remember));
-    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("拉取任务失败: {join}")),
         Err(_) => Err("拉取超时（120s），请检查网络或稍后重试".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_pull_blocking(
@@ -1991,6 +2069,8 @@ pub async fn git_push(
     password: Option<String>,
     remember: Option<bool>,
 ) -> Result<String, String> {
+    clear_status_cache();
+    let result = async {
     let (branch, url) = {
         let repo = open_repo(&root)?;
         let head = repo.head().map_err(|e| e.to_string())?;
@@ -2074,6 +2154,10 @@ pub async fn git_push(
         }
     }
     Ok("推送成功".into())
+    }
+    .await;
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
@@ -2084,17 +2168,21 @@ pub fn git_stash(
 ) -> Result<(), String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
-    let mut repo = open_repo(&root)?;
-    let sig = repo.signature().map_err(|e| e.to_string())?;
-    let msg = message.unwrap_or_else(|| "Miro Code stash".into());
-    let flags = if include_untracked.unwrap_or(false) {
-        StashFlags::INCLUDE_UNTRACKED
-    } else {
-        StashFlags::DEFAULT
-    };
-    repo.stash_save(&sig, &msg, Some(flags))
-        .map_err(|e| format!("贮藏失败: {e}"))?;
-    Ok(())
+    let result = (|| {
+        let mut repo = open_repo(&root)?;
+        let sig = repo.signature().map_err(|e| e.to_string())?;
+        let msg = message.unwrap_or_else(|| "Miro Code stash".into());
+        let flags = if include_untracked.unwrap_or(false) {
+            StashFlags::INCLUDE_UNTRACKED
+        } else {
+            StashFlags::DEFAULT
+        };
+        repo.stash_save(&sig, &msg, Some(flags))
+            .map_err(|e| format!("贮藏失败: {e}"))?;
+        Ok(())
+    })();
+    clear_status_cache();
+    result
 }
 
 #[derive(Debug, Serialize)]
@@ -2135,41 +2223,56 @@ fn git_stash_list_blocking(root: String) -> Result<Vec<GitStashEntry>, String> {
 pub fn git_stash_pop(root: String, index: Option<usize>) -> Result<(), String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
-    let mut repo = open_repo(&root)?;
-    repo.stash_pop(index.unwrap_or(0), None)
-        .map_err(|e| format!("弹出贮藏失败: {e}"))?;
-    Ok(())
+    let result = (|| {
+        let mut repo = open_repo(&root)?;
+        repo.stash_pop(index.unwrap_or(0), None)
+            .map_err(|e| format!("弹出贮藏失败: {e}"))?;
+        Ok(())
+    })();
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
 pub fn git_stash_apply(root: String, index: usize) -> Result<(), String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
-    let mut repo = open_repo(&root)?;
-    repo.stash_apply(index, None)
-        .map_err(|e| format!("应用贮藏失败: {e}"))?;
-    Ok(())
+    let result = (|| {
+        let mut repo = open_repo(&root)?;
+        repo.stash_apply(index, None)
+            .map_err(|e| format!("应用贮藏失败: {e}"))?;
+        Ok(())
+    })();
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
 pub fn git_stash_drop(root: String, index: usize) -> Result<(), String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
-    let mut repo = open_repo(&root)?;
-    repo.stash_drop(index)
-        .map_err(|e| format!("删除贮藏失败: {e}"))?;
-    Ok(())
+    let result = (|| {
+        let mut repo = open_repo(&root)?;
+        repo.stash_drop(index)
+            .map_err(|e| format!("删除贮藏失败: {e}"))?;
+        Ok(())
+    })();
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
 pub async fn git_reset_hard(root: String) -> Result<(), String> {
     // Hard reset 重写整个工作树，放 spawn_blocking
+    clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || git_reset_hard_blocking(root));
-    match tokio::time::timeout(Duration::from_secs(60), handle).await {
+    let result = match tokio::time::timeout(Duration::from_secs(60), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("重置任务失败: {join}")),
         Err(_) => Err("重置超时（60s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_reset_hard_blocking(root: String) -> Result<(), String> {
@@ -2189,31 +2292,38 @@ fn git_reset_hard_blocking(root: String) -> Result<(), String> {
 pub fn git_undo_commit(root: String) -> Result<(), String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
-    let repo = open_repo(&root)?;
-    let commit = repo
-        .head()
-        .map_err(|e| e.to_string())?
-        .peel_to_commit()
-        .map_err(|e| e.to_string())?;
-    if commit.parent_count() == 0 {
-        return Err("没有可撤销的父提交".into());
-    }
-    let parent = commit.parent(0).map_err(|e| e.to_string())?;
-    repo.reset(parent.as_object(), ResetType::Soft, None)
-        .map_err(|e| e.to_string())
+    let result = (|| {
+        let repo = open_repo(&root)?;
+        let commit = repo
+            .head()
+            .map_err(|e| e.to_string())?
+            .peel_to_commit()
+            .map_err(|e| e.to_string())?;
+        if commit.parent_count() == 0 {
+            return Err("没有可撤销的父提交".into());
+        }
+        let parent = commit.parent(0).map_err(|e| e.to_string())?;
+        repo.reset(parent.as_object(), ResetType::Soft, None)
+            .map_err(|e| e.to_string())
+    })();
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
 pub async fn git_revert_to(root: String, commit_id: String) -> Result<(), String> {
     // Hard reset 重写整个工作树，放 spawn_blocking
+    clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || {
         git_revert_to_blocking(root, commit_id)
     });
-    match tokio::time::timeout(Duration::from_secs(60), handle).await {
+    let result = match tokio::time::timeout(Duration::from_secs(60), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("回滚任务失败: {join}")),
         Err(_) => Err("回滚超时（60s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_revert_to_blocking(root: String, commit_id: String) -> Result<(), String> {
@@ -2229,14 +2339,17 @@ fn git_revert_to_blocking(root: String, commit_id: String) -> Result<(), String>
 #[tauri::command]
 pub async fn git_merge_branch(root: String, name: String) -> Result<String, String> {
     // merge 分析 + checkout/merge 重写工作树，放 spawn_blocking
+    clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || {
         git_merge_branch_blocking(root, name)
     });
-    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("合并任务失败: {join}")),
         Err(_) => Err("合并超时（120s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_merge_branch_blocking(root: String, name: String) -> Result<String, String> {
@@ -2349,22 +2462,26 @@ fn ensure_mergeable_worktree(repo: &Repository) -> Result<(), String> {
 #[tauri::command]
 pub fn git_merge_abort(root: String) -> Result<String, String> {
     clear_status_cache();
-    let repo = open_repo(&root)?;
-    let dir = git_dir(&root)?;
-    if !dir.join("MERGE_HEAD").exists() {
-        return Err("当前没有进行中的合并".into());
-    }
-    let head = repo.head().map_err(|e| e.to_string())?;
-    let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
-    repo.reset(commit.as_object(), ResetType::Mixed, None)
-        .map_err(|e| format!("放弃合并失败（重置索引）: {e}"))?;
-    // reset --merge 语义：同时把工作树恢复（本地无冲突的改动在合并前已被
-    // ensure_mergeable_worktree 拦截，恢复是安全的）
-    repo.checkout_head(Some(CheckoutBuilder::default().force()))
-        .map_err(|e| format!("放弃合并失败（恢复工作树）: {e}"))?;
-    let _ = std::fs::remove_file(dir.join("MERGE_HEAD"));
-    let _ = std::fs::remove_file(dir.join("MERGE_MSG"));
-    Ok("已放弃合并".into())
+    let result = (|| {
+        let repo = open_repo(&root)?;
+        let dir = git_dir(&root)?;
+        if !dir.join("MERGE_HEAD").exists() {
+            return Err("当前没有进行中的合并".into());
+        }
+        let head = repo.head().map_err(|e| e.to_string())?;
+        let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+        repo.reset(commit.as_object(), ResetType::Mixed, None)
+            .map_err(|e| format!("放弃合并失败（重置索引）: {e}"))?;
+        // reset --merge 语义：同时把工作树恢复（本地无冲突的改动在合并前已被
+        // ensure_mergeable_worktree 拦截，恢复是安全的）
+        repo.checkout_head(Some(CheckoutBuilder::default().force()))
+            .map_err(|e| format!("放弃合并失败（恢复工作树）: {e}"))?;
+        let _ = std::fs::remove_file(dir.join("MERGE_HEAD"));
+        let _ = std::fs::remove_file(dir.join("MERGE_MSG"));
+        Ok("已放弃合并".into())
+    })();
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
@@ -2388,11 +2505,13 @@ pub async fn git_resolve_conflict(
     let handle = tokio::task::spawn_blocking(move || {
         git_resolve_conflict_blocking(root, path, strategy)
     });
-    match tokio::time::timeout(Duration::from_secs(30), handle).await {
+    let result = match tokio::time::timeout(Duration::from_secs(30), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("解决冲突任务失败: {join}")),
         Err(_) => Err("解决冲突超时（30s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_resolve_conflict_blocking(
@@ -2486,7 +2605,8 @@ pub async fn git_unpushed_commits(
     limit: Option<usize>,
 ) -> Result<Vec<GitCommitInfo>, String> {
     // 先用轻量级方法计算缓存 key（不开 revwalk）；命中则直接返回
-    if let Some(cached) = read_unpushed_cache(&root) {
+    let requested_limit = limit.unwrap_or(50).min(200);
+    if let Some(cached) = read_unpushed_cache(&root, requested_limit) {
         return Ok(cached);
     }
     let handle = tokio::task::spawn_blocking(move || git_unpushed_commits_blocking(root, limit));
@@ -2526,7 +2646,7 @@ fn git_unpushed_commits_blocking(
         .id();
 
     // 写入缓存 key（root + branch + local_oid + remote_oid），30s 内复用
-    let cache_key = format!("{root}|{branch_name}|{local_oid}|{remote_oid}");
+    let cache_key = format!("{root}|{branch_name}|{local_oid}|{remote_oid}|{max}");
     {
         let cache = unpushed_cache();
         let mut guard = cache.lock().map_err(|e| format!("缓存锁失败: {e}"))?;
@@ -2560,7 +2680,7 @@ fn git_unpushed_commits_blocking(
 }
 
 /// 轻量级缓存命中检查：仅读 HEAD 与分支元数据，不做 revwalk
-fn read_unpushed_cache(root: &str) -> Option<Vec<GitCommitInfo>> {
+fn read_unpushed_cache(root: &str, limit: usize) -> Option<Vec<GitCommitInfo>> {
     let repo = Repository::discover(root).ok()?;
     let head = repo.head().ok()?;
     if !head.is_branch() {
@@ -2574,7 +2694,8 @@ fn read_unpushed_cache(root: &str) -> Option<Vec<GitCommitInfo>> {
     let upstream = branch.upstream().ok()?;
     let local_oid = head.peel_to_commit().ok()?.id();
     let remote_oid = upstream.get().peel_to_commit().ok()?.id();
-    let key = format!("{root}|{branch_name}|{local_oid}|{remote_oid}");
+    let max = limit.min(200);
+    let key = format!("{root}|{branch_name}|{local_oid}|{remote_oid}|{max}");
 
     let cache = unpushed_cache().lock().ok()?;
     if let Some((ts, value)) = cache.get(&key) {
@@ -2598,11 +2719,13 @@ pub async fn git_fetch(
     let handle = tokio::task::spawn_blocking(move || {
         git_fetch_blocking(root, remote, username, password, remember)
     });
-    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("获取任务失败: {join}")),
         Err(_) => Err("获取超时（120s），请检查网络或稍后重试".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_fetch_blocking(
@@ -2647,11 +2770,13 @@ pub async fn git_update_project(
     let handle = tokio::task::spawn_blocking(move || {
         git_update_project_blocking(root, strategy, username, password, remember)
     });
-    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("更新任务失败: {join}")),
         Err(_) => Err("更新超时（120s），请检查网络或稍后重试".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_update_project_blocking(
@@ -2770,6 +2895,7 @@ fn resolve_branch_commit<'a>(repo: &'a Repository, name: &str) -> Result<git2::C
 
 fn git_rebase_onto(root: String, onto_name: String) -> Result<String, String> {
     // 使用系统 git，冲突时保留 rebase 状态供 Continue/Abort
+    validate_git_positional_arg(&onto_name, "Rebase 基准")?;
     let output = std::process::Command::new("git")
         .args(["rebase", &onto_name])
         .current_dir(&root)
@@ -2795,11 +2921,13 @@ pub async fn git_rebase_branch(root: String, onto: String) -> Result<String, Str
     clear_status_cache();
     // 系统 git rebase 无超时，放 spawn_blocking 防主线程冻结
     let handle = tokio::task::spawn_blocking(move || git_rebase_onto(root, onto));
-    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("Rebase 任务失败: {join}")),
         Err(_) => Err("Rebase 超时（120s），请检查冲突状态".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
@@ -2807,11 +2935,13 @@ pub async fn git_cherry_pick(root: String, commit_id: String) -> Result<String, 
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || git_cherry_pick_blocking(root, commit_id));
-    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("Cherry-pick 任务失败: {join}")),
         Err(_) => Err("Cherry-pick 超时（120s），请检查冲突状态".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_cherry_pick_blocking(root: String, commit_id: String) -> Result<String, String> {
@@ -2835,21 +2965,25 @@ fn git_cherry_pick_blocking(root: String, commit_id: String) -> Result<String, S
 pub fn git_reset(root: String, commit_id: String, mode: String) -> Result<String, String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
-    let repo = open_repo(&root)?;
-    let oid = resolve_commit_oid(&repo, &commit_id)?;
-    let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
-    let reset_type = match mode.as_str() {
-        "soft" => ResetType::Soft,
-        "hard" => ResetType::Hard,
-        _ => ResetType::Mixed,
-    };
-    repo.reset(commit.as_object(), reset_type, None)
-        .map_err(|e| e.to_string())?;
-    Ok(format!(
-        "已 {} 重置到 {}",
-        mode,
-        &commit_id[..7.min(commit_id.len())]
-    ))
+    let result = (|| {
+        let repo = open_repo(&root)?;
+        let oid = resolve_commit_oid(&repo, &commit_id)?;
+        let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+        let reset_type = match mode.as_str() {
+            "soft" => ResetType::Soft,
+            "hard" => ResetType::Hard,
+            _ => ResetType::Mixed,
+        };
+        repo.reset(commit.as_object(), reset_type, None)
+            .map_err(|e| e.to_string())?;
+        Ok(format!(
+            "已 {} 重置到 {}",
+            mode,
+            short_text(&commit_id, 7)
+        ))
+    })();
+    clear_status_cache();
+    result
 }
 
 #[tauri::command]
@@ -2865,6 +2999,7 @@ pub async fn git_blame(root: String, path: String) -> Result<Vec<GitBlameLine>, 
 
 fn git_blame_blocking(root: String, path: String) -> Result<Vec<GitBlameLine>, String> {
     let repo = open_repo(&root)?;
+    ensure_repo_paths(&repo, std::slice::from_ref(&path))?;
     let blame = repo
         .blame_file(Path::new(&path), None)
         .map_err(|e| format!("Blame 失败: {e}"))?;
@@ -2873,7 +3008,7 @@ fn git_blame_blocking(root: String, path: String) -> Result<Vec<GitBlameLine>, S
         let hunk = blame.get_index(i).ok_or_else(|| "blame hunk".to_string())?;
         let oid = hunk.final_commit_id();
         let id_str = oid.to_string();
-        let short = id_str[..7.min(id_str.len())].to_string();
+        let short = short_text(&id_str, 7);
         let commit = repo.find_commit(oid).ok();
         let time = commit
             .as_ref()
@@ -2915,11 +3050,14 @@ fn git_blame_blocking(root: String, path: String) -> Result<Vec<GitBlameLine>, S
 
 #[tauri::command]
 pub fn git_set_upstream(root: String, branch: String, upstream: String) -> Result<(), String> {
+    clear_status_cache();
     let repo = open_repo(&root)?;
     let mut b = repo
         .find_branch(&branch, BranchType::Local)
         .map_err(|e| e.to_string())?;
-    b.set_upstream(Some(&upstream)).map_err(|e| e.to_string())
+    let result = b.set_upstream(Some(&upstream)).map_err(|e| e.to_string());
+    clear_status_cache();
+    result
 }
 
 /// 从远程分支检出为本地分支（并设置 upstream）
@@ -2933,11 +3071,13 @@ pub async fn git_checkout_remote(
     let handle = tokio::task::spawn_blocking(move || {
         git_checkout_remote_blocking(root, remote_ref, local_name)
     });
-    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("检出远程分支任务失败: {join}")),
         Err(_) => Err("检出远程分支超时（120s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_checkout_remote_blocking(
@@ -3005,7 +3145,29 @@ fn run_git(root: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// 校验将作为系统 Git 位置参数传入的用户/仓库数据。
+/// `Command::args` 不经过 shell，但 Git 仍会把以 `-` 开头的值解析成选项；
+/// 控制字符也会让错误信息和 Git 的文本协议出现歧义。合法分支/标签/提交
+/// 引用不会以 `-` 开头，因此这里拒绝这两类危险输入而不限制正常 ref 语法。
+fn validate_git_positional_arg(value: &str, label: &str) -> Result<(), String> {
+    if value.is_empty() || value != value.trim() {
+        return Err(format!("{label}不能为空或首尾不能有空白"));
+    }
+    if value.starts_with('-') {
+        return Err(format!("{label}不能以 '-' 开头"));
+    }
+    if value.chars().any(|ch| ch.is_control()) {
+        return Err(format!("{label}不能包含控制字符"));
+    }
+    Ok(())
+}
+
+fn short_text(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
 fn resolve_commit_oid(repo: &Repository, id: &str) -> Result<git2::Oid, String> {
+    validate_git_positional_arg(id, "提交")?;
     let obj = repo
         .revparse_single(id)
         .map_err(|e| format!("无效提交 {id}: {e}"))?;
@@ -3133,11 +3295,13 @@ pub async fn git_rebase_continue(root: String) -> Result<String, String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || git_rebase_continue_blocking(root));
-    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("Continue 任务失败: {join}")),
         Err(_) => Err("Continue 超时（120s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_rebase_continue_blocking(root: String) -> Result<String, String> {
@@ -3147,20 +3311,88 @@ fn git_rebase_continue_blocking(root: String) -> Result<String, String> {
         if repo.index().map(|i| i.has_conflicts()).unwrap_or(false) {
             return Err("仍有未解决冲突，请先在 Commit 面板解决".into());
         }
+        let state = load_miro_rebase(&root)?;
+        let step = state
+            .remaining
+            .first()
+            .cloned()
+            .ok_or_else(|| "Rebase 状态中没有待处理步骤".to_string())?;
+        let action = step.action.to_lowercase();
+        validate_miro_rebase_action(&action)?;
         // 若处于 cherry-pick 中间态
         if repo.path().join("CHERRY_PICK_HEAD").is_file() {
-            let _ = run_git(
+            // `cherry-pick -n` 冲突在当前 Git 实现下不会留下 CHERRY_PICK_HEAD；
+            // 这里若出现该文件，说明这是 pick/reword 的普通 cherry-pick，
+            // 不能用 --continue 去推进 fix/squash，否则会多生成一个提交。
+            if !matches!(action.as_str(), "pick" | "reword") {
+                return Err("Rebase 当前步骤状态异常，请先 Abort 后重试".into());
+            }
+            let continue_result = run_git(
                 &root,
                 &["-c", "core.editor=true", "cherry-pick", "--continue"],
             );
-            // --continue 失败（仍残留冲突）：不推进 step，让用户继续处理
+            if let Err(error) = continue_result {
+                // --continue 失败时不推进 step；保留中间态供用户继续解决或 Skip。
+                return Err(format!(
+                    "GIT_REBASE_CONFLICT|||继续 Rebase 失败，请继续解决冲突或 Skip\n{error}"
+                ));
+            }
             if repo.path().join("CHERRY_PICK_HEAD").is_file() {
                 return Err("GIT_REBASE_CONFLICT|||继续 Rebase 仍有冲突".into());
             }
-        } else if !repo.statuses(None).map(|s| s.is_empty()).unwrap_or(true) {
-            // 有已暂存变更则提交
-            let msg = "Miro Code rebase continue";
-            let _ = git_commit(root.clone(), msg.into(), None, None);
+            if action == "reword" {
+                finalize_miro_rebase_step(&root, &action, &step)?;
+            }
+        } else {
+            let mut status_options = StatusOptions::new();
+            status_options
+                .include_untracked(true)
+                .include_ignored(false)
+                .recurse_untracked_dirs(false);
+            let statuses = repo
+                .statuses(Some(&mut status_options))
+                .map_err(|e| e.to_string())?;
+            let has_staged = statuses.iter().any(|entry| {
+                entry.status().intersects(
+                    Status::INDEX_NEW
+                        | Status::INDEX_MODIFIED
+                        | Status::INDEX_DELETED
+                        | Status::INDEX_RENAMED
+                        | Status::INDEX_TYPECHANGE,
+                )
+            });
+            let has_unstaged_tracked = statuses.iter().any(|entry| {
+                entry.status().intersects(
+                    Status::WT_MODIFIED
+                        | Status::WT_DELETED
+                        | Status::WT_RENAMED
+                        | Status::WT_TYPECHANGE,
+                )
+            });
+            if has_unstaged_tracked {
+                return Err("请先暂存已解决的 Rebase 更改，再 Continue".into());
+            }
+            if matches!(action.as_str(), "pick" | "reword") {
+                if !has_staged {
+                    return Err("请先暂存已解决的 Rebase 更改，再 Continue".into());
+                }
+                // `-n` 冲突不会进入这里；如果用户手动清理了
+                // CHERRY_PICK_HEAD，则按普通提交完成当前步骤。
+                let msg = if action == "reword" {
+                    step.message
+                        .clone()
+                        .unwrap_or_else(|| "Miro Code rebase continue".into())
+                } else {
+                    "Miro Code rebase continue".into()
+                };
+                // 提交失败时不能继续移除当前 step，否则 rebase 状态会与仓库实际
+                // 内容脱节，后续 Abort 也无法准确恢复。
+                git_commit(root.clone(), msg, None, None)?;
+            } else {
+                // fix/squash 使用 cherry-pick -n，冲突解决后只存在索引变更，
+                // 必须继续 amend 当前 HEAD，不能创建一个新的普通提交。
+                finalize_miro_rebase_step(&root, &action, &step)?;
+            }
         }
         // 当前冲突的 step 已通过 cherry-pick --continue / 提交完成：
         // 从 remaining 移除首位再重放，否则 replay 会对同一 commit 再次
@@ -3196,19 +3428,28 @@ pub async fn git_rebase_abort(root: String) -> Result<String, String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || git_rebase_abort_blocking(root));
-    match tokio::time::timeout(std::time::Duration::from_secs(60), handle).await {
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(60), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("Abort 任务失败: {join}")),
         Err(_) => Err("Abort 超时（60s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_rebase_abort_blocking(root: String) -> Result<String, String> {
     if is_miro_rebase_in_progress(&root) {
         let state = load_miro_rebase(&root)?;
-        let _ = run_git(&root, &["cherry-pick", "--abort"]);
-        let _ = run_git(&root, &["checkout", &state.branch]);
-        let _ = run_git(&root, &["reset", "--hard", &state.original_head]);
+        validate_git_positional_arg(&state.branch, "Rebase 分支")?;
+        validate_git_positional_arg(&state.original_head, "Rebase 原始提交")?;
+        if git_dir(&root)?.join("CHERRY_PICK_HEAD").is_file() {
+            run_git(&root, &["cherry-pick", "--abort"])
+                .map_err(|e| format!("中止交互 Rebase 的 cherry-pick 失败: {e}"))?;
+        }
+        run_git(&root, &["checkout", &state.branch])
+            .map_err(|e| format!("恢复 Rebase 分支失败: {e}"))?;
+        run_git(&root, &["reset", "--hard", &state.original_head])
+            .map_err(|e| format!("恢复 Rebase 原始提交失败: {e}"))?;
         clear_miro_rebase(&root);
         return Ok("已中止交互 Rebase".into());
     }
@@ -3221,16 +3462,26 @@ pub async fn git_rebase_skip(root: String) -> Result<String, String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || git_rebase_skip_blocking(root));
-    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("Skip 任务失败: {join}")),
         Err(_) => Err("Skip 超时（120s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_rebase_skip_blocking(root: String) -> Result<String, String> {
     if is_miro_rebase_in_progress(&root) {
-        let _ = run_git(&root, &["cherry-pick", "--abort"]);
+        if git_dir(&root)?.join("CHERRY_PICK_HEAD").is_file() {
+            run_git(&root, &["cherry-pick", "--abort"])
+                .map_err(|e| format!("跳过 Rebase 当前 cherry-pick 失败: {e}"))?;
+        } else {
+            // fix/squash 使用 cherry-pick -n，部分 Git 版本在冲突时不留下
+            // CHERRY_PICK_HEAD；此时必须丢弃当前 step 已写入的索引/工作树。
+            run_git(&root, &["reset", "--hard", "HEAD"])
+                .map_err(|e| format!("清理 Rebase 当前步骤失败: {e}"))?;
+        }
         let mut state = load_miro_rebase(&root)?;
         if !state.remaining.is_empty() {
             state.remaining.remove(0);
@@ -3284,6 +3535,7 @@ fn replay_miro_rebase(root: String) -> Result<String, String> {
 
     while let Some(step) = state.remaining.first().cloned() {
         let action = step.action.to_lowercase();
+        validate_miro_rebase_action(&action)?;
         if action == "drop" {
             state.remaining.remove(0);
             save_miro_rebase(&root, &state)?;
@@ -3319,8 +3571,7 @@ fn replay_miro_rebase(root: String) -> Result<String, String> {
                     ));
                 }
                 if action == "reword" {
-                    let msg = step.message.unwrap_or(default_msg);
-                    git_commit(root.clone(), msg, None, Some(true))?;
+                    finalize_miro_rebase_step(&root, &action, &step)?;
                 }
                 state.squash_msgs.clear();
             }
@@ -3348,7 +3599,7 @@ fn replay_miro_rebase(root: String) -> Result<String, String> {
                     ));
                 }
                 // amend 保留原信息
-                let _ = run_git(&root, &["commit", "--amend", "--no-edit", "--allow-empty"]);
+                finalize_miro_rebase_step(&root, &action, &step)?;
             }
             "squash" => {
                 let out = std::process::Command::new("git")
@@ -3373,19 +3624,9 @@ fn replay_miro_rebase(root: String) -> Result<String, String> {
                         String::from_utf8_lossy(&out.stderr)
                     ));
                 }
-                let msg = step.message.unwrap_or(default_msg);
-                state.squash_msgs.push(msg.clone());
-                let head_msg = {
-                    let repo2 = open_repo(&root)?;
-                    repo2
-                        .head()
-                        .ok()
-                        .and_then(|h| h.peel_to_commit().ok())
-                        .and_then(|c| c.message().ok().map(|m| m.to_string()))
-                        .unwrap_or_default()
-                };
-                let combined = format!("{}\n\n{}", head_msg.trim(), msg.trim());
-                git_commit(root.clone(), combined, None, Some(true))?;
+                let msg = step.message.clone().unwrap_or(default_msg);
+                state.squash_msgs.push(msg);
+                finalize_miro_rebase_step(&root, &action, &step)?;
             }
             _ => {
                 return Err(format!("未知 rebase 动作: {action}"));
@@ -3400,6 +3641,49 @@ fn replay_miro_rebase(root: String) -> Result<String, String> {
     Ok("交互 Rebase 完成".into())
 }
 
+fn validate_miro_rebase_action(action: &str) -> Result<(), String> {
+    match action {
+        "pick" | "reword" | "squash" | "fix" | "drop" => Ok(()),
+        _ => Err(format!("未知 rebase 动作: {action}")),
+    }
+}
+
+fn finalize_miro_rebase_step(
+    root: &str,
+    action: &str,
+    step: &GitRebaseStep,
+) -> Result<(), String> {
+    match action {
+        "reword" => {
+            let msg = step
+                .message
+                .clone()
+                .unwrap_or_else(|| "Miro Code rebase continue".into());
+            git_commit(root.to_string(), msg, None, Some(true)).map(|_| ())
+        }
+        "fix" => run_git(root, &["commit", "--amend", "--no-edit", "--allow-empty"])
+            .map(|_| ())
+            .map_err(|e| format!("Fixup 提交失败: {e}")),
+        "squash" => {
+            let msg = step
+                .message
+                .clone()
+                .unwrap_or_else(|| "Miro Code rebase continue".into());
+            let head_msg = {
+                let repo = open_repo(root)?;
+                repo.head()
+                    .ok()
+                    .and_then(|h| h.peel_to_commit().ok())
+                    .and_then(|c| c.message().ok().map(|m| m.to_string()))
+                    .unwrap_or_default()
+            };
+            let combined = format!("{}\n\n{}", head_msg.trim(), msg.trim());
+            git_commit(root.to_string(), combined, None, Some(true)).map(|_| ())
+        }
+        _ => Ok(()),
+    }
+}
+
 #[tauri::command]
 pub async fn git_rebase_interactive(
     root: String,
@@ -3411,11 +3695,13 @@ pub async fn git_rebase_interactive(
     // 交互 Rebase 内部多次系统 git（rebase/cherry-pick/reset），无超时，须离主线程
     let handle =
         tokio::task::spawn_blocking(move || git_rebase_interactive_blocking(root, onto, steps));
-    match tokio::time::timeout(std::time::Duration::from_secs(180), handle).await {
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(180), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("交互 Rebase 任务失败: {join}")),
         Err(_) => Err("交互 Rebase 超时（180s），请检查仓库状态".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_rebase_interactive_blocking(
@@ -3426,10 +3712,18 @@ fn git_rebase_interactive_blocking(
     if steps.is_empty() {
         return Err("没有可重放的提交".into());
     }
+    validate_git_positional_arg(&onto, "Rebase 基准")?;
+    for step in &steps {
+        validate_git_positional_arg(&step.commit_id, "Rebase 提交")?;
+        validate_miro_rebase_action(&step.action.to_lowercase())?;
+    }
     if is_rebase_in_progress(&root) || is_miro_rebase_in_progress(&root) {
         return Err("已有 Rebase 进行中，请先 Continue 或 Abort".into());
     }
     let repo = open_repo(&root)?;
+    // 下面会先 hard reset 到 onto；必须拒绝未提交的跟踪文件，避免静默丢失
+    // 用户正在编辑的内容。未跟踪文件不受 reset 影响，按 Git 原生行为保留。
+    ensure_mergeable_worktree(&repo)?;
     let branch = repo
         .head()
         .ok()
@@ -3450,11 +3744,6 @@ fn git_rebase_interactive_blocking(
         .map_err(|e| e.to_string())?
         .id()
         .to_string();
-    // 硬重置到 onto，再按步骤重放
-    let onto_commit = repo.find_commit(onto_oid).map_err(|e| e.to_string())?;
-    repo.reset(onto_commit.as_object(), ResetType::Hard, None)
-        .map_err(|e| format!("重置到 onto 失败: {e}"))?;
-
     let state = MiroRebaseState {
         onto: onto_oid.to_string(),
         branch,
@@ -3462,7 +3751,14 @@ fn git_rebase_interactive_blocking(
         remaining: steps,
         squash_msgs: vec![],
     };
+    // 先保存恢复状态，再执行硬重置。即使进程在重置后异常退出，Abort 仍能
+    // 使用原始 HEAD 把分支恢复回来。
     save_miro_rebase(&root, &state)?;
+
+    // 硬重置到 onto，再按步骤重放
+    let onto_commit = repo.find_commit(onto_oid).map_err(|e| e.to_string())?;
+    repo.reset(onto_commit.as_object(), ResetType::Hard, None)
+        .map_err(|e| format!("重置到 onto 失败: {e}"))?;
     replay_miro_rebase(root)
 }
 
@@ -3473,23 +3769,26 @@ pub async fn git_revert_commit(root: String, commit_id: String) -> Result<String
     let handle = tokio::task::spawn_blocking(move || {
         git_revert_commit_blocking(root, commit_id)
     });
-    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("Revert 任务失败: {join}")),
         Err(_) => Err("Revert 超时（120s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_revert_commit_blocking(root: String, commit_id: String) -> Result<String, String> {
     // 仓库状态将变化：使 git_status TTL 缓存失效，操作后刷新立即可见
     clear_status_cache();
+    validate_git_positional_arg(&commit_id, "提交")?;
     match run_git(
         &root,
         &["-c", "core.editor=true", "revert", "--no-edit", &commit_id],
     ) {
         Ok(_) => Ok(format!(
             "已 revert {}",
-            &commit_id[..7.min(commit_id.len())]
+            short_text(&commit_id, 7)
         )),
         Err(e) => {
             let repo = open_repo(&root)?;
@@ -3523,12 +3822,15 @@ pub async fn git_create_branch_at(
     });
     let branch_result = match tokio::time::timeout(Duration::from_secs(30), handle).await {
         Ok(Ok(r)) => r,
-        Ok(Err(join)) => return Err(format!("创建分支任务失败: {join}")),
-        Err(_) => return Err("创建分支超时（30s）".into()),
+        Ok(Err(join)) => Err(format!("创建分支任务失败: {join}")),
+        Err(_) => Err("创建分支超时（30s）".into()),
     };
+    clear_status_cache();
     branch_result?;
     if checkout {
-        git_checkout(root, name, Some(false)).await?;
+        let result = git_checkout(root, name, Some(false)).await;
+        clear_status_cache();
+        return result;
     }
     Ok(())
 }
@@ -3539,11 +3841,13 @@ pub async fn git_checkout_commit(root: String, commit_id: String) -> Result<Stri
     let handle = tokio::task::spawn_blocking(move || {
         git_checkout_commit_blocking(root, commit_id)
     });
-    match tokio::time::timeout(Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("检出提交任务失败: {join}")),
         Err(_) => Err("检出提交超时（120s）".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_checkout_commit_blocking(root: String, commit_id: String) -> Result<String, String> {
@@ -3558,28 +3862,36 @@ fn git_checkout_commit_blocking(root: String, commit_id: String) -> Result<Strin
         .map_err(|e| e.to_string())?;
     Ok(format!(
         "已检出分离头指针 {}",
-        &commit_id[..7.min(commit_id.len())]
+        short_text(&commit_id, 7)
     ))
 }
 
 #[tauri::command]
 pub async fn git_delete_remote_branch(root: String, remote_ref: String) -> Result<String, String> {
     // 走网络 push，可能长时间挂起，必须离主线程
+    clear_status_cache();
     let handle = tokio::task::spawn_blocking(move || git_delete_remote_branch_blocking(root, remote_ref));
-    match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(120), handle).await {
         Ok(Ok(r)) => r,
         Ok(Err(join)) => Err(format!("删除远程分支任务失败: {join}")),
         Err(_) => Err("删除远程分支超时（120s），请检查网络".into()),
-    }
+    };
+    clear_status_cache();
+    result
 }
 
 fn git_delete_remote_branch_blocking(root: String, remote_ref: String) -> Result<String, String> {
     // remote_ref 形如 origin/feature
+    validate_git_positional_arg(&remote_ref, "远程分支")?;
     let (remote, branch) = remote_ref
         .split_once('/')
         .ok_or_else(|| "远程分支名无效，期望 remote/branch".to_string())?;
+    validate_git_positional_arg(remote, "远程名称")?;
+    validate_git_positional_arg(branch, "分支名称")?;
+    clear_status_cache();
     run_git(&root, &["push", remote, "--delete", branch])?;
     let _ = run_git(&root, &["fetch", "--prune", remote]);
+    clear_status_cache();
     Ok(format!("已删除远程分支 {remote_ref}"))
 }
 
@@ -3701,6 +4013,44 @@ mod tests {
         );
     }
 
+    fn run_git_stdout(root: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?} 失败: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn create_rebase_fixture() -> (tempfile::TempDir, String, String, String) {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+
+        std::fs::write(root.join("file.txt"), "base\n").expect("写入 base");
+        run_git_ok(root, &["add", "file.txt"]);
+        run_git_ok(root, &["commit", "-m", "base"]);
+        let onto = run_git_stdout(root, &["rev-parse", "HEAD"]);
+
+        std::fs::write(root.join("file.txt"), "first\n").expect("写入 first");
+        run_git_ok(root, &["commit", "-am", "first"]);
+        let first = run_git_stdout(root, &["rev-parse", "HEAD"]);
+
+        std::fs::write(root.join("file.txt"), "first\nsecond\n").expect("写入 second");
+        run_git_ok(root, &["commit", "-am", "second"]);
+        let second = run_git_stdout(root, &["rev-parse", "HEAD"]);
+
+        (temp, onto, first, second)
+    }
+
     fn repo_state_is_merging(root: &str) -> bool {
         git_dir(root)
             .map(|d| d.join("MERGE_HEAD").exists())
@@ -3751,6 +4101,69 @@ mod tests {
             percent_encode_credential("p@ss:word/1"),
             "p%40ss%3Aword%2F1"
         );
+    }
+
+    #[test]
+    fn git_positional_arg_rejects_option_like_and_control_values() {
+        assert!(validate_git_positional_arg("origin/main", "ref").is_ok());
+        assert!(validate_git_positional_arg("HEAD~1", "ref").is_ok());
+        assert!(validate_git_positional_arg("--upload-pack=evil", "ref").is_err());
+        assert!(validate_git_positional_arg("main\n--exec", "ref").is_err());
+        assert!(validate_git_positional_arg(" main", "ref").is_err());
+    }
+
+    #[test]
+    fn interactive_rebase_preserves_fixup_and_squash_semantics() {
+        let (temp, onto, first, second) = create_rebase_fixture();
+        let root = temp.path().to_string_lossy().into_owned();
+        let result = git_rebase_interactive_blocking(
+            root.clone(),
+            onto,
+            vec![
+                GitRebaseStep {
+                    action: "pick".into(),
+                    commit_id: first,
+                    message: Some("first".into()),
+                },
+                GitRebaseStep {
+                    action: "fix".into(),
+                    commit_id: second,
+                    message: Some("second".into()),
+                },
+            ],
+        )
+        .expect("fixup rebase");
+        assert_eq!(result, "交互 Rebase 完成");
+        assert_eq!(run_git_stdout(temp.path(), &["rev-list", "--count", "HEAD"]), "2");
+        assert_eq!(run_git_stdout(temp.path(), &["log", "-1", "--format=%s"]), "first");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("file.txt")).expect("读取 rebase 文件"),
+            "first\nsecond\n"
+        );
+
+        let (temp, onto, first, second) = create_rebase_fixture();
+        let root = temp.path().to_string_lossy().into_owned();
+        git_rebase_interactive_blocking(
+            root,
+            onto,
+            vec![
+                GitRebaseStep {
+                    action: "pick".into(),
+                    commit_id: first,
+                    message: Some("first".into()),
+                },
+                GitRebaseStep {
+                    action: "squash".into(),
+                    commit_id: second,
+                    message: Some("second".into()),
+                },
+            ],
+        )
+        .expect("squash rebase");
+        assert_eq!(run_git_stdout(temp.path(), &["rev-list", "--count", "HEAD"]), "2");
+        let message = run_git_stdout(temp.path(), &["log", "-1", "--format=%B"]);
+        assert!(message.contains("first"));
+        assert!(message.contains("second"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3813,6 +4226,46 @@ mod tests {
             .entries
             .iter()
             .all(|entry| entry.staged), "全部变更都应标记为已暂存: {:?}", after.entries);
+    }
+
+    #[test]
+    fn file_sides_keeps_an_empty_index_blob_as_empty() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        run_git_ok(root, &["config", "user.name", "test"]);
+        run_git_ok(root, &["config", "user.email", "test@example.com"]);
+        std::fs::write(root.join("empty.txt"), "head\n").expect("写入文件");
+        run_git_ok(root, &["add", "empty.txt"]);
+        run_git_ok(root, &["commit", "-m", "init"]);
+
+        std::fs::write(root.join("empty.txt"), "").expect("清空文件");
+        git_stage(
+            root.to_string_lossy().into_owned(),
+            vec!["empty.txt".into()],
+        )
+        .expect("暂存空文件");
+
+        let sides = git_file_sides_blocking(
+            root.to_string_lossy().into_owned(),
+            "empty.txt".into(),
+            Some(false),
+        )
+        .expect("读取分栏对比");
+        assert_eq!(sides.left, "", "索引中的空 blob 不能回退到 HEAD");
+        assert_eq!(sides.right, "");
+    }
+
+    #[test]
+    fn stage_rejects_paths_outside_workspace() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let root = temp.path();
+        run_git_ok(root, &["init", "-b", "main"]);
+        let result = git_stage(
+            root.to_string_lossy().into_owned(),
+            vec!["../outside.txt".into()],
+        );
+        assert!(result.is_err(), "暂存路径不得越过工作区边界");
     }
 
     #[test]
@@ -3997,7 +4450,7 @@ mod tests {
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(&tmp).unwrap();
-        let result = read_unpushed_cache(tmp.to_str().unwrap());
+        let result = read_unpushed_cache(tmp.to_str().unwrap(), 50);
         assert!(result.is_none(), "非 git 目录应返回 None；实际 {result:?}");
     }
 

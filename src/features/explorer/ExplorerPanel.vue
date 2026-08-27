@@ -270,6 +270,12 @@ async function onWindowPointerUp(event: PointerEvent) {
 }
 
 async function afterMove(result: MovePathResult) {
+  const root = rootPath.value;
+  const epoch = workspace.getWorkspaceEpoch();
+  const isCurrent = () =>
+    rootPath.value === root && workspace.getWorkspaceEpoch() === epoch;
+  if (!root || !isCurrent()) return;
+
   if (result.isDir) {
     editor.renameTabsUnderPrefix(result.from, result.to);
   } else {
@@ -278,16 +284,16 @@ async function afterMove(result: MovePathResult) {
   void git.scheduleRefresh();
 
   const mode = settings.editor.updateImportsOnMove;
-  if (mode === "never" || !rootPath.value) return;
+  if (mode === "never" || !isCurrent()) return;
 
   const patches = await scanImportReferences(
-    rootPath.value,
+    root,
     result.from,
     result.to,
     result.isDir,
     extraIgnores.value,
   );
-  if (!patches.length) return;
+  if (!isCurrent() || !patches.length) return;
 
   let toApply = patches;
   if (mode === "prompt") {
@@ -298,16 +304,17 @@ async function afterMove(result: MovePathResult) {
       cancelText: t("moveReferences.cancel"),
       patches,
     });
-    if (!picked?.length) return;
+    if (!isCurrent() || !picked?.length) return;
     toApply = picked;
   }
 
   const count = await applyImportPatches(
-    rootPath.value,
+    root,
     toApply,
     (path, content) => editor.syncFromDisk(path, content),
     (path) => workspace.markSelfWrite(path),
   );
+  if (!isCurrent()) return;
   if (count > 0) {
     workspace.showNotice(t("moveReferences.applied", { count }));
     void git.scheduleRefresh();

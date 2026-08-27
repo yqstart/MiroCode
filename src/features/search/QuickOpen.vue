@@ -21,8 +21,8 @@ const displayResults = computed(() => fileResults.value);
 
 watch(fileQuery, (q) => {
   activeIndex.value = 0;
+  search.invalidateFileSearch();
   if (!q.trim()) {
-    search.fileResults = [];
     if (searchTimer != null) window.clearTimeout(searchTimer);
     return;
   }

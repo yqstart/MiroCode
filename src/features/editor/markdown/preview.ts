@@ -6,7 +6,7 @@
 // 单例 renderer，避免每次 parse 都重建。
 
 import { marked } from "marked";
-import { highlight } from "./highlight";
+import { highlight } from "./highlight.ts";
 
 // ==================== marked 配置 ====================
 marked.use({
