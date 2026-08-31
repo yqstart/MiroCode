@@ -1,7 +1,11 @@
 import { computed, ref, watch as watchState } from "vue";
 import { defineStore } from "pinia";
 import { ask, open } from "@tauri-apps/plugin-dialog";
-import { watch as watchFs, type UnwatchFn, type WatchEvent } from "@tauri-apps/plugin-fs";
+import {
+  watchImmediate as watchFs,
+  type UnwatchFn,
+  type WatchEvent,
+} from "@tauri-apps/plugin-fs";
 import {
   basename,
   copyEntry,
@@ -94,6 +98,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const toasts = ref<ToastItem[]>([]);
   const filter = ref("");
   const selectedPath = ref<string | null>(null);
+  /** 资源管理器当前选中的路径；selectedPath 是其中的焦点路径。 */
+  const selectedPaths = ref<string[]>([]);
   const childrenMap = ref<Record<string, DirEntryInfo[]>>({});
   const expanded = ref<Set<string>>(new Set());
   const recentFolders = ref<string[]>(loadRecentFolders());
@@ -159,6 +165,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (timer != null) window.clearTimeout(timer);
     noticeTimers.delete(id);
     toasts.value = toasts.value.filter((x) => x.id !== id);
+  }
+
+  function setSelection(
+    paths: readonly string[],
+    activePath: string | null = paths[paths.length - 1] ?? null,
+  ) {
+    const uniquePaths = [...new Set(paths)];
+    const nextActivePath =
+      activePath && uniquePaths.includes(activePath)
+        ? activePath
+        : uniquePaths[uniquePaths.length - 1] ?? null;
+    selectedPaths.value = uniquePaths;
+    selectedPath.value = nextActivePath;
   }
 
   const flatTree = computed(() => {
@@ -284,12 +303,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     stopWatch();
     const epoch = workspaceEpoch;
     try {
+      // plugin-fs 的 debounced watch 在 macOS/Windows 会先用 FileIdMap
+      // 递归扫描整个工作区；大型 target/node_modules 可让注册监听耗时数秒。
+      // 这里使用无预扫描的原始 watcher，事件合并继续由本 store 下方的
+      // WATCH_FLUSH_DEBOUNCE_MS / WATCH_FLUSH_MIN_INTERVAL_MS 统一承担。
       const unwatch = await watchFs(
         root,
         (event) => {
           onWatchEvent(event, root, epoch);
         },
-        { recursive: true, delayMs: 350 },
+        { recursive: true },
       );
       // 等待期间已切换到别的文件夹：释放刚建立的监听，避免监听目标与 rootPath 错位
       if (rootPath.value !== root || workspaceEpoch !== epoch) {
@@ -516,7 +539,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       rootName.value = basename(selected);
       childrenMap.value = { [selected]: entries };
       expanded.value = new Set([selected]);
-      selectedPath.value = selected;
+      setSelection([selected]);
       filter.value = "";
       invalidateLocateSearch();
       clipboard.value = null;
@@ -715,7 +738,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await loadChildren(parent);
       if (!isCurrent()) return;
       expanded.value = new Set([...expanded.value, parent]);
-      selectedPath.value = target;
+      setSelection([target]);
       showNotice(`${label}成功`);
       return target;
     } catch (error) {
@@ -755,7 +778,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (!isCurrent()) return;
       await refreshAffected(path, target);
       if (!isCurrent()) return;
-      selectedPath.value = target;
+      setSelection([target]);
       showNotice("已重命名");
       return { from: path, to: target };
     } catch (error) {
@@ -786,7 +809,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       const parent = dirname(path);
       await loadChildren(parent);
       if (!isCurrent()) return false;
-      if (selectedPath.value === path) selectedPath.value = parent;
+      if (selectedPath.value === path) setSelection([parent]);
       showNotice("已删除");
       return true;
     } catch (error) {
@@ -845,7 +868,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await loadChildren(dirname(source));
       if (!isCurrent()) return;
       expanded.value = new Set([...expanded.value, parent]);
-      selectedPath.value = target;
+      setSelection([target]);
       showNotice("已粘贴");
       return { from: source, to: target, cut: mode === "cut", isDir };
     } catch (error) {
@@ -894,7 +917,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await loadChildren(dirname(from));
       if (!isCurrent()) return null;
       expanded.value = new Set([...expanded.value, toParent]);
-      selectedPath.value = dest;
+      setSelection([dest]);
       showNotice(`已移动 ${basename(from)}`);
       return { from, to: dest, isDir };
     } catch (error) {
@@ -905,7 +928,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   function selectPath(path: string | null) {
-    selectedPath.value = path;
+    setSelection(path ? [path] : []);
+  }
+
+  function selectPaths(paths: readonly string[], activePath?: string | null) {
+    setSelection(paths, activePath);
   }
 
   /** 返回当前工作区代际，供跨组件异步操作判断结果是否仍属于当前项目。 */
@@ -953,7 +980,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
     if (rootPath.value !== root || workspaceEpoch !== epoch) return;
     expanded.value = next;
-    selectedPath.value = path;
+    setSelection([path]);
     revealTarget.value = path;
     revealToken.value += 1;
   }
@@ -1110,6 +1137,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     toasts,
     filter,
     selectedPath,
+    selectedPaths,
     childrenMap,
     expanded,
     recentFolders,
@@ -1139,6 +1167,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     pasteInto,
     movePath,
     selectPath,
+    selectPaths,
     getWorkspaceEpoch,
     revealPath,
     loadChildren,

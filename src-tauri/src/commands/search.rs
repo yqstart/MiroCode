@@ -35,34 +35,126 @@ pub struct ReplaceResult {
     pub skipped_large_files: usize,
 }
 
-/// 仅当文件名或任一路径段（文件夹名）包含查询子串时命中；不做跨段子序列模糊。
-/// query 需为**已小写**（调用方预处理一次，避免每文件重复 to_lowercase）。
+fn char_key(value: char) -> char {
+    value.to_lowercase().next().unwrap_or(value)
+}
+
+/// 子序列评分：连续字符、路径/单词边界和 CamelHump 首字母优先。
+fn subsequence_score(query: &str, candidate: &str) -> Option<i32> {
+    let query_chars: Vec<char> = query.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let candidate_chars: Vec<char> = candidate.chars().collect();
+    if query_chars.is_empty() || candidate_chars.is_empty() {
+        return None;
+    }
+
+    let mut score = 0;
+    let mut search_from = 0;
+    let mut previous_match: Option<usize> = None;
+    for query_char in query_chars.iter().copied() {
+        let query_key = char_key(query_char);
+        let index = (search_from..candidate_chars.len())
+            .find(|index| char_key(candidate_chars[*index]) == query_key)?;
+        let current = candidate_chars[index];
+        let previous = index
+            .checked_sub(1)
+            .and_then(|i| candidate_chars.get(i))
+            .copied();
+        let at_boundary = index == 0
+            || previous.is_some_and(|ch| !ch.is_alphanumeric())
+            || previous.is_some_and(|ch| ch.is_lowercase()) && current.is_uppercase();
+
+        score += 12;
+        if at_boundary {
+            score += 24;
+        }
+        if previous_match.is_some_and(|previous_index| previous_index + 1 == index) {
+            score += 18;
+        } else if let Some(previous_index) = previous_match {
+            score -= ((index - previous_index - 1) as i32).min(12);
+        }
+        previous_match = Some(index);
+        search_from = index + 1;
+    }
+
+    score -= (candidate_chars.len().saturating_sub(query_chars.len()) as i32).min(80);
+    Some(score)
+}
+
+/// WebStorm 风格的文件模糊匹配：文件名优先，同时接受路径限定和 CamelHump。
+/// query 需为已小写字符串，避免遍历时重复规范化。
 fn segment_contains_score(query_lc: &str, name: &str, relative: &str) -> Option<i32> {
-    if query_lc.is_empty() {
+    let query = query_lc.trim().replace('\\', "/");
+    if query.is_empty() {
         return None;
     }
 
     let name_lc = name.to_lowercase();
-    if name_lc.contains(query_lc) {
-        let bonus = if name_lc.starts_with(query_lc) { 40 } else { 20 };
-        return Some(200 + bonus - (name_lc.len() as i32).min(80));
+    let relative_normalized = relative.replace('\\', "/");
+    let relative_lc = relative_normalized.to_lowercase();
+    let mut best: Option<i32> = None;
+    let mut consider = |score: Option<i32>| {
+        if let Some(score) = score {
+            best = Some(best.map_or(score, |current| current.max(score)));
+        }
+    };
+
+    if !query.contains('/') {
+        if name_lc == query {
+            consider(Some(1_000));
+        } else if name_lc.starts_with(&query) {
+            consider(Some(900 - (name_lc.len() as i32).min(80)));
+        } else if let Some(index) = name_lc.find(&query) {
+            consider(Some(
+                800 - (index as i32).min(80) - (name_lc.len() as i32).min(80),
+            ));
+        }
+        consider(subsequence_score(&query, name).map(|score| 560 + score));
     }
 
-    let segments: Vec<&str> = relative
-        .split(['/', '\\'])
-        .filter(|s| !s.is_empty())
-        .collect();
-    // 排除最后一段（文件名已在上方匹配）
-    let folder_count = segments.len().saturating_sub(1);
-    for (i, seg) in segments.iter().take(folder_count).enumerate() {
-        let seg_lc = seg.to_lowercase();
-        if seg_lc.contains(query_lc) {
-            let bonus = if seg_lc.starts_with(query_lc) { 30 } else { 10 };
-            // 越靠近文件名的目录段略加分
-            return Some(100 + bonus + (i as i32) * 2 - (seg_lc.len() as i32).min(40));
-        }
+    if relative_lc == query {
+        consider(Some(950));
+    } else if relative_lc.ends_with(&query) {
+        consider(Some(850 - (relative_lc.len() as i32).min(120)));
+    } else if let Some(index) = relative_lc.find(&query) {
+        consider(Some(
+            720 - (index as i32).min(120) - (relative_lc.len() as i32).min(120),
+        ));
+    } else {
+        consider(subsequence_score(&query, &relative_normalized).map(|score| 320 + score));
     }
-    None
+
+    best
+}
+
+#[cfg(test)]
+mod score_tests {
+    use super::segment_contains_score;
+
+    #[test]
+    fn file_search_supports_camel_hump_subsequence() {
+        assert!(segment_contains_score(
+            "tfi",
+            "TracFormItem.vue",
+            "src/components/TracFormItem.vue",
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn file_search_supports_path_qualified_query() {
+        let exact = segment_contains_score(
+            "document/index",
+            "index.vue",
+            "src/views/document/index.vue",
+        );
+        let unrelated = segment_contains_score(
+            "document/index",
+            "index.vue",
+            "src/views/dashboard/index.vue",
+        );
+        assert!(exact.is_some());
+        assert!(unrelated.is_none());
+    }
 }
 
 fn match_ext(path: &Path, extensions: &Option<Vec<String>>) -> bool {

@@ -1,7 +1,7 @@
 {
   "name": "mirocode",
   "private": true,
-  "version": "1.0.2",
+  "version": "2.0.0",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -22,6 +22,11 @@
     "test:security-scoped": "node --experimental-strip-types scripts/security-scoped-selfcheck.ts",
     "test:terminal-idle": "node --experimental-strip-types scripts/terminal-idle-selfcheck.ts",
     "test:custom-scripts": "node --experimental-strip-types scripts/custom-scripts-selfcheck.ts",
+    "test:workspace-open": "node --experimental-strip-types scripts/workspace-open-performance-selfcheck.ts",
+    "test:startup-bundle": "node --experimental-strip-types scripts/workspace-open-performance-selfcheck.ts --bundle",
+    "test:search-keyboard": "node --experimental-strip-types scripts/search-keyboard-selfcheck.ts",
+    "test:explorer-selection": "node --experimental-strip-types scripts/explorer-selection-selfcheck.ts",
+    "test:usability": "node --experimental-strip-types scripts/usability-workflows-selfcheck.ts",
     "test:editor-keymap": "node --experimental-strip-types scripts/editor-keymap-selfcheck.ts",
     "test:formatting": "node --experimental-strip-types scripts/formatting-selfcheck.ts",
     "test:line-diff": "node --experimental-strip-types scripts/line-diff-selfcheck.ts",

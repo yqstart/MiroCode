@@ -26,6 +26,7 @@ import { showMoveReferencesDialog } from "@/shared/moveReferencesDialog";
 import { openFolderInNewWindow } from "@/shared/openWorkspace";
 import { formatShortcut } from "@/shared/platform";
 import { revealInOsExplorer } from "@/shared/revealInOs";
+import { getPathRange } from "@/features/explorer/selection";
 import { useI18n } from "@/i18n";
 import { useEditorStore } from "@/stores/editor";
 import { aggregateDirDirtyCounts } from "@/stores/gitDirtyAggregate";
@@ -44,6 +45,7 @@ const {
   rootPath,
   rootName,
   selectedPath,
+  selectedPaths,
   flatTree,
   recentFolders,
   clipboard,
@@ -70,6 +72,8 @@ const projectMenuPos = ref<{ top: number; left: number } | null>(null);
 const titleBtnRef = ref<HTMLElement | null>(null);
 const pendingOpenPath = ref<string | null>(null);
 const openingMode = ref(false);
+/** Shift 范围选择的锚点；普通点击会重新设置，范围点击不会移动锚点。 */
+const selectionAnchorPath = ref<string | null>(null);
 
 const dirtySet = computed(() => editor.dirtyPaths);
 /** git 状态按绝对路径索引，供 row 模板 O(1) 取用 */
@@ -487,8 +491,26 @@ function clearAllRecent(event: MouseEvent) {
   workspace.clearRecentFolders();
 }
 
-async function onRowClick(path: string, isDir: boolean) {
+async function onRowClick(event: MouseEvent, path: string, isDir: boolean) {
   if (suppressRowClick) return;
+
+  if (
+    event.shiftKey &&
+    selectionAnchorPath.value &&
+    selectedPaths.value.includes(selectionAnchorPath.value)
+  ) {
+    workspace.selectPaths(
+      getPathRange(
+        flatTree.value.map((node) => node.path),
+        selectionAnchorPath.value,
+        path,
+      ),
+      path,
+    );
+    return;
+  }
+
+  selectionAnchorPath.value = path;
   workspace.selectPath(path);
   if (isDir) {
     await workspace.toggleExpand(path);
@@ -500,6 +522,7 @@ async function onRowClick(path: string, isDir: boolean) {
 async function onContext(event: MouseEvent, path: string, isDir: boolean) {
   event.preventDefault();
   event.stopPropagation();
+  selectionAnchorPath.value = path;
   workspace.selectPath(path);
   // 先用估算定位占位，渲染后再按真实尺寸校正：
   // 估算高度（320）小于实际渲染高度，直接按估算 clamp 会让底部越出窗口被裁掉
@@ -819,6 +842,7 @@ defineExpose({ locateActiveFile });
             class="row"
             :class="{
               active: selectedPath === node.path,
+              selected: selectedPaths.includes(node.path),
               dirty: dirtySet.has(node.path),
               dragging: dragSource?.path === node.path,
               'drop-into': dropHoverPath === node.path && dropValid && node.isDir,
@@ -829,7 +853,7 @@ defineExpose({ locateActiveFile });
             :data-tree-path="node.path"
             :style="{ paddingLeft: `${10 + node.depth * 14}px` }"
             @pointerdown="onRowPointerDown($event, node.path, node.isDir)"
-            @click="onRowClick(node.path, node.isDir)"
+            @click="onRowClick($event, node.path, node.isDir)"
             @contextmenu="onContext($event, node.path, node.isDir)"
           >
             <span class="twist">
@@ -1440,6 +1464,15 @@ defineExpose({ locateActiveFile });
 .row.active {
   background: var(--bg-active);
   color: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.row.selected {
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
+.row.selected.active {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 

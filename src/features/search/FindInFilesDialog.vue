@@ -7,6 +7,7 @@ import { formatShortcut } from "@/shared/platform";
 import { useI18n } from "@/i18n";
 import { useEditorStore } from "@/stores/editor";
 import { useSearchStore } from "@/stores/search";
+import { getSearchKeyAction } from "@/features/search/navigation";
 
 const { t } = useI18n();
 const findShortcutHint = computed(
@@ -92,35 +93,32 @@ async function openHit(index: number, keepOpen = false) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") {
-    event.preventDefault();
+  const action = getSearchKeyAction(event, {
+    hasResults: contentResults.value.length > 0,
+    isQueryInput: document.activeElement === queryRef.value,
+  });
+  if (!action) return;
+
+  event.preventDefault();
+  if (action.type === "close") {
     close();
     return;
   }
-  if (event.key === "ArrowDown") {
-    event.preventDefault();
-    activeIndex.value = Math.min(
-      activeIndex.value + 1,
-      Math.max(contentResults.value.length - 1, 0),
+  if (action.type === "move") {
+    activeIndex.value = Math.max(
+      0,
+      Math.min(
+        activeIndex.value + action.delta,
+        Math.max(contentResults.value.length - 1, 0),
+      ),
     );
     return;
   }
-  if (event.key === "ArrowUp") {
-    event.preventDefault();
-    activeIndex.value = Math.max(activeIndex.value - 1, 0);
+  if (action.type === "search") {
+    void onSearch();
     return;
   }
-  if (event.key === "Enter" && !event.shiftKey) {
-    if (document.activeElement === queryRef.value) {
-      // 查询框自身的 @keydown.enter 已触发 onSearch（含 preventDefault），
-      // 事件冒泡到这里不重复触发，否则一次回车发两次搜索 IPC
-      return;
-    }
-    if (contentResults.value.length) {
-      event.preventDefault();
-      void openHit(activeIndex.value, event.metaKey || event.ctrlKey);
-    }
-  }
+  void openHit(activeIndex.value, action.keepOpen);
 }
 </script>
 
@@ -154,7 +152,6 @@ function onKeydown(event: KeyboardEvent) {
             type="text"
             name="miro-find-query"
             :placeholder="t('search.findInputPlaceholder')"
-            @keydown.enter.exact.prevent="onSearch"
           />
         </label>
 

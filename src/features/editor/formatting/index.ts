@@ -64,7 +64,7 @@ export async function formatDocumentContent(
 
   // 2. 内置 standalone（零依赖、离线、任意项目可用）
   try {
-    const config = await loadProjectPrettierConfig(root);
+    const config = await loadProjectPrettierConfig(root, absPath);
     const formatted = await formatWithBuiltin(absPath, content, {
       ...(config ?? {}),
       ...options,

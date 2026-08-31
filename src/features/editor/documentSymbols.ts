@@ -120,7 +120,11 @@ const WORD_RE = /[A-Za-z_$][\w$]*/;
  */
 const CSS_CLASS_RE = /\.([A-Za-z_][\w-]*)/;
 
-function indexLines(text: string, lineOffset = 0): Map<string, DocumentSymbol[]> {
+function indexLines(
+  text: string,
+  lineOffset = 0,
+  includeCssClasses = false,
+): Map<string, DocumentSymbol[]> {
   const map = new Map<string, DocumentSymbol[]>();
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
@@ -144,7 +148,7 @@ function indexLines(text: string, lineOffset = 0): Map<string, DocumentSymbol[]>
       map.set(name, list);
     }
     // JS 模式未命中时，尝试 CSS class 选择器识别（.foo { / .foo, / &.foo 等）
-    if (!matchedJs) {
+    if (!matchedJs && includeCssClasses) {
       const cm = line.match(CSS_CLASS_RE);
       if (cm?.[1]) {
         const className = cm[1];
@@ -191,7 +195,7 @@ function computeDocumentIndex(
   filePath: string,
 ): Map<string, DocumentSymbol[]> {
   const name = basename(filePath).toLowerCase();
-  if (name.endsWith(".vue")) {
+  if (name.endsWith(".vue") || name.endsWith(".html") || name.endsWith(".htm")) {
     const map = new Map<string, DocumentSymbol[]>();
     // 扫描所有 <script ...>...</script> 段（可能多个）
     appendVueBlockSymbols(doc, "script", map);
@@ -199,8 +203,10 @@ function computeDocumentIndex(
     appendVueBlockSymbols(doc, "style", map);
     return map;
   }
-  // CSS/SCSS/Less 及普通脚本文件：全文索引（CSS_CLASS_RE 会命中 CSS 选择器）
-  return indexLines(doc);
+  // 只有样式文件启用 CSS class 识别；脚本里的 `.method` / `...spread`
+  // 不能被误当作 `.class` 选择器定义。
+  const includeCssClasses = /\.(?:css|scss|sass|less)$/i.test(name);
+  return indexLines(doc, 0, includeCssClasses);
 }
 
 export function indexDocumentSymbols(
@@ -237,7 +243,7 @@ function appendVueBlockSymbols(
     if (closeIdx < 0) break;
     const body = doc.slice(contentStart + 1, closeIdx);
     const lineOffset = doc.slice(0, contentStart + 1).split("\n").length - 1;
-    const blockMap = indexLines(body, lineOffset);
+    const blockMap = indexLines(body, lineOffset, tag === "style");
     for (const [symName, list] of blockMap.entries()) {
       const existing = map.get(symName) ?? [];
       existing.push(...list);

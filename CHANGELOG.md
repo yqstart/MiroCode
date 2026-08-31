@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-31
+
+### 新增
+
+- 增加 `mirocode` CLI，支持文件/目录打开、`path:line:column` 定位、`--goto`、版本和帮助查询；重复调用通过单实例桥接转发到已运行窗口。
+- 增加 macOS Launch Services 文件打开事件处理、冷启动请求队列和代码文件关联，外部工具或 Finder 传入的路径可直接进入 Miro Code。
+
+### 改进
+
+- 文件导航对齐 WebStorm：增加 `⌘/Ctrl+E` 最近文件、平台原生 Go to File 键位、CamelHump / 路径模糊搜索、`:行:列` 定位，以及可持续后退 / 前进的双向跳转历史。
+- 声明跳转支持 TypeScript 语义和 `@/*` 路径别名；本地命名 import 使用轻量直达路径即时落到真实导出声明，路径字符串仍可打开模块文件。
+- `⌘⌥L / Ctrl+Alt+L` 按选区状态执行重排代码；内置 Prettier 兜底会从当前文件向项目根查找最近配置。
+- Git Log 与本地更改职责拆分：默认选中 HEAD / 最新提交，固定展示提交详情，支持父 / 子提交键盘导航；未提交更改统一进入 Commit 面板。
+
+### 修复
+
+- 修复跳转后退会把当前项重新压栈、只能在两个位置间反复切换的问题，并防止新跳转沿用已失效的前进分支。
+- 修复命名 import 被误判为路径、TypeScript 展开 / 属性访问被误索引成 CSS class，以及 Git Log 在终端或输入框聚焦时劫持方向键的问题。
+- 修复编辑器聚焦时 `⌘/Ctrl+W`、标签切换和资源树刷新被输入控件保护逻辑一并拦截的问题。
+- 修复最近文件仍显示已删除路径，以及 Git Log 过滤后高亮落到不可见提交的问题。
+- 修复点击终端快捷脚本时新建终端过早注入命令，导致命令重复回显的问题。
+
 ## [1.0.2] - 2026-08-27
 
 ### 修复
@@ -100,6 +122,7 @@ Miro Code 1.0.0 是当前代码基线的首个可用大版本，定位为轻量�
 - 文件访问、Git、搜索、SSH 和更新说明渲染均加入路径校验、错误处理、超时清理、敏感信息隔离和 Markdown 链接过滤。
 - 采用 MIT 许可证，纯开源免费；本版本坚持离线优先，不包含联网 AI 补全、AI 对话面板、AI Agent、MCP/Skills 生态或插件市场。
 
+[2.0.0]: https://github.com/yqstart/MiroCode/releases/tag/v2.0.0
 [1.0.2]: https://github.com/yqstart/MiroCode/releases/tag/v1.0.2
 [1.0.1]: https://github.com/yqstart/MiroCode/releases/tag/v1.0.1
 [1.0.0]: https://github.com/yqstart/MiroCode/releases/tag/v1.0.0

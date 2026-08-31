@@ -11,6 +11,7 @@ import { getWindowSessionId, MAIN_WINDOW_SESSION_ID } from "./windowSession.ts";
 const STORAGE_PREFIX = "mirocode.editor-session.v3:";
 const LEGACY_STORAGE_PREFIX = "mirocode.editor-session.v2:";
 const MAX_TABS = 60;
+const MAX_RECENT_PATHS = 50;
 const MAX_DIRTY_TABS = 12;
 const MAX_CONTENT_CHARS = 1_000_000;
 /** localStorage 配额预算（UTF-16 code unit，中文 1 字 = 1 单元）：
@@ -29,6 +30,7 @@ export interface EditorSessionTab {
 export interface EditorSession {
   tabs: EditorSessionTab[];
   activePath: string | null;
+  recentPaths?: string[];
 }
 
 function normalizePath(path: string): string {
@@ -70,6 +72,7 @@ function parseSession(raw: string, root: string): EditorSession | null {
     const parsed = JSON.parse(raw) as {
       tabs?: unknown;
       activePath?: unknown;
+      recentPaths?: unknown;
     };
     if (!Array.isArray(parsed.tabs)) return null;
 
@@ -111,7 +114,18 @@ function parseSession(raw: string, root: string): EditorSession | null {
       tabs.some((tab) => tab.path === parsed.activePath)
         ? parsed.activePath
         : tabs[0]?.path ?? null;
-    return { tabs, activePath };
+    const recentCandidates = Array.isArray(parsed.recentPaths)
+      ? parsed.recentPaths
+      : [activePath, ...tabs.map((tab) => tab.path)];
+    const recentPaths = [
+      ...new Set(
+        recentCandidates.filter(
+          (path): path is string =>
+            typeof path === "string" && isPathInRoot(root, path),
+        ),
+      ),
+    ].slice(0, MAX_RECENT_PATHS);
+    return { tabs, activePath, recentPaths };
   } catch {
     return null;
   }
@@ -178,6 +192,7 @@ function buildSessionPayload(
     activePath: tabs.some((tab) => tab.path === session.activePath)
       ? session.activePath
       : tabs[0]?.path ?? null,
+    recentPaths: [...new Set(session.recentPaths ?? [])].slice(0, MAX_RECENT_PATHS),
   };
 }
 
@@ -213,7 +228,11 @@ export function saveEditorSession(
   for (const ratio of [0.5, 0.25, 0.125]) {
     const limit = Math.max(1, Math.floor(session.tabs.length * ratio));
     const trimmed = buildSessionPayload(
-      { tabs: session.tabs.slice(0, limit), activePath: session.activePath },
+      {
+        tabs: session.tabs.slice(0, limit),
+        activePath: session.activePath,
+        recentPaths: session.recentPaths,
+      },
       false,
     );
     if (trimmed && trySetItem(key, trimmed)) return;

@@ -58,6 +58,8 @@ const files = new Map<string, string>([
   // 独立文件：连续未完成语句会让 TS 解析退化，每场景一文件贴近真实输入
   ["/proj/obj.ts", "const obj = { alpha: 1, beta: 'x' }\nobj."],
   ["/proj/store.ts", "import { Store } from './types'\nconst store = new Store()\nstore."],
+  ["/proj/src/lib/nav.ts", "export function goToTarget(): void {}"],
+  ["/proj/src/app.ts", "import { goToTarget } from '@/lib/nav'\ngoToTarget()"],
 ]);
 
 const svc = new TsLanguageService();
@@ -172,6 +174,20 @@ console.log("== 语言服务符号能力 ==");
   svc.setFile("/proj/bad.ts", bad);
   const diagnostics = svc.diagnosticsFor("/proj/bad.ts");
   assert("语义诊断捕获类型错误", diagnostics.some((item) => item.severity === "error"), diagnostics);
+
+  const aliasTarget = files.get("/proj/src/lib/nav.ts")!;
+  const aliasImporter = files.get("/proj/src/app.ts")!;
+  svc.setFile("/proj/src/lib/nav.ts", aliasTarget);
+  svc.setFile("/proj/src/app.ts", aliasImporter);
+  const aliasDefinitions = svc.definitionsAt(
+    "/proj/src/app.ts",
+    aliasImporter.lastIndexOf("goToTarget") + 2,
+  );
+  assert(
+    "@/* 路径别名可跳到真实声明",
+    aliasDefinitions.some((item) => item.fileName === "/proj/src/lib/nav.ts"),
+    aliasDefinitions,
+  );
 }
 
 // ==================== 自动导入 apply（fake view 直接验证插入行为） ====================

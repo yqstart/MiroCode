@@ -7,6 +7,9 @@ import {
   createPromptIdleTracker,
   type PromptIdleTracker,
 } from "../src/features/sessions/terminalIdle.ts";
+import {
+  waitForTerminalCommandReady,
+} from "../src/features/sessions/terminalCommandDispatch.ts";
 
 let failed = 0;
 let passed = 0;
@@ -106,6 +109,58 @@ async function main() {
   await new Promise((r) => setTimeout(r, 250));
   assert(order.at(-1) === "空闲", "服务停止、提示符回归后 → 空闲", `实际: ${order.at(-1)}`);
   t.dispose();
+
+  console.log("快捷命令等待 shell 就绪：");
+  let ptyReady = false;
+  let shellReady = false;
+  let waitCount = 0;
+  const readyResult = await waitForTerminalCommandReady(
+    {
+      hasPty: () => ptyReady,
+      hasSpawnedPty: () => ptyReady,
+      isShellReady: () => shellReady,
+      isCancelled: () => false,
+    },
+    {
+      maxWaitMs: 100,
+      pollIntervalMs: 10,
+      wait: async () => {
+        waitCount += 1;
+        if (waitCount === 1) ptyReady = true;
+        if (waitCount === 2) shellReady = true;
+      },
+    },
+  );
+  assert(
+    readyResult === "ready" && waitCount === 2,
+    "PTY 已创建但提示符未出现时继续等待",
+    `结果: ${readyResult}，轮询: ${waitCount}`,
+  );
+
+  const exitedResult = await waitForTerminalCommandReady(
+    {
+      hasPty: () => false,
+      hasSpawnedPty: () => true,
+      isShellReady: () => false,
+      isCancelled: () => false,
+    },
+    { wait: async () => {} },
+  );
+  assert(exitedResult === "exited", "PTY 已退出时不再等待提示符");
+
+  const fallbackResult = await waitForTerminalCommandReady(
+    {
+      hasPty: () => true,
+      hasSpawnedPty: () => true,
+      isShellReady: () => false,
+      isCancelled: () => false,
+    },
+    { maxWaitMs: 0, wait: async () => {} },
+  );
+  assert(
+    fallbackResult === "fallback",
+    "非常规提示符无法识别时降级发送，不丢失命令",
+  );
 
   console.log(`\n${passed} 通过 / ${failed} 失败`);
   process.exit(failed > 0 ? 1 : 0);

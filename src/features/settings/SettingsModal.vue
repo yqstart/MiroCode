@@ -6,7 +6,7 @@ import { EDITOR_SHORTCUTS } from "@/features/editor/keymap";
 import { THEME_LABELS } from "@/features/editor/theme";
 import { checkForAppUpdate, getAppVersion } from "@/shared/appUpdate";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
-import { formatShortcut } from "@/shared/platform";
+import { formatShortcut, isMacOS } from "@/shared/platform";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -57,6 +57,12 @@ const navItems = computed(() => [
 const shortcutRows = computed(() => [
   { keys: formatShortcut("mod", "O"), action: t("settings.shortcutOpenFolder") },
   { keys: formatShortcut("mod", "P"), action: t("settings.shortcutQuickOpen") },
+  {
+    keys: isMacOS()
+      ? formatShortcut("mod", "shift", "O")
+      : formatShortcut("mod", "shift", "N"),
+    action: t("settings.shortcutGoToFile"),
+  },
   {
     keys: formatShortcut("mod", "shift", "F"),
     action: t("settings.shortcutFindInFiles"),

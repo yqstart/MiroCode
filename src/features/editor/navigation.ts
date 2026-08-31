@@ -13,7 +13,11 @@ import {
   indexDocumentSymbols,
   wordAt,
 } from "@/features/editor/documentSymbols";
-import { ensureTypeScriptProgram, tsService } from "@/features/editor/typeService";
+import {
+  ensureTypeScriptProgram,
+  openedContent,
+  tsService,
+} from "@/features/editor/typeService";
 import { createVueScriptContext, isInVueScript } from "@/features/editor/vueScript";
 import { readTextFile } from "@/shared/fs";
 
@@ -82,14 +86,93 @@ function findImportSpecAtPos(doc: string, pos: number): string | null {
     re.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = re.exec(doc))) {
-      const start = match.index;
-      const end = start + match[0].length;
-      if (pos >= start && pos <= end) {
-        return match[1];
-      }
+      const spec = match[1];
+      const specOffset = match[0].lastIndexOf(spec);
+      if (specOffset < 0) continue;
+      const start = match.index + specOffset;
+      const end = start + spec.length;
+      if (pos >= start && pos <= end) return spec;
     }
   }
   return null;
+}
+
+/**
+ * 光标位于本地 ES import 绑定时，返回它在源模块中的导出名。
+ * 这条路径不需要先启动完整 TypeScript 程序，因此首次 ⌘B 也能即时跳转；
+ * 别名 `import { source as local }` 会正确映射回 `source`。
+ */
+export function findImportedBindingAtPos(
+  doc: string,
+  pos: number,
+): { spec: string; importedName: string } | null {
+  const hit = wordAt(doc, pos);
+  if (!hit || pos < hit.from || pos > hit.to) return null;
+  const re = new RegExp(IMPORT_RE.source, "g");
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(doc))) {
+    if (!/^\s*import\b/.test(match[0])) continue;
+    const spec = match[1];
+    if (!isLocalImportSpec(spec)) continue;
+    const specOffset = match[0].lastIndexOf(spec);
+    const importOffset = match[0].search(/\bimport\b/);
+    const fromOffset = match[0].lastIndexOf("from", specOffset);
+    if (specOffset < 0 || importOffset < 0 || fromOffset < 0) continue;
+    const clauseFrom = match.index + importOffset + "import".length;
+    const clauseTo = match.index + fromOffset;
+    if (hit.from < clauseFrom || hit.to > clauseTo) continue;
+
+    const clause = match[0]
+      .slice(importOffset + "import".length, fromOffset)
+      .trim()
+      .replace(/^type\s+/, "");
+    const named = clause.match(/\{([\s\S]*?)\}/)?.[1];
+    if (named) {
+      for (const item of named.split(",")) {
+        const binding = item
+          .trim()
+          .replace(/^type\s+/, "")
+          .match(/^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
+        if (!binding) continue;
+        const importedName = binding[1];
+        const localName = binding[2] ?? importedName;
+        if (hit.word === localName || hit.word === importedName) {
+          return { spec, importedName };
+        }
+      }
+    }
+
+    const namespace = clause.match(/\*\s+as\s+([A-Za-z_$][\w$]*)/);
+    if (namespace?.[1] === hit.word) return { spec, importedName: "*" };
+
+    const defaultName = clause.split(/[,\s]/, 1)[0];
+    if (defaultName === hit.word) return { spec, importedName: "default" };
+  }
+  return null;
+}
+
+async function findDirectImportedDefinition(
+  doc: string,
+  pos: number,
+  root: string,
+  currentFile: string,
+): Promise<NavTarget | null> {
+  const binding = findImportedBindingAtPos(doc, pos);
+  if (!binding) return null;
+  const resolved = await resolveImportPath(root, currentFile, binding.spec);
+  if (!resolved) return null;
+  if (binding.importedName === "*") {
+    return { path: resolved, line: 1, column: 1, kind: "symbol" };
+  }
+  const text = (await openedContent(resolved)) ?? (await readTextFile(root, resolved));
+  const definition = indexDocumentSymbols(text, resolved).get(binding.importedName)?.[0];
+  if (!definition) return null;
+  return {
+    path: resolved,
+    line: definition.line,
+    column: definition.column,
+    kind: "symbol",
+  };
 }
 
 /**
@@ -106,16 +189,16 @@ function findImportSpecOnLine(
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(lineText))) {
-      const start = lineStart + m.index;
-      const end = start + m[0].length;
-      if (pos < start || pos > end) continue;
       const spec = m[1];
       const specOffset = m[0].lastIndexOf(spec);
       if (specOffset < 0) continue;
+      const start = lineStart + m.index + specOffset;
+      const end = start + spec.length;
+      if (pos < start || pos > end) continue;
       return {
         spec,
-        from: start + specOffset,
-        to: start + specOffset + spec.length,
+        from: start,
+        to: end,
       };
     }
   }
@@ -303,6 +386,22 @@ export async function findTargetAtPosAsync(
     }
   }
 
+  // 直接 import 绑定优先走轻量、确定性的目标文件索引。首次按 ⌘B 时无需
+  // 等待 5MB TypeScript 运行时和整条 import 闭包加载，失败再进入语义路径。
+  if (workspaceRoot) {
+    try {
+      const direct = await findDirectImportedDefinition(
+        doc,
+        pos,
+        workspaceRoot,
+        currentFile,
+      );
+      if (direct) return direct;
+    } catch {
+      // 文件刚被移动/删除时继续尝试 TypeScript 与工作区索引降级路径。
+    }
+  }
+
   // JS/TS/Vue script 优先走真实 TypeScript definition；失败后再走正则符号索引。
   if (workspaceRoot) {
     try {
@@ -361,8 +460,17 @@ export interface NavigationHandlers {
   onNavigate: (path: string, line: number, column: number) => void;
   /** 返回成功时返回 true；没有历史时返回 false，让原生编辑命令继续处理。 */
   onGoBack: () => boolean;
+  onGoForward: () => boolean;
   workspaceRoot: () => string | null;
   currentFile: () => string;
+}
+
+function canAttemptNavigation(doc: string, pos: number): boolean {
+  return Boolean(
+    findImportSpecAtPos(doc, pos) ||
+      findClassAttrAtPos(doc, pos) ||
+      wordAtOrTemplateBind(doc, pos),
+  );
 }
 
 const linkMark = Decoration.mark({ class: "cm-nav-link" });
@@ -473,13 +581,7 @@ export function createNavigationExtension(handlers: NavigationHandlers): Extensi
         const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
         if (pos == null) return false;
         // 先同步判断是否可能跳转，避免误吞点击
-        const maybe = findTargetAtPos(
-          view.state.doc.toString(),
-          pos,
-          handlers.workspaceRoot(),
-          handlers.currentFile(),
-        );
-        if (!maybe) return false;
+        if (!canAttemptNavigation(view.state.doc.toString(), pos)) return false;
         event.preventDefault();
         void navigateFromView(view, handlers, pos);
         return true;
@@ -497,36 +599,24 @@ export function createNavigationExtension(handlers: NavigationHandlers): Extensi
 }
 
 export function goToDefinitionKeymap(handlers: NavigationHandlers) {
+  const run = (view: EditorView) => {
+    const pos = view.state.selection.main.head;
+    if (!canAttemptNavigation(view.state.doc.toString(), pos)) return false;
+    void navigateFromView(view, handlers, pos);
+    return true;
+  };
   return [
     {
+      key: "Mod-b",
+      run,
+    },
+    {
       key: "Mod-Enter",
-      run(view: EditorView) {
-        const pos = view.state.selection.main.head;
-        const maybe = findTargetAtPos(
-          view.state.doc.toString(),
-          pos,
-          handlers.workspaceRoot(),
-          handlers.currentFile(),
-        );
-        if (!maybe) return false;
-        void navigateFromView(view, handlers, pos);
-        return true;
-      },
+      run,
     },
     {
       key: "F12",
-      run(view: EditorView) {
-        const pos = view.state.selection.main.head;
-        const maybe = findTargetAtPos(
-          view.state.doc.toString(),
-          pos,
-          handlers.workspaceRoot(),
-          handlers.currentFile(),
-        );
-        if (!maybe) return false;
-        void navigateFromView(view, handlers, pos);
-        return true;
-      },
+      run,
     },
   ];
 }
@@ -536,6 +626,15 @@ export function goBackKeymap(handlers: NavigationHandlers) {
     key: "Mod-[",
     run() {
       return handlers.onGoBack();
+    },
+  };
+}
+
+export function goForwardKeymap(handlers: NavigationHandlers) {
+  return {
+    key: "Mod-]",
+    run() {
+      return handlers.onGoForward();
     },
   };
 }

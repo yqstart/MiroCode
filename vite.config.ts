@@ -58,27 +58,33 @@ export default defineConfig(async () => ({
         // 稳定大依赖拆独立 vendor chunk：入口只含业务代码，冷启动解析量更小、
         // vendor 变更不触发全量缓存失效；语言服务/类型服务等已走动态 import 独立 chunk
         manualChunks(id) {
-          if (!id.includes("node_modules")) return undefined;
+          const normalizedId = id.replace(/\\/g, "/");
+          if (!normalizedId.includes("/node_modules/")) return undefined;
           if (
-            id.includes("@codemirror") ||
-            id.includes("@lezer") ||
-            id.includes("style-mod") ||
-            id.includes("crelt") ||
-            id.includes("w3c-keyname")
+            normalizedId.includes("/node_modules/@codemirror/") ||
+            normalizedId.includes("/node_modules/@lezer/") ||
+            normalizedId.includes("/node_modules/style-mod/") ||
+            normalizedId.includes("/node_modules/crelt/") ||
+            normalizedId.includes("/node_modules/w3c-keyname/")
           ) {
             return "cm-vendor";
           }
           if (
-            id.includes("vue") ||
-            id.includes("pinia") ||
-            id.includes("@vue")
+            normalizedId.includes("/node_modules/vue/") ||
+            normalizedId.includes("/node_modules/pinia/") ||
+            normalizedId.includes("/node_modules/@vue/")
           ) {
             return "vue-vendor";
           }
-          if (id.includes("xterm")) {
+          if (
+            normalizedId.includes("/node_modules/@xterm/") ||
+            normalizedId.includes("/node_modules/xterm/")
+          ) {
             return "xterm-vendor";
           }
-          if (id.includes("typescript")) {
+          // 必须按真实包目录匹配。Material Icon Theme 含 typescript.svg；
+          // 宽泛子串会把图标与 5MB 编译器合进同一块并反向拉入首屏。
+          if (normalizedId.includes("/node_modules/typescript/")) {
             return "typescript-vendor";
           }
           return undefined;

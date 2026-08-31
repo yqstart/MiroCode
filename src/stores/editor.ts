@@ -13,8 +13,18 @@ import {
   loadEditorSession,
   saveEditorSession,
   type EditorSession,
+  type EditorSessionTab,
 } from "@/shared/editorSession";
+import {
+  mapWithConcurrency,
+  prioritizeActiveTab,
+} from "@/features/editor/sessionRestore";
 import { formatDocumentContent } from "@/features/editor/formatting";
+import {
+  recordNavigation,
+  takeNavigationBack,
+  takeNavigationForward,
+} from "@/features/editor/navigationHistory";
 import { wordAt } from "@/features/editor/documentSymbols";
 import type { EditorFindRequest, EditorJumpTarget, EditorOpenAt } from "@/shared/types";
 import { useCompareStore } from "@/stores/compare";
@@ -47,9 +57,12 @@ export interface EditorReferenceResult {
 }
 
 export const useEditorStore = defineStore("editor", () => {
+  const SESSION_RESTORE_CONCURRENCY = 4;
   const tabs = ref<EditorTab[]>([]);
   const activePath = ref<string | null>(null);
   const jumpStack = ref<EditorJumpTarget[]>([]);
+  const forwardJumpStack = ref<EditorJumpTarget[]>([]);
+  const recentPaths = ref<string[]>([]);
   const openAt = ref<EditorOpenAt | null>(null);
   let openAtSeq = 0;
   // 查找面板打开信号（原生菜单 ⌘F -> store -> 编辑器 watcher 消费）
@@ -131,23 +144,37 @@ export const useEditorStore = defineStore("editor", () => {
   }
 
   function pushJump(target: EditorJumpTarget) {
-    const last = jumpStack.value[jumpStack.value.length - 1];
-    if (
-      last &&
-      last.path === target.path &&
-      last.line === target.line &&
-      last.column === target.column
-    ) {
-      return;
-    }
-    jumpStack.value.push(target);
-    if (jumpStack.value.length > 50) {
-      jumpStack.value.shift();
-    }
+    recordNavigation(
+      { back: jumpStack.value, forward: forwardJumpStack.value },
+      target,
+    );
   }
 
-  function popJump(): EditorJumpTarget | null {
-    return jumpStack.value.pop() ?? null;
+  function currentJumpTarget(): EditorJumpTarget | null {
+    const tab = activeTab.value;
+    if (!tab) return null;
+    return { path: tab.path, line: tab.cursor.line, column: tab.cursor.column };
+  }
+
+  function takeJumpBack(): EditorJumpTarget | null {
+    return takeNavigationBack(
+      { back: jumpStack.value, forward: forwardJumpStack.value },
+      currentJumpTarget(),
+    );
+  }
+
+  function takeJumpForward(): EditorJumpTarget | null {
+    return takeNavigationForward(
+      { back: jumpStack.value, forward: forwardJumpStack.value },
+      currentJumpTarget(),
+    );
+  }
+
+  function rememberRecent(path: string): void {
+    recentPaths.value = [path, ...recentPaths.value.filter((item) => item !== path)].slice(
+      0,
+      50,
+    );
   }
 
   function requestOpenAt(path: string, line: number, column: number) {
@@ -229,6 +256,7 @@ export const useEditorStore = defineStore("editor", () => {
         original: tab.original,
       })),
       activePath: activePath.value,
+      recentPaths: recentPaths.value,
     };
     saveEditorSession(sessionRoot, session);
   }
@@ -243,6 +271,52 @@ export const useEditorStore = defineStore("editor", () => {
   }
 
   /**
+   * 读取一个会话标签，但不激活编辑器、不展开资源树、不触发 Git/Dock 刷新。
+   * 文本文件直接以 readTextFile 的失败表示路径失效，省掉原先重复的 pathExists IPC；
+   * 栅格图不读正文，仍需一次存在性检查。
+   */
+  async function loadRestoredTab(
+    root: string,
+    savedTab: EditorSessionTab,
+    isCurrent: () => boolean,
+  ): Promise<EditorTab | null> {
+    try {
+      const raster = isRasterImagePath(savedTab.path);
+      if (raster && !(await pathExists(root, savedTab.path))) return null;
+      const original = raster ? "" : await readTextFile(root, savedTab.path);
+      if (!isCurrent()) return null;
+
+      let content = original;
+      let dirty = false;
+      if (
+        savedTab.dirty === true &&
+        typeof savedTab.content === "string" &&
+        typeof savedTab.original === "string" &&
+        savedTab.original === original
+      ) {
+        content = savedTab.content;
+        dirty = content !== original;
+      }
+
+      return {
+        id: savedTab.path,
+        path: savedTab.path,
+        name: basename(savedTab.path),
+        content,
+        original,
+        language: languageFromPath(savedTab.path),
+        cursor: savedTab.cursor,
+        previewNonce: Date.now(),
+        pinned: savedTab.pinned,
+        dirty,
+      };
+    } catch {
+      // 会话允许包含已移动/删除/暂时不可访问的旧文件，恢复时静默跳过。
+      return null;
+    }
+  }
+
+  /**
    * 恢复工作区上次打开的标签、活动标签、光标和固定状态。
    * 磁盘版本发生变化时不覆盖当前磁盘文件，避免把过期恢复快照误当成新文件。
    */
@@ -254,62 +328,98 @@ export const useEditorStore = defineStore("editor", () => {
     const workspace = useWorkspaceStore();
     const generation = workspaceGeneration;
     const restoreId = ++restoreGeneration;
+    const isCurrent = () =>
+      generation === workspaceGeneration &&
+      workspace.rootPath === root &&
+      restoreId === restoreGeneration;
     restoringSession = true;
     try {
-      for (const savedTab of saved.tabs) {
-        if (
-          generation !== workspaceGeneration ||
-          workspace.rootPath !== root ||
-          restoreId !== restoreGeneration
-        ) {
-          return;
-        }
-        if (!(await pathExists(root, savedTab.path))) continue;
-        if (
-          generation !== workspaceGeneration ||
-          workspace.rootPath !== root ||
-          restoreId !== restoreGeneration
-        ) {
-          return;
-        }
-        await openFile(savedTab.path);
-        if (
-          generation !== workspaceGeneration ||
-          workspace.rootPath !== root ||
-          restoreId !== restoreGeneration
-        ) {
-          return;
-        }
-        const tab = tabs.value.find((item) => item.path === savedTab.path);
-        if (!tab) continue;
-
-        tab.pinned = savedTab.pinned;
-        tab.cursor = savedTab.cursor;
-        if (
-          savedTab.dirty === true &&
-          typeof savedTab.content === "string" &&
-          typeof savedTab.original === "string" &&
-          savedTab.original === tab.original
-        ) {
-          markExternalUpdate(tab.path);
-          tab.content = savedTab.content;
-          tab.dirty = savedTab.content !== tab.original;
-        }
+      // 先只恢复活动标签，让项目尽快出现可编辑内容；活动文件失效时按原
+      // 标签顺序寻找第一个仍存在的文件，不让一条陈旧路径阻断整个会话。
+      const readOrder = prioritizeActiveTab(saved.tabs, saved.activePath);
+      const attempted = new Set<string>();
+      let firstRestored: EditorTab | null = null;
+      for (const savedTab of readOrder) {
+        if (!isCurrent()) return;
+        attempted.add(savedTab.path);
+        firstRestored = await loadRestoredTab(root, savedTab, isCurrent);
+        if (firstRestored) break;
       }
-      if (
-        generation !== workspaceGeneration ||
-        workspace.rootPath !== root ||
-        restoreId !== restoreGeneration
-      ) {
+      if (!isCurrent()) return;
+      if (!firstRestored) {
+        restoringSession = false;
         return;
       }
-      const active = saved.activePath && tabs.value.some((tab) => tab.path === saved.activePath)
-        ? saved.activePath
-        : tabs.value[0]?.path ?? null;
-      if (active) activate(active);
-      persistSession(root);
-    } finally {
-      if (restoreId === restoreGeneration) restoringSession = false;
+
+      // 用户可能在活动文件读取期间主动打开了别的标签：保留用户操作，
+      // 只补入不存在的恢复标签，且不抢走用户刚选择的活动页。
+      const existingFirst = tabs.value.find(
+        (tab) => tab.path === firstRestored.path,
+      );
+      if (!existingFirst) tabs.value = [firstRestored, ...tabs.value];
+      if (!activePath.value) activate(firstRestored.path);
+      recentPaths.value = saved.recentPaths ?? recentPaths.value;
+      if (activePath.value) rememberRecent(activePath.value);
+
+      const remaining = saved.tabs.filter(
+        (savedTab) =>
+          savedTab.path !== firstRestored.path && !attempted.has(savedTab.path),
+      );
+
+      // 不等待非活动标签：先把控制权还给 Vue/WKWebView 完成首屏绘制，
+      // 再用小并发后台读盘。整个后台阶段保持 restoringSession，避免每补一批
+      // 标签就把半成品会话写回 localStorage。
+      void (async () => {
+        await new Promise<void>((resolveDelay) => {
+          window.setTimeout(resolveDelay, 0);
+        });
+        const restored = await mapWithConcurrency(
+          remaining,
+          SESSION_RESTORE_CONCURRENCY,
+          (savedTab) => loadRestoredTab(root, savedTab, isCurrent),
+        );
+        if (!isCurrent()) return;
+
+        const restoredByPath = new Map(
+          restored
+            .filter((tab): tab is EditorTab => Boolean(tab))
+            .map((tab) => [tab.path, tab]),
+        );
+        const currentTabs = [...tabs.value];
+        const currentByPath = new Map(currentTabs.map((tab) => [tab.path, tab]));
+        const merged: EditorTab[] = [];
+        const seen = new Set<string>();
+
+        // 恢复原标签栏顺序；后台期间用户已打开/编辑的同路径标签优先。
+        for (const savedTab of saved.tabs) {
+          const tab =
+            currentByPath.get(savedTab.path) ?? restoredByPath.get(savedTab.path);
+          if (!tab || seen.has(tab.path)) continue;
+          merged.push(tab);
+          seen.add(tab.path);
+        }
+        // 后台恢复期间由用户新开的非会话标签追加在末尾，不得丢失。
+        for (const tab of currentTabs) {
+          if (seen.has(tab.path)) continue;
+          merged.push(tab);
+          seen.add(tab.path);
+        }
+        tabs.value = merged;
+        persistSession(root);
+      })()
+        .catch((error) => {
+          if (isCurrent()) {
+            console.warn("[editorSession] 后台恢复标签失败", error);
+          }
+        })
+        .finally(() => {
+          if (restoreId === restoreGeneration) restoringSession = false;
+        });
+    } catch (error) {
+      if (isCurrent()) {
+        restoringSession = false;
+        console.warn("[editorSession] 恢复活动标签失败", error);
+      }
     }
   }
 
@@ -386,13 +496,18 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
-  async function openFileAt(path: string, line: number, column: number) {
+  async function openFileAt(
+    path: string,
+    line: number,
+    column: number,
+    options?: { recordHistory?: boolean },
+  ) {
     const workspace = useWorkspaceStore();
     const root = workspace.rootPath;
     if (!root) return;
     const generation = workspaceGeneration;
     const current = activeTab.value;
-    if (current) {
+    if (current && options?.recordHistory !== false) {
       pushJump({
         path: current.path,
         line: current.cursor.line,
@@ -985,6 +1100,8 @@ export const useEditorStore = defineStore("editor", () => {
     tabs.value = [];
     activePath.value = null;
     jumpStack.value = [];
+    forwardJumpStack.value = [];
+    recentPaths.value = [];
     openAt.value = null;
     pendingExternalUpdates.clear();
     autoSaveBlockedPaths.clear();
@@ -1026,7 +1143,8 @@ export const useEditorStore = defineStore("editor", () => {
     { deep: true },
   );
 
-  watch(activePath, () => {
+  watch(activePath, (path) => {
+    if (path) rememberRecent(path);
     void useWorkspaceStore().syncDockMenu();
   });
 
@@ -1036,12 +1154,15 @@ export const useEditorStore = defineStore("editor", () => {
     activeTab,
     dirtyPaths,
     jumpStack,
+    forwardJumpStack,
+    recentPaths,
     openAt,
     findRequest,
     blameVisible,
     isDirty,
     pushJump,
-    popJump,
+    takeJumpBack,
+    takeJumpForward,
     requestOpenAt,
     requestFind,
     referencesVisible,

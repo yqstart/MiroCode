@@ -4,7 +4,8 @@
 // 零配置原则：找不到配置就全默认；解析失败（如 YAML 风格 .prettierrc）则跳过。
 
 import type { BuiltinPrettierConfig } from "./prettierRuntime";
-import { readTextFile, pathExists } from "@/shared/fs";
+import { joinPath, readTextFile, pathExists } from "@/shared/fs";
+import { prettierConfigSearchDirs } from "./prettierConfigPath";
 
 /** 按官方优先级候选；JSON.parse 失败的文件自动跳过 */
 const CONFIG_FILES = [
@@ -26,29 +27,35 @@ function pickConfig(raw: unknown): BuiltinPrettierConfig | null {
   return out as BuiltinPrettierConfig;
 }
 
-/** 读取项目根 JSON 形式的 prettier 配置；无配置返回 null */
+/** 读取离当前文件最近的 JSON 形式 prettier 配置；无配置返回 null */
 export async function loadProjectPrettierConfig(
   root: string,
+  absPath: string,
 ): Promise<BuiltinPrettierConfig | null> {
-  for (const rel of CONFIG_FILES) {
-    if (!(await pathExists(root, rel))) continue;
+  for (const directory of prettierConfigSearchDirs(root, absPath)) {
+    for (const name of CONFIG_FILES) {
+      const rel = directory === "." ? name : joinPath(directory, name);
+      if (!(await pathExists(root, rel))) continue;
+      try {
+        const parsed = JSON.parse(await readTextFile(root, rel)) as unknown;
+        const config = pickConfig(parsed);
+        if (config) return config;
+      } catch {
+        // 非 JSON 形式（YAML 等）→ 交给项目本地 prettier 处理，内置跳过
+      }
+    }
     try {
-      const parsed = JSON.parse(await readTextFile(root, rel)) as unknown;
-      const config = pickConfig(parsed);
-      if (config) return config;
+      const packagePath = directory === "." ? "package.json" : joinPath(directory, "package.json");
+      if (await pathExists(root, packagePath)) {
+        const pkg = JSON.parse(await readTextFile(root, packagePath)) as {
+          prettier?: unknown;
+        };
+        const config = pickConfig(pkg.prettier);
+        if (config) return config;
+      }
     } catch {
-      // 非 JSON 形式（YAML 等）→ 交给项目本地 prettier 处理，内置跳过
+      // package.json 解析失败 → 忽略并继续向上查找
     }
-  }
-  try {
-    if (await pathExists(root, "package.json")) {
-      const pkg = JSON.parse(await readTextFile(root, "package.json")) as {
-        prettier?: unknown;
-      };
-      if (pkg.prettier) return pickConfig(pkg.prettier);
-    }
-  } catch {
-    // package.json 解析失败 → 忽略
   }
   return null;
 }

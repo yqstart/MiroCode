@@ -18,6 +18,7 @@ import {
   createPromptIdleTracker,
   type PromptIdleTracker,
 } from "@/features/sessions/terminalIdle";
+import { waitForTerminalCommandReady } from "@/features/sessions/terminalCommandDispatch";
 import { terminalThemeColors } from "@/features/sessions/terminalTheme";
 import { defaultShellPath } from "@/shared/terminalShell";
 import { useSessionsStore } from "@/stores/sessions";
@@ -39,8 +40,10 @@ let term: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
 let pty: IPty | null = null;
 let disposed = false;
-/** PTY 是否曾成功启动过：区分「尚未就绪」与「已退出」（后者不等 2s 轮询） */
+/** PTY 是否曾成功启动过：区分「尚未就绪」与「已退出」（后者立即停止等待） */
 let ptySpawnedOnce = false;
+/** 是否已经收到过 shell 提示符；新终端的快捷命令必须等到此时才能注入。 */
+let shellReady = false;
 let resizeObserver: ResizeObserver | null = null;
 let detachInput: (() => void) | null = null;
 let idleTracker: PromptIdleTracker | null = null;
@@ -93,6 +96,17 @@ function spawnPty() {
       env,
     });
     ptySpawnedOnce = true;
+    shellReady = false;
+
+    idleTracker?.dispose();
+    idleTracker = createPromptIdleTracker((idle) => {
+      if (idle) shellReady = true;
+      // 新终端的首个提示符只用于放行待注入命令；pending 状态仍保持 busy，
+      // 避免极短窗口内再次点击时把第二条命令叠进同一个终端。
+      if (idle && pendingLocalWrite.value?.terminalId === props.sessionId)
+        return;
+      sessions.setLocalIdle(props.sessionId, idle);
+    });
 
     outputQueue = createTerminalOutputQueue((text) => {
       if (!term || disposed) return;
@@ -119,11 +133,10 @@ function spawnPty() {
       // 会话被 tauri-pty 内部吞错，命令静默丢失无任何反馈。
       // 置空后下次 tryFitAndSpawn 会重建新 shell。
       pty = null;
+      shellReady = false;
+      idleTracker?.dispose();
+      idleTracker = null;
       sessions.setLocalIdle(props.sessionId, false);
-    });
-
-    idleTracker = createPromptIdleTracker((idle) => {
-      sessions.setLocalIdle(props.sessionId, idle);
     });
 
     detachInput = attachTerminalInputBridge(term, writePty);
@@ -229,20 +242,20 @@ watch(
   pendingLocalWrite,
   async (job) => {
     if (!job || job.terminalId !== props.sessionId) return;
-    for (let i = 0; i < 40 && !pty; i += 1) {
-      // 曾成功启动但已退出（onExit 置空 pty）：不再空等 2s，
-      // 立即走失败提示分支，避免命令被静默吞掉。
-      if (ptySpawnedOnce) break;
-      await new Promise((r) => window.setTimeout(r, 50));
-      if (disposed || pendingLocalWrite.value?.seq !== job.seq) return;
-    }
-    if (disposed || pendingLocalWrite.value?.seq !== job.seq) return;
-    if (!pty) {
+    const readyResult = await waitForTerminalCommandReady({
+      hasPty: () => Boolean(pty),
+      hasSpawnedPty: () => ptySpawnedOnce,
+      isShellReady: () => shellReady,
+      isCancelled: () =>
+        disposed || pendingLocalWrite.value?.seq !== job.seq,
+    });
+    if (readyResult === "cancelled") return;
+    if (readyResult !== "ready" && readyResult !== "fallback") {
       // PTY 启动失败（非桌面环境 / 权限错误）或已退出：任务作废并消费，
       // 否则残留 store 永远无人消费（旧 terminalId 已无对应终端）
       if (!disposed) {
         term?.writeln(
-          ptySpawnedOnce
+          readyResult === "exited"
             ? "\r\n\x1b[31m终端进程已退出，命令未执行\x1b[0m"
             : "\r\n\x1b[31m终端尚未就绪，命令未执行\x1b[0m",
         );

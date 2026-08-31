@@ -44,6 +44,7 @@ import { relativeToRoot } from "@/shared/fs";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSettingsStore } from "@/stores/settings";
+import { useSearchStore } from "@/stores/search";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const props = defineProps<{
@@ -54,6 +55,7 @@ const props = defineProps<{
 const host = ref<HTMLDivElement | null>(null);
 const editorStore = useEditorStore();
 const settings = useSettingsStore();
+const searchStore = useSearchStore();
 const workspace = useWorkspaceStore();
 const git = useGitStore();
 const { theme, editor } = storeToRefs(settings);
@@ -98,9 +100,19 @@ const navHandlers = {
     void editorStore.openFileAt(path, line, column);
   },
   onGoBack: () => {
-    const target = editorStore.popJump();
+    const target = editorStore.takeJumpBack();
     if (!target) return false;
-    void editorStore.openFileAt(target.path, target.line, target.column);
+    void editorStore.openFileAt(target.path, target.line, target.column, {
+      recordHistory: false,
+    });
+    return true;
+  },
+  onGoForward: () => {
+    const target = editorStore.takeJumpForward();
+    if (!target) return false;
+    void editorStore.openFileAt(target.path, target.line, target.column, {
+      recordHistory: false,
+    });
     return true;
   },
   workspaceRoot: () => workspace.rootPath,
@@ -329,6 +341,7 @@ function buildExtensions(): Extension[] {  return [
       },
       onOpenFind: openFindPanel,
       onOpenReplace: openFindReplacePanel,
+      onOpenRecentFiles: () => searchStore.openQuickOpen(),
       onFormatDocument: () => {
         void editorStore.formatDocument();
       },

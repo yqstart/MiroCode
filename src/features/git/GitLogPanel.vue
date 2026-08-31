@@ -26,8 +26,13 @@ import { useSettingsStore } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useI18n } from "@/i18n";
 import { layoutGitGraph, type GraphRowLayout } from "@/features/git/gitGraph";
+import {
+  childCommitId,
+  parentCommitId,
+  preferredVisibleCommitId,
+} from "@/features/git/gitLogNavigation";
 
-type RowKind = "uncommitted" | "stash" | "commit";
+type RowKind = "stash" | "commit";
 
 interface GraphRow {
   kind: RowKind;
@@ -50,7 +55,6 @@ interface GraphRow {
 type CtxTarget =
   | { kind: "commit"; id: string }
   | { kind: "stash"; index: number }
-  | { kind: "uncommitted" }
   | { kind: "ref"; name: string; isRemote: boolean; isTag: boolean };
 
 const { t } = useI18n();
@@ -67,7 +71,11 @@ const {
   branches,
   tags,
 } = storeToRefs(git);
-const { selectedId, open: logOpen } = storeToRefs(gitLog);
+const {
+  selectedId,
+  open: logOpen,
+  isFocused: logFocused,
+} = storeToRefs(gitLog);
 
 const filter = ref("");
 const filterOpen = ref(false);
@@ -82,9 +90,11 @@ const selectedBranches = ref<string[]>([]);
 const branchMenuOpen = ref(false);
 const columnMenuOpen = ref(false);
 const ctx = ref<{ x: number; y: number; target: CtxTarget } | null>(null);
-/** 选中行：uncommitted | stash:N | commitOid */
+/** 选中行：stash:N | commitOid。未提交更改由 Commit 面板负责。 */
 const selectedKey = ref<string | null>(null);
+const rootRef = ref<HTMLElement | null>(null);
 const tbodyRef = ref<HTMLElement | null>(null);
+const initializing = ref(false);
 const compareBaseId = ref<string | null>(null);
 const compareIds = ref<string[]>([]);
 const comparisonFiles = ref<GitFileChange[]>([]);
@@ -196,22 +206,6 @@ const rows = computed<GraphRow[]>(() => {
   const q = filter.value.trim().toLowerCase();
   const out: GraphRow[] = [];
 
-  if (dirtyCount.value > 0) {
-    const row: GraphRow = {
-      kind: "uncommitted",
-      key: "uncommitted",
-      summary: t("gitLog.uncommitted", { count: dirtyCount.value }),
-      files: changelistEntries.value.map((entry) => entry.path),
-    };
-    if (
-      !q ||
-      row.summary.toLowerCase().includes(q) ||
-      row.files?.some((file) => file.toLowerCase().includes(q))
-    ) {
-      out.push(row);
-    }
-  }
-
   if (showStashes.value) {
     for (const stash of stashes.value) {
       const row: GraphRow = {
@@ -300,6 +294,21 @@ const rows = computed<GraphRow[]>(() => {
   );
 });
 
+function preferredVisibleRowKey(list: readonly GraphRow[]): string | null {
+  const preferred = preferredVisibleCommitId(
+    log.value,
+    list.flatMap((row) =>
+      row.kind === "commit" && row.id ? [row.id] : [],
+    ),
+    snapshot.value.head,
+  );
+  if (preferred) {
+    const match = list.find((row) => row.id === preferred);
+    if (match) return match.key;
+  }
+  return list[0]?.key ?? null;
+}
+
 const selectedRow = computed(
   () =>
     rows.value.find((row) => row.key === selectedKey.value) ??
@@ -370,26 +379,33 @@ async function ensureLog() {
   const root = workspace.rootPath;
   const generation = workspaceGeneration;
   const seq = ++loadSeq;
-  if (!snapshot.value.initialized) await git.refresh();
-  if (
-    !snapshot.value.initialized ||
-    seq !== loadSeq ||
-    workspace.rootPath !== root ||
-    workspaceGeneration !== generation
-  ) {
-    return;
+  if (!log.value.length) initializing.value = true;
+  try {
+    if (!snapshot.value.initialized) await git.refresh();
+    if (
+      !snapshot.value.initialized ||
+      seq !== loadSeq ||
+      workspace.rootPath !== root ||
+      workspaceGeneration !== generation
+    ) {
+      return;
+    }
+    // loadLog 不传 limit：沿用 store 权威 logLimit，避免 loadMore 到 240 条后
+    // 任意 ensureLog（刷新/checkout）把日志缩回硬编码的 120 条。
+    await Promise.all([git.loadLog(), git.refresh()]);
+    if (
+      seq !== loadSeq ||
+      workspace.rootPath !== root ||
+      workspaceGeneration !== generation
+    ) {
+      return;
+    }
+    if (!selectedKey.value) {
+      selectedKey.value = preferredVisibleRowKey(rows.value);
+    }
+  } finally {
+    if (seq === loadSeq) initializing.value = false;
   }
-  // loadLog 不传 limit：沿用 store 权威 logLimit，避免 loadMore 到 240 条后
-  // 任意 ensureLog（刷新/checkout）把日志缩回硬编码的 120 条。
-  await Promise.all([git.loadLog(), git.refresh()]);
-  if (
-    seq !== loadSeq ||
-    workspace.rootPath !== root ||
-    workspaceGeneration !== generation
-  ) {
-    return;
-  }
-  if (!selectedKey.value && rows.value[0]) selectedKey.value = rows.value[0].key;
 }
 
 async function loadMore() {
@@ -413,6 +429,7 @@ function selectRow(key: string) {
     compareBaseId.value = row.id;
   }
   ctx.value = null;
+  void nextTick(() => rootRef.value?.focus({ preventScroll: true }));
 }
 
 async function selectForComparison(id: string) {
@@ -493,12 +510,6 @@ function onCtx(event: MouseEvent, row: GraphRow) {
       x: event.clientX,
       y: event.clientY,
       target: { kind: "stash", index: row.stashIndex },
-    };
-  } else if (row.kind === "uncommitted") {
-    ctx.value = {
-      x: event.clientX,
-      y: event.clientY,
-      target: { kind: "uncommitted" },
     };
   }
 }
@@ -754,11 +765,6 @@ async function onPushTag(name: string) {
   await git.pushTag(name);
 }
 
-async function onOpenUncommittedDiff(path: string) {
-  await git.showDiff(path, false);
-  gitLog.blurLog();
-}
-
 function openCommitPanel() {
   ctx.value = null;
   settings.openCommitPanel();
@@ -779,25 +785,6 @@ async function onStashApply(index: number) {
 async function onStashDrop(index: number) {
   ctx.value = null;
   await git.stashDrop(index);
-  await ensureLog();
-}
-
-async function onDiscardAll() {
-  ctx.value = null;
-  if (!window.confirm(t("gitLog.discardAllConfirm"))) return;
-  await git.discardAll();
-  await ensureLog();
-}
-
-async function onResetHardUncommitted() {
-  ctx.value = null;
-  await git.resetHard();
-  await ensureLog();
-}
-
-async function onStashUncommitted() {
-  ctx.value = null;
-  await git.stash();
   await ensureLog();
 }
 
@@ -890,6 +877,31 @@ function moveSelection(delta: number) {
   scrollToRow(next.key);
 }
 
+function moveToRelatedCommit(direction: "parent" | "child") {
+  const current = selectedCommit.value?.id;
+  if (!current) return;
+  const target =
+    direction === "parent"
+      ? parentCommitId(log.value, current)
+      : childCommitId(log.value, current);
+  if (!target || !rows.value.some((row) => row.id === target)) return;
+  clearComparison();
+  selectRow(target);
+  scrollToRow(target);
+}
+
+function isTextInputTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.isContentEditable ||
+    ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
+  );
+}
+
+function focusLogRoot() {
+  rootRef.value?.focus({ preventScroll: true });
+}
+
 function onLogScroll(event: Event) {
   const element = event.currentTarget as HTMLElement;
   if (element.scrollTop + element.clientHeight >= element.scrollHeight - 80) {
@@ -918,6 +930,8 @@ function onKeydown(event: KeyboardEvent) {
     event.preventDefault();
     filterOpen.value = true;
     void nextTick(() => document.querySelector<HTMLInputElement>(".git-log-filter")?.focus());
+  } else if (isTextInputTarget(event.target)) {
+    return;
   } else if (mod && event.key.toLowerCase() === "r") {
     event.preventDefault();
     void ensureLog();
@@ -942,13 +956,19 @@ function onKeydown(event: KeyboardEvent) {
   } else if (event.key === "ArrowUp") {
     event.preventDefault();
     moveSelection(-1);
+  } else if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    moveToRelatedCommit("parent");
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    moveToRelatedCommit("child");
   }
 }
 
 onMounted(() => {
   document.addEventListener("mousedown", onDocMouseDown, true);
-  window.addEventListener("keydown", onKeydown);
   if (logOpen.value) void ensureLog();
+  if (logFocused.value) void nextTick(focusLogRoot);
 });
 
 onBeforeUnmount(() => {
@@ -956,7 +976,6 @@ onBeforeUnmount(() => {
   comparisonSeq += 1;
   sidesSeq += 1;
   document.removeEventListener("mousedown", onDocMouseDown, true);
-  window.removeEventListener("keydown", onKeydown);
 });
 
 watch(
@@ -974,13 +993,17 @@ watch(logOpen, (open) => {
   if (open) void ensureLog();
 });
 
+watch(logFocused, (focused) => {
+  if (focused) void nextTick(focusLogRoot);
+});
+
 watch(rows, (list) => {
   if (!list.length) {
     selectedKey.value = null;
     return;
   }
   if (!selectedKey.value || !list.some((row) => row.key === selectedKey.value)) {
-    selectedKey.value = list[0]!.key;
+    selectedKey.value = preferredVisibleRowKey(list);
   }
 });
 
@@ -992,7 +1015,13 @@ watch(selectedId, (id) => {
 </script>
 
 <template>
-  <div class="log-panel" @click="ctx = null">
+  <div
+    ref="rootRef"
+    class="log-panel"
+    tabindex="0"
+    @click="ctx = null"
+    @keydown="onKeydown"
+  >
     <div v-if="!snapshot.initialized" class="empty">{{ t("gitLog.notInit") }}</div>
     <template v-else>
       <div class="toolbar">
@@ -1029,6 +1058,14 @@ watch(selectedId, (id) => {
           <input v-model="showRemote" type="checkbox" />
           {{ t("gitLog.showRemote") }}
         </label>
+        <button
+          v-if="dirtyCount > 0"
+          type="button"
+          class="tool-button changes-button"
+          @click="openCommitPanel"
+        >
+          {{ t("gitLog.uncommitted", { count: dirtyCount }) }}
+        </button>
         <label class="check">
           <input v-model="showTags" type="checkbox" />
           {{ t("gitLog.showTags") }}
@@ -1090,7 +1127,7 @@ watch(selectedId, (id) => {
         </button>
       </div>
 
-      <div v-if="loading && !log.length" class="empty">{{ t("gitLog.loading") }}</div>
+      <div v-if="initializing && !log.length" class="empty">{{ t("gitLog.loading") }}</div>
       <div v-else-if="!rows.length" class="empty">{{ t("gitLog.empty") }}</div>
       <div v-else class="split">
         <div class="table-wrap">
@@ -1111,12 +1148,10 @@ watch(selectedId, (id) => {
               :class="{
                 active: selectedRow?.key === row.key,
                 comparing: compareIds.includes(row.id ?? ''),
-                uncommitted: row.kind === 'uncommitted',
                 stash: row.kind === 'stash',
               }"
               :title="rowTitle(row)"
               @click="onRowClick($event, row)"
-              @dblclick="row.kind === 'commit' && row.id ? onShowDiff(row.id) : undefined"
               @contextmenu="onCtx($event, row)"
             >
               <div class="col graph-c" aria-hidden="true">
@@ -1143,7 +1178,7 @@ watch(selectedId, (id) => {
                     r="4.5"
                   />
                 </svg>
-                <span v-else class="simple-node" :class="{ stash: row.kind === 'stash', dirty: row.kind === 'uncommitted' }" />
+                <span v-else class="simple-node stash" />
               </div>
               <div class="col desc-c">
                 <span
@@ -1194,7 +1229,6 @@ watch(selectedId, (id) => {
                 <span class="id">stash@{{ selectedRow.stashIndex }}</span>
                 <span :title="selectedRow.id">{{ shortHash(selectedRow.id) }}</span>
               </div>
-              <div v-else class="meta"><span>{{ t("gitLog.workspaceDirty") }}</span></div>
             </div>
             <div v-if="selectedRow.refs?.length" class="ref-row">
               <span
@@ -1225,7 +1259,7 @@ watch(selectedId, (id) => {
                 {{ parent.slice(0, 10) }}
               </button>
             </div>
-              <div v-if="selectedRow.kind === 'commit'" class="detail-actions">
+            <div v-if="selectedRow.kind === 'commit'" class="detail-actions">
               <button type="button" @click="selectedRow.id && onShowDiff(selectedRow.id)">
                 {{ t("gitLog.showDiff") }}
               </button>
@@ -1250,12 +1284,6 @@ watch(selectedId, (id) => {
           <div v-if="selectedRow.kind === 'stash' && compareIds.length !== 2" class="muted">
             {{ t("gitLog.stashHint") }}
           </div>
-            <div v-else-if="selectedRow.kind === 'uncommitted' && compareIds.length !== 2" class="detail-actions dirty-actions">
-              <button type="button" @click="openCommitPanel">{{ t("gitLog.openCommitPanel") }}</button>
-              <button type="button" @click="onStashUncommitted">{{ t("gitLog.stashChanges") }}</button>
-              <button type="button" class="danger" @click="onDiscardAll">{{ t("gitLog.discardChanges") }}</button>
-              <button type="button" class="danger" @click="onResetHardUncommitted">{{ t("git.resetHardLabel") }}</button>
-          </div>
           <div v-else-if="!detailChanges.length && !detailFiles(selectedRow).length" class="muted">
             {{ t("gitLog.noFiles") }}
           </div>
@@ -1278,7 +1306,7 @@ watch(selectedId, (id) => {
                 type="button"
                 class="file"
                 :title="change.path"
-                @click="compareIds.length === 2 ? onShowComparisonDiff(change.path) : selectedCommit?.id ? onShowDiff(selectedCommit.id, change.path) : onOpenUncommittedDiff(change.path)"
+                @click="compareIds.length === 2 ? onShowComparisonDiff(change.path) : selectedCommit?.id && onShowDiff(selectedCommit.id, change.path)"
               >
                 {{ change.path }}
               </button>
@@ -1292,7 +1320,7 @@ watch(selectedId, (id) => {
                 type="button"
                 class="file"
                 :title="file"
-                @click="onOpenUncommittedDiff(file)"
+                @click="selectedCommit?.id && onShowDiff(selectedCommit.id, file)"
               >
                 {{ file }}
               </button>
@@ -1338,16 +1366,10 @@ watch(selectedId, (id) => {
           <button v-if="ctx.target.isTag" type="button" @click="onPushTag(ctx.target.name)">{{ t("gitLog.pushTag") }}</button>
           <button type="button" class="danger" @click="onDeleteRef(ctx.target.name, ctx.target.isRemote, ctx.target.isTag)">{{ t("gitLog.deleteRef") }}</button>
         </template>
-        <template v-else-if="ctx.target.kind === 'stash'">
+        <template v-else>
           <button type="button" @click="onStashApply(ctx.target.index)">{{ t("gitLog.applyStash") }}</button>
           <button type="button" @click="onStashPop(ctx.target.index)">{{ t("gitLog.popStash") }}</button>
           <button type="button" class="danger" @click="onStashDrop(ctx.target.index)">{{ t("gitLog.dropStash") }}</button>
-        </template>
-        <template v-else>
-          <button type="button" @click="openCommitPanel">{{ t("gitLog.openCommitPanel") }}</button>
-          <button type="button" @click="onStashUncommitted">{{ t("gitLog.stashChanges") }}</button>
-          <button type="button" class="danger" @click="onDiscardAll">{{ t("gitLog.discardChanges") }}</button>
-          <button type="button" class="danger" @click="onResetHardUncommitted">{{ t("git.resetHardLabel") }}</button>
         </template>
       </div>
     </Teleport>
@@ -1362,6 +1384,12 @@ watch(selectedId, (id) => {
   height: 100%;
   min-height: 0;
   background: var(--bg-app);
+}
+.log-panel:focus {
+  outline: none;
+}
+.changes-button {
+  color: var(--warning);
 }
 .toolbar {
   display: flex;
@@ -1659,11 +1687,6 @@ watch(selectedId, (id) => {
   background: #a78bfa;
   box-shadow: 0 0 0 2px color-mix(in srgb, #a78bfa 24%, transparent);
 }
-.simple-node.dirty {
-  border-radius: 2px;
-  background: var(--warning);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 24%, transparent);
-}
 .desc-c {
   gap: 5px;
   overflow: hidden;
@@ -1943,9 +1966,6 @@ watch(selectedId, (id) => {
 .file-action:hover {
   background: var(--accent-soft);
   color: var(--accent);
-}
-.dirty-actions {
-  padding-top: 2px;
 }
 .ctx {
   position: fixed;

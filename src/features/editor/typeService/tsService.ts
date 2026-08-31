@@ -198,6 +198,7 @@ export class TsLanguageService {
         target: tsMod.ScriptTarget.ES2022,
         module: tsMod.ModuleKind.ESNext,
         moduleResolution: tsMod.ModuleResolutionKind.Bundler,
+        paths: { "@/*": ["src/*"] },
         lib: ["lib.es2022.d.ts", "lib.dom.d.ts"],
         allowSyntheticDefaultImports: true,
         esModuleInterop: true,

@@ -44,6 +44,7 @@ saveEditorSession(root, {
     },
   ],
   activePath: file,
+  recentPaths: [file, "/workspace/demo/src/closed.ts"],
 });
 
 const loaded = loadEditorSession(root);
@@ -52,6 +53,11 @@ assert("恢复活动文件", loaded?.activePath === file, loaded);
 assert("恢复光标和固定状态", loaded?.tabs[0]?.cursor.line === 12 && loaded.tabs[0].pinned === true, loaded);
 assert("恢复未保存快照", loaded?.tabs[0]?.dirty === true && loaded.tabs[0].content === "const value = 2", loaded);
 assert("过滤工作区外路径", loadEditorSession(root)!.tabs.every((tab) => tab.path.startsWith(root)), loaded);
+assert(
+  "恢复最近文件（含已关闭文件）",
+  loaded?.recentPaths?.[1] === "/workspace/demo/src/closed.ts",
+  loaded,
+);
 
-console.log(`\n通过 ${4 - failed}，失败 ${failed}`);
+console.log(`\n通过 ${6 - failed}，失败 ${failed}`);
 if (failed > 0) process.exit(1);

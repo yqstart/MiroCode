@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
+import { defineAsyncComponent, onMounted, onUnmounted } from "vue";
 import { storeToRefs } from "pinia";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import ActivityBar from "@/app/ActivityBar.vue";
 import SideBar from "@/app/SideBar.vue";
@@ -10,7 +11,6 @@ import EditorArea from "@/app/EditorArea.vue";
 import StatusBar from "@/app/StatusBar.vue";
 import FindInFilesDialog from "@/features/search/FindInFilesDialog.vue";
 import QuickOpen from "@/features/search/QuickOpen.vue";
-import TerminalPanel from "@/features/sessions/TerminalPanel.vue";
 import SettingsModal from "@/features/settings/SettingsModal.vue";
 import ChoiceDialog from "@/shared/ChoiceDialog.vue";
 import GitAuthDialog from "@/shared/GitAuthDialog.vue";
@@ -23,8 +23,9 @@ import UpdateNotesDialog from "@/shared/UpdateNotesDialog.vue";
 import PushDialog from "@/features/git/PushDialog.vue";
 import UpdateProjectDialog from "@/features/git/UpdateProjectDialog.vue";
 import InteractiveRebaseDialog from "@/features/git/InteractiveRebaseDialog.vue";
-import { basename } from "@/shared/fs";
+import { basename, dirname, isPathUnder } from "@/shared/fs";
 import { dispatchDockMenuEvent, type DockMenuEvent } from "@/shared/dockMenu";
+import type { ExternalOpenRequest, ExternalOpenTarget } from "@/shared/externalOpen";
 import { setupAutoSave } from "@/features/editor/autoSave";
 import { checkForAppUpdate } from "@/shared/appUpdate";
 import { isMacOS } from "@/shared/platform";
@@ -47,6 +48,11 @@ import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { t } from "@/i18n";
 
+/** 终端及 xterm 不属于首屏；首次真正挂载终端面板时再加载。 */
+const TerminalPanel = defineAsyncComponent(
+  () => import("@/features/sessions/TerminalPanel.vue"),
+);
+
 /** macOS 标题栏已挂更新入口；其它平台用右上角浮动徽章 */
 const showFloatingUpdateBadge = !isMacOS();
 const windowSessionId = getWindowSessionId();
@@ -64,8 +70,12 @@ const { settingsOpen } = storeToRefs(ui);
 let unlistenMenu: (() => void) | undefined;
 let unlistenDockMenu: (() => void) | undefined;
 let unlistenAppExit: (() => void) | undefined;
+let unlistenExternalOpen: (() => void) | undefined;
 let teardownAutoSave: (() => void) | undefined;
 let appQuitting = false;
+let externalOpenAccepting = false;
+let externalOpenBacklog: ExternalOpenRequest[] = [];
+let externalOpenQueue = Promise.resolve();
 /** 菜单加速键与 window keydown 可能各触发一次，合并为单次切换 */
 let lastTerminalToggleAt = 0;
 let lastSidebarToggleAt = 0;
@@ -150,7 +160,7 @@ function onKeydown(event: KeyboardEvent) {
     ui.toggleSettings();
     return;
   }
-  if (mod && event.key.toLowerCase() === "o") {
+  if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "o") {
     event.preventDefault();
     void workspace.openFolder();
     return;
@@ -158,6 +168,31 @@ function onKeydown(event: KeyboardEvent) {
   if (mod && event.key.toLowerCase() === "s") {
     event.preventDefault();
     void editor.saveActive();
+    return;
+  }
+  // WebStorm：Recent Files（⌘/Ctrl+E）。Quick Open 的空查询即最近文件。
+  if (
+    mod &&
+    !event.shiftKey &&
+    !event.altKey &&
+    event.key.toLowerCase() === "e" &&
+    !search.quickOpenVisible &&
+    (isEditorTarget(event.target) || !isEditableTarget(event.target))
+  ) {
+    event.preventDefault();
+    search.openQuickOpen();
+    return;
+  }
+  // WebStorm Go to File：macOS ⌘⇧O；Windows/Linux Ctrl+Shift+N。
+  if (
+    mod &&
+    event.shiftKey &&
+    !event.altKey &&
+    ((isMacOS() && event.key.toLowerCase() === "o") ||
+      (!isMacOS() && event.key.toLowerCase() === "n"))
+  ) {
+    event.preventDefault();
+    search.openQuickOpen();
     return;
   }
   if (mod && event.key.toLowerCase() === "p") {
@@ -187,6 +222,11 @@ function onKeydown(event: KeyboardEvent) {
     return;
   }
   if (mod && event.key.toLowerCase() === "b") {
+    // 编辑器内 ⌘/Ctrl+B 由 CodeMirror 执行「跳转到声明」；其它区域仍折叠侧栏。
+    if (isEditorTarget(event.target)) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     toggleSidebar();
     return;
@@ -197,8 +237,8 @@ function onKeydown(event: KeyboardEvent) {
     void locateActiveInExplorer();
     return;
   }
-  // 以下为文本编辑强相关的快捷键，需避开输入框 / xterm / 查找面板 / 资源树过滤 / QuickOpen
-  if (isEditableTarget(event.target)) return;
+  // 工作台快捷键在 CodeMirror 内仍应生效；只避开普通输入框、xterm、查找面板等。
+  if (isEditableTarget(event.target) && !isEditorTarget(event.target)) return;
   // ⌘W：关闭当前标签
   if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "w") {
     event.preventDefault();
@@ -274,6 +314,89 @@ function onBeforeUnload() {
 function onAppWillExit() {
   appQuitting = true;
   persistWindowState();
+}
+
+function parentDirectory(path: string): string {
+  const parent = dirname(path);
+  // shared dirname 保留了根目录文件的原样路径；外部打开时需要真正的 `/`。
+  if (parent === path && path.startsWith("/")) return "/";
+  return parent;
+}
+
+function validExternalTarget(target: ExternalOpenTarget): boolean {
+  return Boolean(
+    target &&
+      typeof target.path === "string" &&
+      target.path.trim() &&
+      typeof target.isDir === "boolean",
+  );
+}
+
+async function openExternalTargets(targets: ExternalOpenTarget[]) {
+  for (const target of targets) {
+    if (!validExternalTarget(target)) continue;
+    const path = target.path.trim();
+    try {
+      if (target.isDir) {
+        await workspace.openFolder(path);
+        continue;
+      }
+
+      // 文件必须属于当前工作区才能通过现有受限 FS IPC 打开；外部文件先
+      // 以其父目录建立工作区，再复用普通编辑器打开/定位链路。
+      if (!workspace.rootPath || !isPathUnder(workspace.rootPath, path)) {
+        const opened = await workspace.openFolder(parentDirectory(path), {
+          quiet: true,
+        });
+        if (!opened) continue;
+      }
+
+      const line =
+        typeof target.line === "number" && Number.isFinite(target.line)
+          ? Math.max(1, Math.floor(target.line))
+          : null;
+      const column =
+        typeof target.column === "number" && Number.isFinite(target.column)
+          ? Math.max(1, Math.floor(target.column))
+          : 1;
+      if (line !== null) {
+        await editor.openFileAt(path, line, column);
+      } else {
+        await editor.openFile(path);
+      }
+    } catch (error) {
+      workspace.showNotice(
+        error instanceof Error ? error.message : String(error),
+        3200,
+      );
+    }
+  }
+}
+
+function queueExternalOpenRequest(request: ExternalOpenRequest) {
+  if (!request?.targets?.length) return;
+  if (!externalOpenAccepting) {
+    externalOpenBacklog.push(request);
+    return;
+  }
+  externalOpenQueue = externalOpenQueue.then(() => openExternalTargets(request.targets));
+}
+
+/** 先注册监听，再取 Rust 端的冷启动队列，避免 Launch Services 事件丢失。 */
+async function setupExternalOpenBridge() {
+  if (!isPrimaryWindow) return;
+  try {
+    unlistenExternalOpen = await listen<ExternalOpenRequest>(
+      "app://open-external",
+      (event) => queueExternalOpenRequest(event.payload),
+    );
+    const pending = await invoke<ExternalOpenRequest[]>(
+      "take_pending_external_opens",
+    );
+    if (Array.isArray(pending)) externalOpenBacklog.push(...pending);
+  } catch {
+    // 纯 Vite 预览时无 Tauri runtime；桌面运行时由 Rust 命令提供队列。
+  }
 }
 
 function openRecentProjectInNewWindow(path: string) {
@@ -370,8 +493,16 @@ onMounted(async () => {
     }
   }
 
+  await setupExternalOpenBridge();
   const { folder: bootFolder } = readBootState();
   await restoreApplicationWindows(bootFolder);
+
+  if (isPrimaryWindow) {
+    externalOpenAccepting = true;
+    const backlog = externalOpenBacklog;
+    externalOpenBacklog = [];
+    for (const request of backlog) queueExternalOpenRequest(request);
+  }
 
   if (settings.settings.autoCheckUpdates) {
     window.setTimeout(() => {
@@ -396,6 +527,9 @@ onUnmounted(() => {
   unlistenMenu?.();
   unlistenDockMenu?.();
   unlistenAppExit?.();
+  externalOpenAccepting = false;
+  externalOpenBacklog = [];
+  unlistenExternalOpen?.();
 });
 </script>
 

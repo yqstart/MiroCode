@@ -4,6 +4,7 @@
 import { formatWithBuiltin } from "../src/features/editor/formatting/prettierRuntime.ts";
 import { formatBuiltinRangeFallback } from "../src/features/editor/formatting/rangeFallback.ts";
 import { singleTextChange } from "../src/features/editor/formatting/textChange.ts";
+import { prettierConfigSearchDirs } from "../src/features/editor/formatting/prettierConfigPath.ts";
 
 let failed = 0;
 let passed = 0;
@@ -92,6 +93,16 @@ assert("无效语法抛错且不产生修改", invalidRejected);
 assert(
   "空范围不产生 change",
   singleTextChange("same", "same", { from: 0, to: 4 }) === null,
+);
+assert(
+  "嵌套文件从最近目录向工作区根查找 Prettier 配置",
+  JSON.stringify(prettierConfigSearchDirs("/repo", "/repo/packages/app/src/main.ts")) ===
+    JSON.stringify(["packages/app/src", "packages/app", "packages", "."]),
+);
+assert(
+  "工作区外文件不会越界查找配置",
+  JSON.stringify(prettierConfigSearchDirs("/repo", "/other/main.ts")) ===
+    JSON.stringify(["."]),
 );
 
 console.log(`\n通过 ${passed}，失败 ${failed}`);

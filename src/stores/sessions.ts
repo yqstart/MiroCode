@@ -30,8 +30,13 @@ export const useSessionsStore = defineStore("sessions", () => {
   /**
    * 快捷键收起后面板仍保活：视图保持挂载、PTY 不销毁，
    * 与关闭全部终端（卸载并结束进程）区分。
-   */
+  */
   const dormant = ref(false);
+  /**
+   * 本次运行中是否已经真正挂载过终端视图。磁盘快照里的 dormant 只表示
+   * 上次退出前收起了面板，PTY 不可能跨进程保活，不应因此在开项目时加载 xterm。
+   */
+  const viewHydrated = ref(false);
   const localTerminals = ref<LocalTerminalSession[]>([]);
   const activeLocalId = ref<string | null>(null);
   /**
@@ -53,8 +58,10 @@ export const useSessionsStore = defineStore("sessions", () => {
   let suppressPersist = false;
 
   const isFocused = computed(() => open.value && focused.value);
-  /** 是否应挂载终端面板（显示中或收起保活） */
-  const mounted = computed(() => open.value || dormant.value);
+  /** 是否应挂载终端面板（本次运行已创建，且正在显示或收起保活） */
+  const mounted = computed(
+    () => viewHydrated.value && (open.value || dormant.value),
+  );
   const hasAnySession = computed(() => localTerminals.value.length > 0);
 
   /** 立即保存当前窗口、当前工作区的终端标签快照。PTY 进程不会跨退出保留。 */
@@ -103,6 +110,8 @@ export const useSessionsStore = defineStore("sessions", () => {
     activeLocalId.value = saved.activeLocalId;
     open.value = saved.open;
     dormant.value = saved.dormant && !saved.open;
+    // 只有退出前仍展开的面板需要随项目恢复；收起快照延迟到用户再次展开。
+    viewHydrated.value = saved.open;
     focused.value = saved.open;
     localIdle.value = {};
     pendingLocalWrite.value = null;
@@ -136,6 +145,7 @@ export const useSessionsStore = defineStore("sessions", () => {
 
   function openSessions(cwd: string | null = null) {
     const restoring = dormant.value;
+    viewHydrated.value = true;
     dormant.value = false;
     open.value = true;
     focused.value = true;
@@ -192,6 +202,7 @@ export const useSessionsStore = defineStore("sessions", () => {
       open.value = false;
       focused.value = false;
       dormant.value = false;
+      viewHydrated.value = false;
       // 等 Vue 卸载 LocalTerminal，确保 PTY kill 已经发出后再返回。
       await nextTick();
     } finally {
@@ -266,6 +277,7 @@ export const useSessionsStore = defineStore("sessions", () => {
     // 旧终端全部销毁，其待注入命令作废
     pendingLocalWrite.value = null;
     dormant.value = false;
+    viewHydrated.value = false;
 
     // 先卸载旧工作区的终端，再创建新 cwd 的终端，避免切换项目时短暂
     // 同时保留两组 PTY 读/等待任务。
@@ -277,6 +289,7 @@ export const useSessionsStore = defineStore("sessions", () => {
         restoreSavedSession(saved);
       } else if (keepUiOpen || wasDormant || hadLocal) {
         ensureDefaultLocal(cwd);
+        viewHydrated.value = keepUiOpen;
         if (wasDormant && !keepUiOpen) {
           dormant.value = true;
         }

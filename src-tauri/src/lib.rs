@@ -2,9 +2,15 @@ use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     AppHandle, Emitter, Manager, RunEvent, Runtime, State,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    ffi::OsString,
+    path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 pub mod commands;
+pub mod cli;
+pub mod external_open;
 
 #[derive(Default)]
 struct AppLifecycleState {
@@ -215,7 +221,48 @@ use commands::dock_menu::DockStatePayload;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let action = cli::parse_args(std::env::args_os().skip(1), &cwd);
+    let initial_targets = match action {
+        Ok(cli::CliAction::Run(targets)) => targets,
+        Ok(cli::CliAction::Help) => {
+            println!("{}", cli::help_text());
+            return;
+        }
+        Ok(cli::CliAction::Version) => {
+            println!("Miro Code {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        Err(error) => {
+            eprintln!("mirocode: {error}");
+            std::process::exit(2);
+        }
+    };
+
+    let mut builder = tauri::Builder::default();
+
+    // 必须最先注册：CLI 第二次调用由插件转发给现有实例，避免重复创建 GUI。
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let invocation_cwd = if cwd.trim().is_empty() {
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            } else {
+                PathBuf::from(cwd)
+            };
+            let args = argv.into_iter().skip(1).map(OsString::from);
+            match cli::parse_args(args, &invocation_cwd) {
+                Ok(cli::CliAction::Run(targets)) => {
+                    external_open::enqueue_targets(app, targets);
+                    external_open::focus_primary_window(app);
+                }
+                Ok(cli::CliAction::Help | cli::CliAction::Version) => {}
+                Err(error) => eprintln!("mirocode: {error}"),
+            }
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -239,6 +286,9 @@ pub fn run() {
                 .build(),
         )
         .manage(AppLifecycleState::default())
+        .manage(external_open::ExternalOpenState::with_pending(
+            initial_targets,
+        ))
         .manage(commands::ssh::SshState::default())
         .setup(|app| {
             let handle = app.handle();
@@ -287,6 +337,7 @@ pub fn run() {
             set_app_menu_locale,
             is_app_quitting,
             set_dock_menu,
+            external_open::take_pending_external_opens,
             commands::fs::list_dir,
             commands::fs::read_text_file,
             commands::fs::read_file_base64,
@@ -381,6 +432,16 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Opened { urls } = &event {
+                let targets = external_open::targets_from_urls(urls.clone());
+                if !targets.is_empty() {
+                    external_open::enqueue_targets(app, targets);
+                    external_open::focus_primary_window(app);
+                }
+                return;
+            }
+
             // 让所有 WebView 在应用整体退出前先保存各自的窗口、编辑器和终端
             // 快照；单独关闭某个窗口不会收到这条应用级通知，因此仍会被移出
             // 前端窗口索引。

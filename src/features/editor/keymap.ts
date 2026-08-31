@@ -15,21 +15,26 @@ import {
 } from "@codemirror/view";
 import {
   goBackKeymap,
+  goForwardKeymap,
   goToDefinitionKeymap,
   type NavigationHandlers,
 } from "@/features/editor/navigation";
 
 /** 编辑器应用层快捷键的唯一键名来源。CodeMirror 会在注册时规范化大小写。 */
 export const EDITOR_KEYS = {
-  goToDefinition: "Mod-Enter",
+  goToDefinition: "Mod-b",
+  goToDefinitionLegacy: "Mod-Enter",
   goToDefinitionF12: "F12",
   goBack: "Mod-[",
+  goForward: "Mod-]",
+  recentFiles: "Mod-e",
   rename: "F2",
   references: "Shift-F12",
   openFind: "Mod-f",
   openReplaceMac: "Mod-Alt-f",
   openReplace: "Mod-h",
   formatDocument: "Shift-Alt-f",
+  reformatCode: "Mod-Alt-l",
   formatSelection: "Mod-k Mod-f",
   nextDiagnostic: "F8",
   previousDiagnostic: "Shift-F8",
@@ -56,7 +61,7 @@ export const EDITOR_SHORTCUTS: EditorShortcutDescriptor[] = [
   {
     id: "goToDefinition",
     key: EDITOR_KEYS.goToDefinition,
-    strokes: [["mod", "Enter"]],
+    strokes: [["mod", "B"]],
     labelKey: "settings.shortcutGoToDef",
   },
   {
@@ -72,6 +77,18 @@ export const EDITOR_SHORTCUTS: EditorShortcutDescriptor[] = [
     labelKey: "settings.shortcutGoBack",
   },
   {
+    id: "goForward",
+    key: EDITOR_KEYS.goForward,
+    strokes: [["mod", "]"]],
+    labelKey: "settings.shortcutGoForward",
+  },
+  {
+    id: "recentFiles",
+    key: EDITOR_KEYS.recentFiles,
+    strokes: [["mod", "E"]],
+    labelKey: "settings.shortcutRecentFiles",
+  },
+  {
     id: "rename",
     key: EDITOR_KEYS.rename,
     strokes: [["F2"]],
@@ -85,8 +102,8 @@ export const EDITOR_SHORTCUTS: EditorShortcutDescriptor[] = [
   },
   {
     id: "formatDocument",
-    key: EDITOR_KEYS.formatDocument,
-    strokes: [["shift", "alt", "F"]],
+    key: EDITOR_KEYS.reformatCode,
+    strokes: [["mod", "alt", "L"]],
     labelKey: "settings.shortcutFormat",
   },
   {
@@ -181,9 +198,22 @@ export interface EditorKeymapHandlers {
   onReferences: (view: EditorView) => void;
   onOpenFind: (view: EditorView) => void;
   onOpenReplace: (view: EditorView) => void;
+  onOpenRecentFiles: () => void;
   onFormatDocument: () => void;
   onFormatSelection: (view: EditorView) => void;
   onEmmet: (view: EditorView) => boolean;
+}
+
+/** macOS Option+L 的 event.key 会变成 `¬`，必须用物理键码识别 WebStorm 格式化键。 */
+export function isReformatPhysicalKey(
+  event: Pick<KeyboardEvent, "metaKey" | "ctrlKey" | "altKey" | "shiftKey" | "code">,
+): boolean {
+  return (
+    (event.metaKey || event.ctrlKey) &&
+    event.altKey &&
+    !event.shiftKey &&
+    event.code === "KeyL"
+  );
 }
 
 /**
@@ -191,9 +221,25 @@ export interface EditorKeymapHandlers {
  * 应用层命令必须通过 Prec.highest 注册，避免被 defaultKeymap 中同键的原生命令抢先消费。
  */
 export function createEditorKeymap(handlers: EditorKeymapHandlers): Extension {
+  const runReformat = (view: EditorView): boolean => {
+    if (view.state.selection.ranges.length === 1 && !view.state.selection.main.empty) {
+      handlers.onFormatSelection(view);
+    } else {
+      handlers.onFormatDocument();
+    }
+    return true;
+  };
   const appBindings: KeyBinding[] = [
     ...goToDefinitionKeymap(handlers.navigation),
     goBackKeymap(handlers.navigation),
+    goForwardKeymap(handlers.navigation),
+    {
+      key: EDITOR_KEYS.recentFiles,
+      run: () => {
+        handlers.onOpenRecentFiles();
+        return true;
+      },
+    },
     {
       key: EDITOR_KEYS.rename,
       run: (view) => {
@@ -228,6 +274,10 @@ export function createEditorKeymap(handlers: EditorKeymapHandlers): Extension {
         handlers.onOpenReplace(view);
         return true;
       },
+    },
+    {
+      key: EDITOR_KEYS.reformatCode,
+      run: runReformat,
     },
     {
       key: EDITOR_KEYS.formatDocument,
@@ -266,6 +316,13 @@ export function createEditorKeymap(handlers: EditorKeymapHandlers): Extension {
   ];
 
   return [
+    Prec.highest(
+      EditorView.domEventHandlers({
+        keydown(event, view) {
+          return isReformatPhysicalKey(event) ? runReformat(view) : false;
+        },
+      }),
+    ),
     Prec.highest(keymap.of(appBindings)),
     keymap.of(nativeBindings),
   ];
