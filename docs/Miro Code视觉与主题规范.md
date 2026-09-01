@@ -185,12 +185,13 @@ Midnight / Cyberpunk 各自维护完整 `HighlightStyle`（青蓝 / 霓虹粉青
 
 ## 5. 字体与字号
 
-字体栈（`tokens.css` `--font-ui / --font-mono`）：
+基础字体栈（`tokens.css` `--font-ui / --font-mono`）；编辑器代码区另有可持久化的字体预设：
 
 | 用途 | 建议 |
 |---|---|
 | UI 字体 | `ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Segoe UI", sans-serif` |
 | 代码字体 | `ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "PingFang SC", monospace` |
+| 编辑器字体预设 | 系统等宽 / JetBrains Mono / 更纱等宽黑体 SC / Cascadia Code；未安装时自动回退 |
 
 字号 / 行高 token（`tokens.css`）—— 替代散落硬编码，组件内可逐步替换：
 
@@ -211,6 +212,7 @@ Midnight / Cyberpunk 各自维护完整 `HighlightStyle`（青蓝 / 霓虹粉青
 | 分区标题 | 14–15 / Medium | `--font-size-lg` |
 | 正文 / 控件 | 13 | `--font-size-md` |
 | 辅助说明 | 12 / secondary | `--font-size-sm` |
+| 编辑器默认字体 | 系统等宽（可配置，`fontFamily`） | 由用户设置 |
 | 编辑器默认字号 | 13（可配置，`fontSize`） | 由用户设置 |
 
 ---
@@ -259,7 +261,7 @@ Midnight / Cyberpunk 各自维护完整 `HighlightStyle`（青蓝 / 霓虹粉青
 
 ### 7.1 设置弹层信息架构（左导航 4 区）
 
-- **编辑器**：外观主题（四宫格）/ 布局（字号、Tab 2/4、自动换行、行号）/ 文件保存（自动保存开关 + 延迟）/ Tooling（Prettier、移动文件时更新 import）/ 语言（中文 / English）/ 补全提示
+- **编辑器**：外观主题（四宫格）/ 布局（字体、字号、Tab 2/4、自动换行、行号）/ 文件保存（自动保存开关 + 延迟）/ Tooling（Prettier、移动文件时更新 import）/ 语言（中文 / English）/ 补全提示
 - **快捷键**：快捷键对照表
 - **系统**：关于 / 启动时自动检查更新 / 检查更新 / License
 

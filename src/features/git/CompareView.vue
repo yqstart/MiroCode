@@ -11,6 +11,7 @@ import {
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { storeToRefs } from "pinia";
+import { getEditorFontFamily } from "@/features/editor/fonts";
 import { languageExtensionForPath } from "@/features/editor/languages";
 import { editorThemeExtensions } from "@/features/editor/theme";
 import { joinPath, writeTextFile } from "@/shared/fs";
@@ -32,6 +33,7 @@ const git = useGitStore();
 const workspace = useWorkspaceStore();
 const settings = useSettingsStore();
 const { theme } = storeToRefs(settings);
+const editorFontFamily = computed(() => getEditorFontFamily(settings.editor.fontFamily));
 
 const tab = computed(() => compare.tabs.find((t) => t.id === props.tabId) ?? null);
 
@@ -78,7 +80,7 @@ const mergeLayoutTheme = Prec.highest(
       backgroundColor: "var(--bg-editor)",
     },
     ".cm-scroller": {
-      fontFamily: "var(--font-mono)",
+      fontFamily: "var(--miro-editor-font-family, var(--font-mono))",
       lineHeight: "1.55",
     },
     ".cm-content": {
@@ -417,7 +419,11 @@ watch(theme, () => {
         <span class="hint">{{ t("compare.readonlyHint") }}</span>
       </div>
     </header>
-    <div ref="host" class="merge-host" />
+    <div
+      ref="host"
+      class="merge-host"
+      :style="{ '--miro-editor-font-family': editorFontFamily }"
+    />
   </div>
 </template>
 

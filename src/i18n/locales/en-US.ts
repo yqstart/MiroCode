@@ -115,6 +115,13 @@ export const enUS = {
     aboutSubtitle: "About Miro Code",
     appearance: "Color Theme",
     layout: "Typography & Layout",
+    fontFamily: "Editor Font",
+    fontFamilyDesc:
+      "Fonts that are not installed will fall back automatically; Sarasa Mono SC is a good fit for mixed Chinese and English code.",
+    fontSystem: "System Mono (SF Mono / Menlo)",
+    fontJetBrains: "JetBrains Mono",
+    fontSarasa: "Sarasa Mono SC",
+    fontCascadia: "Cascadia Code",
     fontSize: "Font Size",
     tabSize: "Tab Size",
     wordWrap: "Word Wrap",

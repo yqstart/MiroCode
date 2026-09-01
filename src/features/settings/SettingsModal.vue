@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { Check, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
+import { EDITOR_FONT_OPTIONS } from "@/features/editor/fonts";
 import { EDITOR_SHORTCUTS } from "@/features/editor/keymap";
 import { THEME_LABELS } from "@/features/editor/theme";
 import { checkForAppUpdate, getAppVersion } from "@/shared/appUpdate";
@@ -10,6 +11,7 @@ import { formatShortcut, isMacOS } from "@/shared/platform";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { isEditorFontId } from "@/shared/types";
 import type { ThemeId, ThemeMeta } from "@/shared/types";
 import { useI18n } from "@/i18n";
 
@@ -18,6 +20,7 @@ const settings = useSettingsStore();
 const ui = useUiStore();
 const workspace = useWorkspaceStore();
 const { theme, editor, locale } = storeToRefs(settings);
+const editorFonts = EDITOR_FONT_OPTIONS;
 
 type NavId = "editor" | "shortcuts" | "system";
 
@@ -89,6 +92,12 @@ const activeNavLabel = computed(
 
 function selectTheme(id: ThemeId) {
   settings.setTheme(id);
+}
+
+function selectEditorFont(value: string) {
+  if (isEditorFontId(value)) {
+    settings.patchEditor({ fontFamily: value });
+  }
 }
 
 function onOverlayClick(event: MouseEvent) {
@@ -183,6 +192,19 @@ function onOverlayClick(event: MouseEvent) {
             <div class="ui-card section">
               <h3>{{ t("settings.layout") }}</h3>
               <div class="form-grid">
+                <label class="field full">
+                  <span class="field-label">{{ t("settings.fontFamily") }}</span>
+                  <select
+                    class="ui-select"
+                    :value="editor.fontFamily"
+                    @change="selectEditorFont(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="font in editorFonts" :key="font.id" :value="font.id">
+                      {{ t(font.labelKey) }}
+                    </option>
+                  </select>
+                  <p class="desc">{{ t("settings.fontFamilyDesc") }}</p>
+                </label>
                 <label class="field">
                   <span class="field-label">{{ t("settings.fontSize") }}</span>
                   <input

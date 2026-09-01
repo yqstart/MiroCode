@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   closeBrackets,
 } from "@codemirror/autocomplete";
@@ -27,7 +27,13 @@ import { storeToRefs } from "pinia";
 import { createCompletionExtension } from "@/features/editor/completions";
 import { expandEmmetAt, matchEmmetAbbreviation } from "@/features/editor/completion/emmet";
 import { createDiagnosticsExtension } from "@/features/editor/diagnostics";
+import { getEditorFontFamily } from "@/features/editor/fonts";
 import { createEditorKeymap } from "@/features/editor/keymap";
+import {
+  createJumpHighlightTarget,
+  jumpHighlightExtension,
+  setJumpHighlightEffect,
+} from "@/features/editor/jumpHighlight";
 import { languageExtensionForPath } from "@/features/editor/languages";
 import { createNavigationExtension } from "@/features/editor/navigation";
 import { editorThemeExtensions } from "@/features/editor/theme";
@@ -61,6 +67,7 @@ const git = useGitStore();
 const { theme, editor } = storeToRefs(settings);
 const { openAt, findRequest, blameVisible } = storeToRefs(editorStore);
 const { snapshot: gitSnapshot } = storeToRefs(git);
+const editorFontFamily = computed(() => getEditorFontFamily(editor.value.fontFamily));
 
 let view: EditorView | null = null;
 const themeComp = new Compartment();
@@ -70,6 +77,8 @@ const gitComp = new Compartment();
 let applyingExternal = false;
 let resizeObserver: ResizeObserver | null = null;
 let measureRaf: number | null = null;
+let jumpHighlightTimer: ReturnType<typeof setTimeout> | null = null;
+const JUMP_HIGHLIGHT_DURATION = 1800;
 
 /**
  * 编辑器可能在 Transition、底部终端面板或窗口恢复尚未完成布局时创建。
@@ -171,12 +180,21 @@ function scrollTo(line: number, column: number) {
   const lineObj = view.state.doc.line(clampedLine);
   const col = Math.max(1, column);
   const pos = lineObj.from + Math.min(col - 1, lineObj.length);
+  const highlightTarget = createJumpHighlightTarget(view.state.doc, pos);
   view.dispatch({
     selection: { anchor: pos },
-    effects: EditorView.scrollIntoView(pos, { y: "center" }),
+    effects: [
+      EditorView.scrollIntoView(pos, { y: "center" }),
+      setJumpHighlightEffect.of(highlightTarget),
+    ],
   });
   view.focus();
   emitCursor(view);
+  if (jumpHighlightTimer !== null) clearTimeout(jumpHighlightTimer);
+  jumpHighlightTimer = setTimeout(() => {
+    jumpHighlightTimer = null;
+    if (view) view.dispatch({ effects: setJumpHighlightEffect.of(null) });
+  }, JUMP_HIGHLIGHT_DURATION);
 }
 
 /** 字体大小调节：10-24；wheel deltaY 归一化到「格」浮点累积（一格≈100px），
@@ -305,6 +323,7 @@ function buildExtensions(): Extension[] {  return [
     rectangularSelection(),
     crosshairCursor(),
     highlightActiveLine(),
+    jumpHighlightExtension,
     highlightSelectionMatches(),
     // VS Code 风格查找面板：自研 MiroFindPanel（右上角悬浮、查找/替换两行、
     // 上下箭头、Aa/.*/Ab 切换、结果计数、⌘F/⌘H/⌘G/Esc/F3 等快捷键）。
@@ -403,6 +422,11 @@ function loadLanguage(path: string): void {
 
 function switchDocument(path: string, content: string): void {
   if (!view) return;
+  if (jumpHighlightTimer !== null) {
+    clearTimeout(jumpHighlightTimer);
+    jumpHighlightTimer = null;
+  }
+  view.dispatch({ effects: setJumpHighlightEffect.of(null) });
   // 1. 保存当前标签状态（撤销历史/折叠/选区）与滚动位置
   if (currentPath) {
     stateCache.set(currentPath, {
@@ -497,6 +521,10 @@ onBeforeUnmount(() => {
   if (cursorRaf !== null) {
     cancelAnimationFrame(cursorRaf);
     cursorRaf = null;
+  }
+  if (jumpHighlightTimer !== null) {
+    clearTimeout(jumpHighlightTimer);
+    jumpHighlightTimer = null;
   }
   view?.destroy();
   view = null;
@@ -616,7 +644,11 @@ defineExpose({ scrollTo });
 
 <template>
   <div class="editor-shell">
-    <div ref="host" class="cm-host" />
+    <div
+      ref="host"
+      class="cm-host"
+      :style="{ '--miro-editor-font-family': editorFontFamily }"
+    />
   </div>
 </template>
 
@@ -637,6 +669,7 @@ defineExpose({ scrollTo });
   height: 100%;
   width: auto;
   overflow: hidden;
+  font-family: var(--miro-editor-font-family, var(--font-mono, ui-monospace, monospace));
 }
 
 .cm-host :deep(.cm-editor) {
@@ -695,7 +728,7 @@ defineExpose({ scrollTo });
 .cm-host :deep(.miro-hover-signature) {
   padding: 3px 10px 5px;
   color: var(--accent);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--miro-editor-font-family, var(--font-mono, ui-monospace, monospace));
   white-space: pre-wrap;
 }
 
@@ -723,7 +756,7 @@ defineExpose({ scrollTo });
   border-radius: 6px;
 }
 .cm-host :deep(.miro-signature-label) {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--miro-editor-font-family, var(--font-mono, ui-monospace, monospace));
   font-size: 11.5px;
   word-break: break-all;
 }
@@ -731,7 +764,7 @@ defineExpose({ scrollTo });
   color: var(--accent);
   font-weight: 600;
   margin-top: 2px;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--miro-editor-font-family, var(--font-mono, ui-monospace, monospace));
   font-size: 11.5px;
 }
 .cm-host :deep(.miro-signature-doc) {
@@ -1023,6 +1056,60 @@ defineExpose({ scrollTo });
 .cm-host :deep(.cm-activeLine),
 .cm-host :deep(.cm-activeLineGutter) {
   transition: background-color var(--transition-fast) var(--ease-out);
+}
+
+/* ===== 跳转落点反馈 ===== */
+.cm-host :deep(.cm-miro-jump-line) {
+  background-color: color-mix(in srgb, var(--accent) 14%, transparent) !important;
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 32%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--accent) 32%, transparent);
+  animation: miro-jump-line 1.6s var(--ease-out) both;
+}
+
+.cm-host :deep(.cm-miro-jump-target) {
+  background-color: var(--accent) !important;
+  color: var(--accent-fg) !important;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  animation: miro-jump-target 1.4s var(--ease-out) both;
+}
+
+.cm-host :deep(.cm-miro-jump-gutter) {
+  background-color: color-mix(in srgb, var(--accent) 18%, transparent) !important;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.cm-host :deep(.cm-lineNumbers .cm-miro-jump-gutter) {
+  color: var(--accent) !important;
+  font-weight: 700;
+}
+
+@keyframes miro-jump-line {
+  0% {
+    background-color: color-mix(in srgb, var(--accent) 27%, transparent);
+  }
+  100% {
+    background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+}
+
+@keyframes miro-jump-target {
+  0% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 46%, transparent),
+      0 0 16px color-mix(in srgb, var(--accent) 36%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-host :deep(.cm-miro-jump-line),
+  .cm-host :deep(.cm-miro-jump-target) {
+    animation: none;
+  }
 }
 
 .cm-host :deep(.cm-selectionMatch) {

@@ -32,7 +32,6 @@ export const TEMPLATE_BIND_RE = /(?:@[A-Za-z][\w-]*\s*=\s*["']|v-on:[A-Za-z][\w-
 export const CLASS_ATTR_RE = /class\s*=\s*["']([^"']+)["']/g;
 
 const RESOLVE_EXTENSIONS = [
-  "",
   ".ts",
   ".tsx",
   ".js",
@@ -40,12 +39,21 @@ const RESOLVE_EXTENSIONS = [
   ".mjs",
   ".cjs",
   ".vue",
+  ".css",
+  ".scss",
+  ".sass",
+  ".less",
   ".json",
   "/index.ts",
   "/index.tsx",
   "/index.js",
   "/index.jsx",
   "/index.vue",
+  "/index.css",
+  "/index.scss",
+  "/index.sass",
+  "/index.less",
+  "",
 ];
 
 const SCAN_EXTENSIONS = new Set([
@@ -144,7 +152,18 @@ export async function resolveImportPath(
 }
 
 function stripKnownExtensions(path: string): string {
-  for (const ext of [".tsx", ".ts", ".jsx", ".js", ".vue", ".json"]) {
+  for (const ext of [
+    ".tsx",
+    ".ts",
+    ".jsx",
+    ".js",
+    ".vue",
+    ".css",
+    ".scss",
+    ".sass",
+    ".less",
+    ".json",
+  ]) {
     if (path.endsWith(ext)) return path.slice(0, -ext.length);
   }
   if (path.endsWith("/index")) return path.slice(0, -"/index".length);

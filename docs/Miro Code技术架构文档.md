@@ -195,7 +195,7 @@ MiroCode/
 | 补全 | `completions.ts` 分派链 + `completion/` 服务层：HTML/Vue template → `vscode-html-languageservice`；CSS/SCSS/Less → `vscode-css-languageservice`；JS/TS/JSX/TSX → 浏览器内嵌 TypeScript LanguageService（类型成员、自动导入、签名帮助）；Vue script → 等长虚拟 TS 文件，template → `<script setup>` 绑定注入；服务失败降级静态表；⌘Space 手动触发 |
 | 诊断 / hover | `diagnostics.ts` + `typeService/tsService.ts`：JS/TS/Vue script 语义诊断、JSON / Env 校验；TypeScript quick info 以 CodeMirror tooltip 展示 |
 | 格式化 | Prettier（`tooling.rs` 调 npx，`--stdin-filepath`） |
-| 跳转 | `navigation.ts`：JS/TS/Vue script 优先 TypeScript definition；相对路径 + `@/` 别名 import、同文档符号、跨文件符号索引兜底；⌘[ 返回 |
+| 跳转 | `navigation.ts`：自定义可点击引用判定；JS/TS/Vue script 优先 TypeScript definition，Vue 模板组件按 import / `defineAsyncComponent` 解析，class 支持同文件与外置样式选择器；相对路径 + `@/` 别名 import、同文档符号、跨文件符号索引兜底；跳转落点由 `jumpHighlight.ts` 标记；⌘[ 返回 |
 | 重命名 / 引用 | F2 / Shift+F12：TypeScript 精确引用位置优先，Vue script 做 offset 映射；结果面板可点击定位，未打开文件也会写盘 |
 | 预览 | Markdown 首次打开默认预览（marked，可切源码）；图片 / SVG 用 `ImagePreview.vue` |
 | 自动保存 | `autoSave.ts`：默认开启，1000ms 防抖写盘，页面隐藏 / 关窗前强制 flush |

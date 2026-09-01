@@ -1,11 +1,29 @@
 export type ThemeId = "miro-dark" | "dawn" | "midnight" | "cyberpunk";
 
+export const EDITOR_FONT_IDS = [
+  "system",
+  "jetbrains",
+  "sarasa",
+  "cascadia",
+] as const;
+
+export type EditorFontId = (typeof EDITOR_FONT_IDS)[number];
+
+export function isEditorFontId(value: unknown): value is EditorFontId {
+  return (
+    typeof value === "string" &&
+    EDITOR_FONT_IDS.includes(value as EditorFontId)
+  );
+}
+
 /** 左侧工具窗口：资源管理器 | Commit（WebStorm New UI） */
 export type SidePanelId = "explorer" | "commit";
 
 export type UpdateImportsOnMove = "always" | "prompt" | "never";
 
 export interface EditorPreferences {
+  /** 编辑器字体预设 ID；具体 CSS 字体栈由编辑器字体模块解析 */
+  fontFamily: EditorFontId;
   fontSize: number;
   tabSize: 2 | 4;
   wordWrap: boolean;
@@ -50,6 +68,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "cyberpunk",
   locale: "zh-CN",
   editor: {
+    fontFamily: "system",
     fontSize: 13,
     tabSize: 2,
     wordWrap: true,

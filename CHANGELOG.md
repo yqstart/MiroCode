@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-01
+
+### 新增
+
+- 编辑器支持对本地 import、函数 / class / 变量、Vue 模板组件和 HTML/Vue class 引用提供可点击导航；可用 `⌘/Ctrl+单击`，并保留 `⌘B / F12` 入口。
+- Vue 模板组件导航支持 PascalCase、kebab-case 和 `defineAsyncComponent`；CSS class 可跳转到同文件或外部 CSS / SCSS / Sass / Less 选择器。
+- 跳转后短暂突出目标文本、目标行和行号，便于确认异步导航落点。
+- 设置中增加系统等宽、JetBrains Mono、更纱等宽黑体 SC、Cascadia Code 字体预设，未安装时自动回退。
+
+### 改进
+
+- 优化 import / 路径解析与符号索引，支持多选择器 class 定位和匿名 `default` 导出跳转。
+- 增强编辑器焦点行与光标反馈，Git 比较编辑区同步使用可配置的编辑器字体。
+
+### 修复
+
+- 修复 CSS 选择器列表只索引第一个 class、动态 class 无法导航以及外部样式文件无法解析的问题。
+
 ## [2.0.0] - 2026-08-31
 
 ### 新增
@@ -122,6 +140,7 @@ Miro Code 1.0.0 是当前代码基线的首个可用大版本，定位为轻量�
 - 文件访问、Git、搜索、SSH 和更新说明渲染均加入路径校验、错误处理、超时清理、敏感信息隔离和 Markdown 链接过滤。
 - 采用 MIT 许可证，纯开源免费；本版本坚持离线优先，不包含联网 AI 补全、AI 对话面板、AI Agent、MCP/Skills 生态或插件市场。
 
+[2.1.0]: https://github.com/yqstart/MiroCode/releases/tag/v2.1.0
 [2.0.0]: https://github.com/yqstart/MiroCode/releases/tag/v2.0.0
 [1.0.2]: https://github.com/yqstart/MiroCode/releases/tag/v1.0.2
 [1.0.1]: https://github.com/yqstart/MiroCode/releases/tag/v1.0.1

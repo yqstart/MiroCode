@@ -96,7 +96,7 @@ const blameTheme = EditorView.theme({
   ".cm-miro-blame-hash": {
     color: "var(--text-muted)",
     fontSize: "10px",
-    fontFamily: "var(--font-mono)",
+    fontFamily: "var(--miro-editor-font-family, var(--font-mono))",
   },
   ".cm-miro-blame-tooltip": {
     backgroundColor: "var(--bg-elevated)",
@@ -122,7 +122,7 @@ const blameTheme = EditorView.theme({
     flexWrap: "wrap",
   },
   ".cm-miro-blame-tooltip .meta .hash": {
-    fontFamily: "var(--font-mono)",
+    fontFamily: "var(--miro-editor-font-family, var(--font-mono))",
   },
 });
 

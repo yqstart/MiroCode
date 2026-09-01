@@ -7,6 +7,7 @@ import {
   type EditorPreferences,
   type SidePanelId,
   type ThemeId,
+  isEditorFontId,
 } from "@/shared/types";
 
 const STORAGE_KEY = "mirocode.settings.v1";
@@ -118,6 +119,7 @@ function loadSettings(): AppSettings {
     delete editorOverrides.aiCompletion;
     // Minimap 已移除，清理旧版本持久化设置，避免无效字段继续写回磁盘。
     delete editorOverrides.minimap;
+    const rawEditorFontFamily = parsed.editor?.fontFamily;
 
     return {
       theme:
@@ -131,6 +133,9 @@ function loadSettings(): AppSettings {
       editor: {
         ...DEFAULT_SETTINGS.editor,
         ...editorOverrides,
+        fontFamily: isEditorFontId(rawEditorFontFamily)
+          ? rawEditorFontFamily
+          : DEFAULT_SETTINGS.editor.fontFamily,
       },
       layout,
       autoCheckUpdates:

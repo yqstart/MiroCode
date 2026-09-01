@@ -115,10 +115,10 @@ const WORD_RE = /[A-Za-z_$][\w$]*/;
 
 /**
  * CSS class 选择器：匹配 `.foo {` / `.foo,` / `.foo.bar {` / `&.foo {` / `.foo .bar {`
- * 只取行内**第一个** class 名（`.foo.bar` 取 `foo`），避免长链歧义。
+ * 会为同一选择器列表中的每个 class 建立位置索引。
  * 不匹配 `#id`、属性选择器、伪类。
  */
-const CSS_CLASS_RE = /\.([A-Za-z_][\w-]*)/;
+const CSS_CLASS_RE = /\.([A-Za-z_][\w-]*)/g;
 
 function indexLines(
   text: string,
@@ -147,12 +147,18 @@ function indexLines(
       list.push(sym);
       map.set(name, list);
     }
-    // JS 模式未命中时，尝试 CSS class 选择器识别（.foo { / .foo, / &.foo 等）
+    // JS 模式未命中时，尝试 CSS class 选择器识别（.foo { / .foo, / &.foo 等）。
+    // 一行可能有多个选择器（`.foo, .bar {}`），全部建立索引，避免只能跳到
+    // 逗号前的第一个 class。
     if (!matchedJs && includeCssClasses) {
-      const cm = line.match(CSS_CLASS_RE);
-      if (cm?.[1]) {
+      const selectorEnd = line.indexOf("{");
+      const selector = selectorEnd >= 0 ? line.slice(0, selectorEnd) : line;
+      CSS_CLASS_RE.lastIndex = 0;
+      let cm: RegExpExecArray | null;
+      while ((cm = CSS_CLASS_RE.exec(selector))) {
         const className = cm[1];
-        const classIdx = line.indexOf(`.${className}`);
+        if (!className) continue;
+        const classIdx = cm.index + cm[0].indexOf(`.${className}`);
         const column = classIdx + 2; // 跳过 `.`，1-based
         const sym: DocumentSymbol = {
           name: className,
