@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-02
+
+### 新增
+
+- 资源树支持多选：`⌘/Ctrl` 点选增删、`Shift` 点选连续范围、右键保留多选集合，可批量删除（`Delete`/`⌫` 快捷键，目录与其子项同时选中时只删除最上层）；剪切粘贴与拖拽统一走移动后处理并按设置更新相对 import。
+- Git blame 悬浮卡片重绘：提交人首字母头像、作者/提交号/时间分隔展示与主题化样式，与行内 gutter 状态分离。
+
+### 改进
+
+- 主编辑器 gutter 按内容收缩，行号与折叠区在窄窗口下不再留大块空白。
+
 ### 修复
 
 - 修复执行文件内查找 / 全局搜索后，单击编辑区移动光标会莫名选中一段代码的问题：WebKit 26（macOS 26 WKWebView）在编辑器失焦后单击聚焦时会在点击点与旧光标之间自动生成原生选区，且 CodeMirror 针对该缺陷的内建修复仅对 UA 含 `Version/26` 的 Safari 生效；现于失焦单击聚焦场景追加应用侧兜底，点击结束后仍残留的单一选区折叠到点击落点（双击选词、拖选与组合键单击不受影响）。
@@ -144,6 +155,7 @@ Miro Code 1.0.0 是当前代码基线的首个可用大版本，定位为轻量�
 - 文件访问、Git、搜索、SSH 和更新说明渲染均加入路径校验、错误处理、超时清理、敏感信息隔离和 Markdown 链接过滤。
 - 采用 MIT 许可证，纯开源免费；本版本坚持离线优先，不包含联网 AI 补全、AI 对话面板、AI Agent、MCP/Skills 生态或插件市场。
 
+[2.2.0]: https://github.com/yqstart/MiroCode/releases/tag/v2.2.0
 [2.1.0]: https://github.com/yqstart/MiroCode/releases/tag/v2.1.0
 [2.0.0]: https://github.com/yqstart/MiroCode/releases/tag/v2.0.0
 [1.0.2]: https://github.com/yqstart/MiroCode/releases/tag/v1.0.2
