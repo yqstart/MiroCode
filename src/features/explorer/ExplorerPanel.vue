@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import {
   ChevronDown,
   ChevronRight,
@@ -16,7 +23,13 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { storeToRefs } from "pinia";
 import { writeClipboard } from "@/shared/clipboard";
 import FileTypeIcon from "@/shared/FileTypeIcon.vue";
-import { basename, dirname, normalizeAbsPath, relativeToRoot, toAbsolutePath } from "@/shared/fs";
+import {
+  basename,
+  dirname,
+  normalizeAbsPath,
+  relativeToRoot,
+  toAbsolutePath,
+} from "@/shared/fs";
 import {
   applyImportPatches,
   scanImportReferences,
@@ -26,7 +39,10 @@ import { showMoveReferencesDialog } from "@/shared/moveReferencesDialog";
 import { openFolderInNewWindow } from "@/shared/openWorkspace";
 import { formatShortcut } from "@/shared/platform";
 import { revealInOsExplorer } from "@/shared/revealInOs";
-import { getPathRange } from "@/features/explorer/selection";
+import {
+  getContextSelectionPaths,
+  getPathRange,
+} from "@/features/explorer/selection";
 import { useI18n } from "@/i18n";
 import { useEditorStore } from "@/stores/editor";
 import { aggregateDirDirtyCounts } from "@/stores/gitDirtyAggregate";
@@ -63,6 +79,7 @@ const menu = ref<{
   path: string;
   isDir: boolean;
   isRoot: boolean;
+  paths: string[];
 } | null>(null);
 const menuRef = ref<HTMLElement | null>(null);
 const treeBodyRef = ref<HTMLElement | null>(null);
@@ -87,7 +104,9 @@ const gitStatusByPath = computed(() => {
   return map;
 });
 /** entries 按目录聚合（仅随 git 状态刷新重算，不随树的展开/折叠变化） */
-const gitDirDirtyAgg = computed(() => aggregateDirDirtyCounts(git.snapshot.entries));
+const gitDirDirtyAgg = computed(() =>
+  aggregateDirDirtyCounts(git.snapshot.entries),
+);
 /** 目录 → { count, firstAbs }，key 为节点绝对路径；折叠目录据此渲染改动数量徽章 */
 const gitDirtyDirMap = computed(() => {
   const map = new Map<string, { count: number; firstAbs: string }>();
@@ -99,14 +118,33 @@ const gitDirtyDirMap = computed(() => {
     const rel = relativeToRoot(root, node.path).replace(/\\/g, "/");
     const rec = byDir.get(rel);
     if (rec) {
-      map.set(node.path, { count: rec.count, firstAbs: toAbsolutePath(root, rec.first) });
+      map.set(node.path, {
+        count: rec.count,
+        firstAbs: toAbsolutePath(root, rec.first),
+      });
     }
   }
   return map;
 });
 const canLocate = computed(() => Boolean(rootPath.value && activePath.value));
-const isRootTarget = computed(() => Boolean(menu.value?.isRoot));
-const isFileTarget = computed(() => Boolean(menu.value) && !menu.value!.isDir && !menu.value!.isRoot);
+const menuPaths = computed(() => menu.value?.paths ?? []);
+const isRootTarget = computed(
+  () =>
+    Boolean(menu.value?.isRoot) ||
+    menuPaths.value.includes(rootPath.value ?? ""),
+);
+const isFileTarget = computed(
+  () =>
+    Boolean(menu.value) &&
+    menuPaths.value.length === 1 &&
+    !menu.value!.isDir &&
+    !menu.value!.isRoot,
+);
+const deleteMenuLabel = computed(() =>
+  menuPaths.value.length > 1
+    ? t("explorer.deleteSelected", { count: menuPaths.value.length })
+    : t("explorer.delete"),
+);
 const locateFileTitle = computed(() =>
   t("explorer.revealActiveTitle", { shortcut: formatShortcut("alt", "F1") }),
 );
@@ -123,6 +161,7 @@ const dragSource = ref<{ path: string; isDir: boolean } | null>(null);
 const dropHoverPath = ref<string | null>(null);
 const dropValid = ref(false);
 const moving = ref(false);
+const deleting = ref(false);
 let suppressRowClick = false;
 
 type PointerDragSession = {
@@ -266,7 +305,11 @@ async function onWindowPointerUp(event: PointerEvent) {
   const toParent = resolveDropParent(target.path, target.isDir);
   moving.value = true;
   try {
-    const result = await workspace.movePath(source.path, toParent, source.isDir);
+    const result = await workspace.movePath(
+      source.path,
+      toParent,
+      source.isDir,
+    );
     if (result) await afterMove(result);
   } finally {
     moving.value = false;
@@ -287,7 +330,8 @@ async function afterMove(result: MovePathResult) {
   }
   void git.scheduleRefresh();
 
-  const mode = settings.editor.updateImportsOnMove;
+  // movePath 在文件系统操作前捕获本次移动的设置，避免后续异步流程读取到新配置。
+  const mode = result.updateImportsOnMove;
   if (mode === "never" || !isCurrent()) return;
 
   const patches = await scanImportReferences(
@@ -330,6 +374,7 @@ onBeforeUnmount(() => {
   pointerDrag = null;
   resetDragChrome();
   document.removeEventListener("mousedown", onDocMouseDown, true);
+  window.removeEventListener("keydown", onExplorerKeydown);
 });
 
 /** 弹层全局关闭：点 .menu（文件树右键菜单）或 .project-menu 内部不关；其它位置关。
@@ -346,6 +391,7 @@ function onDocMouseDown(event: MouseEvent) {
 
 onMounted(async () => {
   document.addEventListener("mousedown", onDocMouseDown, true);
+  window.addEventListener("keydown", onExplorerKeydown);
   if (rootPath.value) void git.scheduleRefresh();
   if (revealTarget.value) {
     await nextTick();
@@ -408,7 +454,10 @@ async function onOpenNewProject() {
     if (!selected || Array.isArray(selected)) return;
     pendingOpenPath.value = selected;
   } catch (error) {
-    workspace.showNotice(error instanceof Error ? error.message : String(error), 3200);
+    workspace.showNotice(
+      error instanceof Error ? error.message : String(error),
+      3200,
+    );
   }
 }
 
@@ -427,7 +476,10 @@ async function confirmOpenMode(mode: "current" | "new") {
     }
     pendingOpenPath.value = null;
   } catch (error) {
-    workspace.showNotice(error instanceof Error ? error.message : String(error), 3200);
+    workspace.showNotice(
+      error instanceof Error ? error.message : String(error),
+      3200,
+    );
   } finally {
     openingMode.value = false;
   }
@@ -522,8 +574,13 @@ async function onRowClick(event: MouseEvent, path: string, isDir: boolean) {
 async function onContext(event: MouseEvent, path: string, isDir: boolean) {
   event.preventDefault();
   event.stopPropagation();
-  selectionAnchorPath.value = path;
-  workspace.selectPath(path);
+  const wasSelected = selectedPaths.value.includes(path);
+  const paths = getContextSelectionPaths(selectedPaths.value, path);
+  // 右键已选中的节点保留当前集合；右键未选中的节点才切换为单选。
+  if (!wasSelected) {
+    selectionAnchorPath.value = path;
+    workspace.selectPath(path);
+  }
   // 先用估算定位占位，渲染后再按真实尺寸校正：
   // 估算高度（320）小于实际渲染高度，直接按估算 clamp 会让底部越出窗口被裁掉
   const estWidth = 200;
@@ -536,18 +593,23 @@ async function onContext(event: MouseEvent, path: string, isDir: boolean) {
     path,
     isDir,
     isRoot: Boolean(rootPath.value && path === rootPath.value),
+    paths,
   };
   await nextTick();
   if (!menu.value) return;
   const el = menuRef.value;
   if (!el) return;
   const rect = el.getBoundingClientRect();
-  if (rect.right <= window.innerWidth && rect.bottom <= window.innerHeight) return;
+  if (rect.right <= window.innerWidth && rect.bottom <= window.innerHeight)
+    return;
   menu.value = {
     ...menu.value,
     // 越界时反向回拉，保证菜单完整落在窗口内（含底部按钮可见可点）
     x: Math.max(8, Math.min(menu.value.x, window.innerWidth - rect.width - 8)),
-    y: Math.max(8, Math.min(menu.value.y, window.innerHeight - rect.height - 8)),
+    y: Math.max(
+      8,
+      Math.min(menu.value.y, window.innerHeight - rect.height - 8),
+    ),
   };
 }
 
@@ -572,7 +634,7 @@ async function locateActiveFile() {
 
 async function runMenu(action: string) {
   if (!menu.value || !rootPath.value) return;
-  const { path, isDir, isRoot } = menu.value;
+  const { path, isDir, isRoot, paths } = menu.value;
   const parent = isDir ? path : dirname(path);
   closeMenu();
 
@@ -605,12 +667,11 @@ async function runMenu(action: string) {
       return;
     }
     if (action === "delete") {
-      if (isRoot) {
+      if (isRoot || paths.includes(rootPath.value)) {
         workspace.showNotice(t("explorer.cannotDeleteRoot"));
         return;
       }
-      const ok = await workspace.removePath(path);
-      if (ok) editor.closeTabsUnder(path);
+      await deleteSelectedPaths(paths.length ? paths : [path]);
       return;
     }
     if (action === "copy") {
@@ -628,12 +689,9 @@ async function runMenu(action: string) {
     if (action === "paste") {
       const result = await workspace.pasteInto(parent);
       if (result?.cut) {
-        // 剪切移动目录时同样需要前缀级标签更新
-        if (result.isDir) {
-          editor.renameTabsUnderPrefix(result.from, result.to);
-        } else {
-          editor.renameTabPath(result.from, result.to);
-        }
+        // 剪切粘贴同样属于「移动文件」：走统一的移动后处理，
+        // 包含标签前缀更新与按 always/prompt/never 设置更新相对 import。
+        await afterMove(result);
       }
       return;
     }
@@ -673,24 +731,81 @@ async function runMenu(action: string) {
   }
 }
 
+function isTextEditingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    target.isContentEditable ||
+    Boolean(target.closest(".cm-content, .cm-editor, .xterm"))
+  );
+}
+
+function isExplorerTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return true;
+  // 全局弹层（设置/快速打开/查找/确认框等）统一用 .overlay 容器，
+  // 弹层内按 Delete 不得冒泡删除资源树文件。
+  if (target.closest(".overlay")) return false;
+  return target === document.body || Boolean(target.closest(".panel"));
+}
+
+async function deleteSelectedPaths(
+  paths: readonly string[] = selectedPaths.value,
+) {
+  if (deleting.value || !paths.length || !rootPath.value) return;
+  deleting.value = true;
+  try {
+    const deletedPaths = await workspace.removePaths(paths);
+    for (const deletedPath of deletedPaths ?? []) {
+      // 只有实际删除成功的路径才关闭对应标签。
+      editor.closeTabsUnder(deletedPath);
+    }
+  } finally {
+    deleting.value = false;
+  }
+}
+
+function onExplorerKeydown(event: KeyboardEvent) {
+  if (
+    event.defaultPrevented ||
+    (event.key !== "Delete" && event.code !== "Delete") ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey ||
+    settings.layout.activePanel !== "explorer" ||
+    !isExplorerTarget(event.target) ||
+    isTextEditingTarget(event.target)
+  ) {
+    return;
+  }
+  if (!rootPath.value || !selectedPaths.value.length || deleting.value) return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeMenu();
+  void deleteSelectedPaths();
+}
+
 defineExpose({ locateActiveFile });
 </script>
 
 <template>
-    <div class="panel" @click="closeMenu">
-      <header class="header">
-        <div class="title-wrap">
-          <button
-            ref="titleBtnRef"
-            type="button"
-            class="title-btn"
-            :title="rootPath ?? t('explorer.selectOrSwitch')"
-            @click.stop="toggleProjectMenu"
-          >
-            <span class="title">{{ panelTitle }}</span>
-            <ChevronDown :size="14" class="title-caret" />
-          </button>
-        </div>
+  <div class="panel" @click="closeMenu">
+    <header class="header">
+      <div class="title-wrap">
+        <button
+          ref="titleBtnRef"
+          type="button"
+          class="title-btn"
+          :title="rootPath ?? t('explorer.selectOrSwitch')"
+          @click.stop="toggleProjectMenu"
+        >
+          <span class="title">{{ panelTitle }}</span>
+          <ChevronDown :size="14" class="title-caret" />
+        </button>
+      </div>
       <div v-if="rootPath" class="header-actions">
         <button
           type="button"
@@ -797,11 +912,7 @@ defineExpose({ locateActiveFile });
                 {{ t("explorer.clearRecentProjects") }}
               </button>
             </div>
-            <div
-              v-for="item in recentFolders"
-              :key="item"
-              class="recent-row"
-            >
+            <div v-for="item in recentFolders" :key="item" class="recent-row">
               <button
                 type="button"
                 class="recent-item"
@@ -828,9 +939,7 @@ defineExpose({ locateActiveFile });
           class="tree"
           :class="{
             'drop-root':
-              Boolean(dragSource) &&
-              dropValid &&
-              dropHoverPath === rootPath,
+              Boolean(dragSource) && dropValid && dropHoverPath === rootPath,
           }"
           :title="t('explorer.dragMoveHint')"
           @contextmenu="onContext($event, rootPath, true)"
@@ -845,7 +954,8 @@ defineExpose({ locateActiveFile });
               selected: selectedPaths.includes(node.path),
               dirty: dirtySet.has(node.path),
               dragging: dragSource?.path === node.path,
-              'drop-into': dropHoverPath === node.path && dropValid && node.isDir,
+              'drop-into':
+                dropHoverPath === node.path && dropValid && node.isDir,
               'drop-sibling':
                 dropHoverPath === node.path && dropValid && !node.isDir,
               'drop-invalid': dropHoverPath === node.path && !dropValid,
@@ -877,14 +987,22 @@ defineExpose({ locateActiveFile });
                 class="git-badge"
                 :class="git.statusClass(gitStatusByPath.get(node.path)!.status)"
                 :title="git.statusTitle(gitStatusByPath.get(node.path)!.status)"
-              >{{ git.statusLabel(gitStatusByPath.get(node.path)!.status) }}</span>
+                >{{
+                  git.statusLabel(gitStatusByPath.get(node.path)!.status)
+                }}</span
+              >
             </template>
             <template v-else-if="gitDirtyDirMap.get(node.path)">
               <span
                 class="git-badge st-modified dir-dirty"
-                :title="t('explorer.dirDirtyTitle', { count: gitDirtyDirMap.get(node.path)!.count })"
+                :title="
+                  t('explorer.dirDirtyTitle', {
+                    count: gitDirtyDirMap.get(node.path)!.count,
+                  })
+                "
                 @click.stop.prevent="revealDirFirstChanged(node)"
-              >{{ gitDirtyDirMap.get(node.path)!.count }}</span>
+                >{{ gitDirtyDirMap.get(node.path)!.count }}</span
+              >
             </template>
             <span v-if="dirtySet.has(node.path)" class="dirty-dot" />
           </button>
@@ -920,17 +1038,13 @@ defineExpose({ locateActiveFile });
           :disabled="isRootTarget"
           @click="runMenu('delete')"
         >
-          {{ t("explorer.delete") }}
+          {{ deleteMenuLabel }}
         </button>
         <hr />
         <button type="button" @click="runMenu('copy')">
           {{ t("explorer.copy") }}
         </button>
-        <button
-          type="button"
-          :disabled="isRootTarget"
-          @click="runMenu('cut')"
-        >
+        <button type="button" :disabled="isRootTarget" @click="runMenu('cut')">
           {{ t("explorer.cut") }}
         </button>
         <button type="button" :disabled="!clipboard" @click="runMenu('paste')">
@@ -966,10 +1080,17 @@ defineExpose({ locateActiveFile });
         <div
           v-if="projectMenuOpen && projectMenuPos"
           class="project-menu"
-          :style="{ top: `${projectMenuPos.top}px`, left: `${projectMenuPos.left}px` }"
+          :style="{
+            top: `${projectMenuPos.top}px`,
+            left: `${projectMenuPos.left}px`,
+          }"
           @click.stop
         >
-          <button type="button" class="project-item primary" @click="onOpenNewProject">
+          <button
+            type="button"
+            class="project-item primary"
+            @click="onOpenNewProject"
+          >
             <FolderInput :size="14" />
             <span>{{ t("explorer.openNewProject") }}</span>
           </button>
@@ -1051,7 +1172,8 @@ defineExpose({ locateActiveFile });
   padding: 2px 6px 2px 4px;
   border-radius: 6px;
   color: var(--text-secondary);
-  transition: background var(--transition-fast) var(--ease-out),
+  transition:
+    background var(--transition-fast) var(--ease-out),
     color var(--transition-fast) var(--ease-out);
 }
 
@@ -1097,7 +1219,8 @@ defineExpose({ locateActiveFile });
   border-radius: 6px;
   text-align: left;
   color: var(--text-primary);
-  transition: background var(--transition-fast) var(--ease-out),
+  transition:
+    background var(--transition-fast) var(--ease-out),
     color var(--transition-fast) var(--ease-out);
 }
 
@@ -1151,7 +1274,8 @@ defineExpose({ locateActiveFile });
   border-radius: 4px;
   font-size: 10px;
   color: var(--text-muted);
-  transition: background var(--transition-fast) var(--ease-out),
+  transition:
+    background var(--transition-fast) var(--ease-out),
     color var(--transition-fast) var(--ease-out);
 }
 
@@ -1178,7 +1302,8 @@ defineExpose({ locateActiveFile });
   place-items: center;
   border-radius: 6px;
   color: var(--text-muted);
-  transition: background var(--transition-fast) var(--ease-out),
+  transition:
+    background var(--transition-fast) var(--ease-out),
     color var(--transition-fast) var(--ease-out);
 }
 
@@ -1270,7 +1395,8 @@ defineExpose({ locateActiveFile });
   display: grid;
   place-items: center;
   color: var(--text-muted);
-  transition: background var(--transition-fast) var(--ease-out),
+  transition:
+    background var(--transition-fast) var(--ease-out),
     color var(--transition-fast) var(--ease-out),
     opacity var(--transition-fast) var(--ease-out);
 }
@@ -1386,7 +1512,8 @@ defineExpose({ locateActiveFile });
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background var(--transition-fast) var(--ease-out),
+  transition:
+    background var(--transition-fast) var(--ease-out),
     color var(--transition-fast) var(--ease-out);
 }
 
@@ -1432,7 +1559,8 @@ defineExpose({ locateActiveFile });
   text-align: left;
   touch-action: none;
   cursor: default;
-  transition: background var(--transition-fast) var(--ease-out),
+  transition:
+    background var(--transition-fast) var(--ease-out),
     color var(--transition-fast) var(--ease-out),
     box-shadow var(--transition-fast) var(--ease-out),
     opacity var(--transition-fast) var(--ease-out);
@@ -1458,7 +1586,8 @@ defineExpose({ locateActiveFile });
 }
 
 .row.drop-invalid {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger, #e5484d) 55%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--danger, #e5484d) 55%, transparent);
 }
 
 .row.active {
@@ -1532,13 +1661,32 @@ defineExpose({ locateActiveFile });
   flex-shrink: 0;
   animation: miro-dot-pop 0.32s var(--ease-out) both;
 }
-.git-badge.st-modified { background: var(--warning); color: var(--bg-app); }
-.git-badge.st-untracked { background: var(--success); color: var(--bg-app); }
-.git-badge.st-deleted  { background: var(--danger);  color: var(--accent-fg); }
-.git-badge.st-renamed  { background: var(--accent);  color: var(--accent-fg); }
-.git-badge.st-conflict { background: var(--danger);  color: var(--accent-fg); }
-.git-badge.dir-dirty { cursor: pointer; }
-.git-badge.dir-dirty:hover { filter: brightness(1.12); }
+.git-badge.st-modified {
+  background: var(--warning);
+  color: var(--bg-app);
+}
+.git-badge.st-untracked {
+  background: var(--success);
+  color: var(--bg-app);
+}
+.git-badge.st-deleted {
+  background: var(--danger);
+  color: var(--accent-fg);
+}
+.git-badge.st-renamed {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.git-badge.st-conflict {
+  background: var(--danger);
+  color: var(--accent-fg);
+}
+.git-badge.dir-dirty {
+  cursor: pointer;
+}
+.git-badge.dir-dirty:hover {
+  filter: brightness(1.12);
+}
 
 .dirty-dot {
   margin-left: 4px;
@@ -1590,11 +1738,13 @@ defineExpose({ locateActiveFile });
 
 /* ctx：project-menu / right-click menu */
 .ctx-enter-active {
-  transition: opacity var(--transition-medium) var(--ease-out),
+  transition:
+    opacity var(--transition-medium) var(--ease-out),
     transform var(--transition-medium) var(--ease-out);
 }
 .ctx-leave-active {
-  transition: opacity var(--transition-fast) var(--ease-out),
+  transition:
+    opacity var(--transition-fast) var(--ease-out),
     transform var(--transition-fast) var(--ease-out);
 }
 .ctx-enter-from,
@@ -1614,7 +1764,8 @@ defineExpose({ locateActiveFile });
 }
 .dialog-enter-active .mode-card,
 .dialog-leave-active .mode-card {
-  transition: opacity var(--transition-medium) var(--ease-out),
+  transition:
+    opacity var(--transition-medium) var(--ease-out),
     transform var(--transition-medium) var(--ease-out);
 }
 .dialog-enter-from .mode-card,

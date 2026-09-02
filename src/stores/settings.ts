@@ -7,6 +7,7 @@ import {
   type EditorPreferences,
   type SidePanelId,
   type ThemeId,
+  isUpdateImportsOnMove,
   isEditorFontId,
 } from "@/shared/types";
 
@@ -26,11 +27,7 @@ const TITLEBAR_RGB: Record<ThemeId, [number, number, number]> = {
 };
 
 function isDarkTheme(theme: ThemeId): boolean {
-  return (
-    theme === "miro-dark" ||
-    theme === "midnight" ||
-    theme === "cyberpunk"
-  );
+  return theme === "miro-dark" || theme === "midnight" || theme === "cyberpunk";
 }
 
 /** 同步 macOS / 系统菜单栏文案到应用语言（无需重启） */
@@ -72,7 +69,8 @@ function loadSettings(): AppSettings {
     // 丢掉旧字段
     delete (layout as { gitToolWindow?: unknown }).gitToolWindow;
     delete (layout as { commitDiffPreview?: unknown }).commitDiffPreview;
-    delete (layout as { commitDiffPreviewHeight?: unknown }).commitDiffPreviewHeight;
+    delete (layout as { commitDiffPreviewHeight?: unknown })
+      .commitDiffPreviewHeight;
 
     // 全局搜索已改为 WebStorm 弹层
     if ((layout.activePanel as string) === "search") {
@@ -98,7 +96,10 @@ function loadSettings(): AppSettings {
       }
     }
 
-    if ((layout.activePanel as string) !== "explorer" && (layout.activePanel as string) !== "commit") {
+    if (
+      (layout.activePanel as string) !== "explorer" &&
+      (layout.activePanel as string) !== "commit"
+    ) {
       layout.activePanel = "explorer";
     }
 
@@ -120,6 +121,7 @@ function loadSettings(): AppSettings {
     // Minimap 已移除，清理旧版本持久化设置，避免无效字段继续写回磁盘。
     delete editorOverrides.minimap;
     const rawEditorFontFamily = parsed.editor?.fontFamily;
+    const rawUpdateImportsOnMove = parsed.editor?.updateImportsOnMove;
 
     return {
       theme:
@@ -136,6 +138,9 @@ function loadSettings(): AppSettings {
         fontFamily: isEditorFontId(rawEditorFontFamily)
           ? rawEditorFontFamily
           : DEFAULT_SETTINGS.editor.fontFamily,
+        updateImportsOnMove: isUpdateImportsOnMove(rawUpdateImportsOnMove)
+          ? rawUpdateImportsOnMove
+          : DEFAULT_SETTINGS.editor.updateImportsOnMove,
       },
       layout,
       autoCheckUpdates:
@@ -173,7 +178,9 @@ async function syncNativeWindowTheme(theme: ThemeId) {
 
 function applyTheme(theme: ThemeId) {
   document.documentElement.setAttribute("data-theme", theme);
-  document.documentElement.style.colorScheme = isDarkTheme(theme) ? "dark" : "light";
+  document.documentElement.style.colorScheme = isDarkTheme(theme)
+    ? "dark"
+    : "light";
 }
 
 export const useSettingsStore = defineStore("settings", () => {

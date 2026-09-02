@@ -216,6 +216,7 @@ export const enUS = {
     newFolder: "New Folder",
     rename: "Rename",
     delete: "Delete",
+    deleteSelected: "Delete selected ({count})",
     copy: "Copy",
     cut: "Cut",
     paste: "Paste",
@@ -224,7 +225,8 @@ export const enUS = {
     copyFileName: "Copy File Name",
     copiedFileName: "File name copied",
     revealInOs: "Reveal in Finder / Explorer",
-    revealInOsUnavailable: "Cannot open the system file manager in browser preview",
+    revealInOsUnavailable:
+      "Cannot open the system file manager in browser preview",
     revealInOsFailed: "Failed to reveal in file manager: {message}",
     openInTerminal: "Open in Terminal",
     switchProject: "Switch Project",
@@ -316,7 +318,8 @@ export const enUS = {
     hostsList: "Host list",
     hostsEmpty: "No hosts yet. Click to add.",
     hostsEmptyTitle: "No saved hosts",
-    hostsEmptyHint: "Add a host to connect in one click. Check “Remember password” to skip re-entry.",
+    hostsEmptyHint:
+      "Add a host to connect in one click. Check “Remember password” to skip re-entry.",
     hostName: "Name",
     displayName: "Display Name",
     displayNamePlaceholder: "Host display name",
@@ -448,13 +451,18 @@ export const enUS = {
     authFetch: "Sign in to Fetch",
     authUpdate: "Sign in to Update",
     authRetry: "Incorrect username or password. Try again.",
-    authRequired: "Remote requires authentication. Enter username and password.",
-    authFailedGiveUp: "Authentication failed: {detail}. Giving up to avoid an infinite loop. Check the network or credentials and retry manually.",
-    pushing: "Pushing to remote — this can take tens of seconds up to two minutes…",
-    pulling: "Pulling from remote — this can take tens of seconds up to two minutes…",
+    authRequired:
+      "Remote requires authentication. Enter username and password.",
+    authFailedGiveUp:
+      "Authentication failed: {detail}. Giving up to avoid an infinite loop. Check the network or credentials and retry manually.",
+    pushing:
+      "Pushing to remote — this can take tens of seconds up to two minutes…",
+    pulling:
+      "Pulling from remote — this can take tens of seconds up to two minutes…",
     fetching: "Fetching remote references…",
     updating: "Updating project…",
-    remoteInFlight: "A remote operation is already in progress. Please wait for it to finish.",
+    remoteInFlight:
+      "A remote operation is already in progress. Please wait for it to finish.",
     rebaseConflictDefault: "Rebase conflicted. Resolve, then Continue.",
     stagedChanges: "Staged Changes",
     workingChanges: "Working Tree Changes",
@@ -464,8 +472,7 @@ export const enUS = {
     undoCommitConfirm:
       "Undo the latest commit? Changes will remain in the working tree.",
     undoCommitOk: "Latest commit undone",
-    revertToConfirm:
-      "Revert to {hash}? Uncommitted changes may be lost.",
+    revertToConfirm: "Revert to {hash}? Uncommitted changes may be lost.",
     revertToOk: "Reverted to the selected commit",
     merged: "Merged {name}",
     mergeAbort: "Abort Merge",
@@ -480,8 +487,7 @@ export const enUS = {
     rebaseSkipped: "Skipped",
     interactiveRebaseDone: "Interactive rebase finished",
     upstreamSet: "Upstream set to {upstream}",
-    deleteRemoteConfirm:
-      "Delete remote branch {ref}? This is hard to undo.",
+    deleteRemoteConfirm: "Delete remote branch {ref}? This is hard to undo.",
     branchCompare: "{path} · Branch Compare",
     createdAndSwitched: "Created and switched to {name}",
     branchCreatedAt: "Created branch {name}",
@@ -525,7 +531,8 @@ export const enUS = {
     uncommitted: "Uncommitted Changes ({count})",
     unpushed: "Unpushed",
     files: "Changed Files",
-    stashHint: "Right-click to Apply / Pop / Drop. Apply keeps the entry; Pop removes it.",
+    stashHint:
+      "Right-click to Apply / Pop / Drop. Apply keeps the entry; Pop removes it.",
     noFiles: "No file list",
     workspaceDirty: "Uncommitted workspace changes",
     openCommitPanel: "Open Commit Panel",
@@ -577,7 +584,8 @@ export const enUS = {
     copyRef: "Copy Reference Name",
     pushTag: "Push Tag",
     deleteRef: "Delete Reference…",
-    discardAllConfirm: "Discard all uncommitted changes? This cannot be undone.",
+    discardAllConfirm:
+      "Discard all uncommitted changes? This cannot be undone.",
     stashChanges: "Stash Uncommitted Changes",
     discardChanges: "Discard Uncommitted Changes",
   },
@@ -646,7 +654,8 @@ export const enUS = {
     merge: "Merge",
     mergeDesc: "Merge remote changes (may create a merge commit)",
     rebase: "Rebase",
-    rebaseDesc: "Rebase onto upstream (linear history; Continue from Commit panel on conflicts)",
+    rebaseDesc:
+      "Rebase onto upstream (linear history; Continue from Commit panel on conflicts)",
     confirm: "Update",
   },
   interactiveRebase: {
@@ -710,8 +719,7 @@ export const enUS = {
     viewNotesTitle: "Release notes for v{version}",
     viewNotesForVersion: "What's new in v{version}",
     notesTitle: "What's new in v{version}",
-    notesEmpty:
-      "No detailed release notes yet. See the GitHub Release page.",
+    notesEmpty: "No detailed release notes yet. See the GitHub Release page.",
     downloadingTitle: "Downloading Update",
     downloadingMessage: "Downloading Miro Code {version}…",
     downloading: "Downloading…",
@@ -729,8 +737,7 @@ export const enUS = {
   },
   moveReferences: {
     title: "Update Import References",
-    hint:
-      "These relative import paths will be updated after the move. npm packages, @ aliases, and dynamic paths are not included.",
+    hint: "These relative import paths will be updated after the move. npm packages, @ aliases, and dynamic paths are not included.",
     confirm: "Apply Selected",
     cancel: "Skip",
     selectAll: "Select All",

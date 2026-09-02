@@ -20,10 +20,7 @@ import {
   type DirEntryInfo,
 } from "@/shared/fs";
 import { validateMoveTarget } from "@/shared/importReferences";
-import {
-  resolveBookmark,
-  saveBookmark,
-} from "@/shared/securityScoped";
+import { resolveBookmark, saveBookmark } from "@/shared/securityScoped";
 import {
   clearRecentFolders as clearRecentFoldersStorage,
   loadRecentFolders,
@@ -33,12 +30,15 @@ import {
 import { saveWindowSession } from "@/shared/windowSession";
 import { promptInput } from "@/shared/promptDialog";
 import { searchFiles, type FileSearchHit } from "@/shared/searchApi";
+import { getTopLevelSelectionPaths } from "@/features/explorer/selection";
 import { useCompareStore } from "@/stores/compare";
 import { useEditorStore } from "@/stores/editor";
 import { useGitStore } from "@/stores/git";
 import { useSearchStore } from "@/stores/search";
 import { useSessionsStore } from "@/stores/sessions";
+import { useSettingsStore } from "@/stores/settings";
 import { workspaceSymbols } from "@/features/editor/workspaceSymbols";
+import type { UpdateImportsOnMove } from "@/shared/types";
 
 const WATCH_IGNORE_NAMES = new Set([
   ".git",
@@ -69,6 +69,8 @@ export interface MovePathResult {
   from: string;
   to: string;
   isDir: boolean;
+  /** 在实际移动开始前捕获，确保后续引用更新遵循本次操作的设置。 */
+  updateImportsOnMove: UpdateImportsOnMove;
 }
 
 export interface OpenFolderOptions {
@@ -103,7 +105,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const childrenMap = ref<Record<string, DirEntryInfo[]>>({});
   const expanded = ref<Set<string>>(new Set());
   const recentFolders = ref<string[]>(loadRecentFolders());
-  const clipboard = ref<{ mode: "copy" | "cut"; path: string; isDir: boolean } | null>(null);
+  const clipboard = ref<{
+    mode: "copy" | "cut";
+    path: string;
+    isDir: boolean;
+  } | null>(null);
   const extraIgnores = ref<string[]>([]);
   /** 触发资源树滚动到目标节点 */
   const revealToken = ref(0);
@@ -175,7 +181,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const nextActivePath =
       activePath && uniquePaths.includes(activePath)
         ? activePath
-        : uniquePaths[uniquePaths.length - 1] ?? null;
+        : (uniquePaths[uniquePaths.length - 1] ?? null);
     selectedPaths.value = uniquePaths;
     selectedPath.value = nextActivePath;
   }
@@ -416,8 +422,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const root = rootPath.value;
     const epoch = workspaceEpoch;
     const runSeq = ++refreshRunSeq;
-    const isCurrent = () =>
-      rootPath.value === root && workspaceEpoch === epoch;
+    const isCurrent = () => rootPath.value === root && workspaceEpoch === epoch;
     refreshing.value = true;
     refreshingEpoch = epoch;
     try {
@@ -449,7 +454,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (runSeq === refreshRunSeq) {
         refreshing.value = false;
         refreshingEpoch = -1;
-        if (epoch === workspaceEpoch && refreshAgain && pendingWatchPaths.size) {
+        if (
+          epoch === workspaceEpoch &&
+          refreshAgain &&
+          pendingWatchPaths.size
+        ) {
           refreshAgain = false;
           scheduleWatchFlush();
         }
@@ -476,7 +485,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (!isLatestRequest()) return false;
 
       const previousRoot = rootPath.value;
-      const isWorkspaceSwitch = Boolean(previousRoot && previousRoot !== selected);
+      const isWorkspaceSwitch = Boolean(
+        previousRoot && previousRoot !== selected,
+      );
       // 首次打开工作区也要恢复该窗口在此工作区的终端快照；同一工作区
       // 重新选择时则保留当前编辑器和终端，不做销毁重建。
       const shouldResetWorkspaceSessions = previousRoot !== selected;
@@ -516,11 +527,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
       // 收集所有 reset/refresh 调用的错误，仅记日志不影响主流程
       const sideErrors: string[] = [];
-      async function safeCall(label: string, fn: () => unknown | Promise<unknown>) {
+      async function safeCall(
+        label: string,
+        fn: () => unknown | Promise<unknown>,
+      ) {
         try {
           await fn();
         } catch (e) {
-          sideErrors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
+          sideErrors.push(
+            `${label}: ${e instanceof Error ? e.message : String(e)}`,
+          );
         }
       }
 
@@ -567,7 +583,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
           search.closeQuickOpen();
           search.closeFindInFiles();
           useGitStore().clearForWorkspaceSwitch();
-          const { usePackageScriptsStore } = await import("@/stores/packageScripts");
+          const { usePackageScriptsStore } =
+            await import("@/stores/packageScripts");
           usePackageScriptsStore().clear();
         }
       }
@@ -580,7 +597,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (!isLatestRequest()) return false;
 
       // 首次恢复工作区时也要加载已勾选的脚本，供终端顶栏直接展示。
-      const { usePackageScriptsStore } = await import("@/stores/packageScripts");
+      const { usePackageScriptsStore } =
+        await import("@/stores/packageScripts");
       if (!isLatestRequest()) return false;
       void usePackageScriptsStore().refresh(true);
 
@@ -603,7 +621,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       return isLatestRequest();
     } catch (error) {
       if (isLatestRequest() && !options?.quiet) {
-        showNotice(error instanceof Error ? error.message : String(error), 3200);
+        showNotice(
+          error instanceof Error ? error.message : String(error),
+          3200,
+        );
       }
       return false;
     }
@@ -788,34 +809,75 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   async function removePath(path: string) {
+    const deleted = await removePaths([path]);
+    return Boolean(deleted?.length);
+  }
+
+  /**
+   * 批量删除工作区项目。
+   * 目录与其子项同时选中时只删除目录，避免重复确认/删除；所有项目共用一次确认。
+   */
+  async function removePaths(
+    paths: readonly string[],
+  ): Promise<string[] | null> {
     const root = rootPath.value;
-    if (!root) return;
+    if (!root) return null;
     const epoch = workspaceEpoch;
     const isCurrent = () => rootPath.value === root && workspaceEpoch === epoch;
-    if (path === root) {
+    if (paths.some((path) => path === root)) {
       showNotice("不能删除工作区根目录");
-      return false;
+      return null;
     }
-    const ok = await ask(`确定删除「${basename(path)}」？此操作不可撤销。`, {
+    const candidates = getTopLevelSelectionPaths(paths);
+    if (!candidates.length) {
+      showNotice("不能删除工作区根目录");
+      return null;
+    }
+    const prompt =
+      candidates.length === 1
+        ? `确定删除「${basename(candidates[0])}」？此操作不可撤销。`
+        : `确定删除选中的 ${candidates.length} 个项目？此操作不可撤销。`;
+    const ok = await ask(prompt, {
       title: "确认删除",
       kind: "warning",
     });
-    if (!ok || !isCurrent()) return false;
+    if (!ok || !isCurrent()) return null;
+    const deletedPaths: string[] = [];
     try {
-      markSelfWrite(path);
-      markSelfWrite(dirname(path));
-      await deleteEntry(root, path);
-      if (!isCurrent()) return false;
-      const parent = dirname(path);
-      await loadChildren(parent);
-      if (!isCurrent()) return false;
-      if (selectedPath.value === path) setSelection([parent]);
-      showNotice("已删除");
-      return true;
+      for (const path of candidates) {
+        markSelfWrite(path);
+        markSelfWrite(dirname(path));
+        await deleteEntry(root, path);
+        if (!isCurrent()) return null;
+        deletedPaths.push(path);
+      }
+
+      const parents = new Set(deletedPaths.map((path) => dirname(path)));
+      for (const parent of parents) {
+        await loadChildren(parent);
+        if (!isCurrent()) return null;
+      }
+
+      const nextParent = dirname(deletedPaths[0]);
+      setSelection([nextParent]);
+      showNotice(
+        deletedPaths.length === 1
+          ? "已删除"
+          : `已删除 ${deletedPaths.length} 个项目`,
+      );
+      return deletedPaths;
     } catch (error) {
-      if (!isCurrent()) return false;
+      if (!isCurrent()) return null;
       showNotice(error instanceof Error ? error.message : String(error), 3200);
-      return false;
+      if (!deletedPaths.length) return null;
+      // 部分删除成功：尽力刷新已删项的父目录并调整选中，保证树状态与磁盘一致。
+      const parents = new Set(deletedPaths.map((path) => dirname(path)));
+      for (const parent of parents) {
+        await loadChildren(parent);
+        if (!isCurrent()) return null;
+      }
+      setSelection([dirname(deletedPaths[0])]);
+      return deletedPaths;
     }
   }
 
@@ -833,6 +895,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const source = clipboardAtStart.path;
     const mode = clipboardAtStart.mode;
     const isDir = clipboardAtStart.isDir;
+    // 剪切粘贴同样属于「移动文件」，须与拖拽移动共用同一份 import 更新设置；
+    // 在文件系统操作前捕获，避免移动完成后读取到新配置。
+    const updateImportsOnMove = useSettingsStore().editor.updateImportsOnMove;
     const name = basename(source);
     let target = joinPath(parent, name);
     try {
@@ -870,7 +935,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       expanded.value = new Set([...expanded.value, parent]);
       setSelection([target]);
       showNotice("已粘贴");
-      return { from: source, to: target, cut: mode === "cut", isDir };
+      return {
+        from: source,
+        to: target,
+        cut: mode === "cut",
+        isDir,
+        updateImportsOnMove,
+      };
     } catch (error) {
       if (!isCurrent()) return;
       showNotice(error instanceof Error ? error.message : String(error), 3200);
@@ -892,6 +963,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const root = rootPath.value;
     const epoch = workspaceEpoch;
     const isCurrent = () => rootPath.value === root && workspaceEpoch === epoch;
+    // 在文件系统操作前读取并捕获设置，避免移动完成后再读取时发生竞态，
+    // 也确保所有未来的移动入口都默认遵循同一份设置。
+    const updateImportsOnMove = useSettingsStore().editor.updateImportsOnMove;
     const err = validateMoveTarget(from, toParent, root, isDir);
     if (err) {
       if (normalizeAbsPath(dirname(from)) !== normalizeAbsPath(toParent)) {
@@ -919,7 +993,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       expanded.value = new Set([...expanded.value, toParent]);
       setSelection([dest]);
       showNotice(`已移动 ${basename(from)}`);
-      return { from, to: dest, isDir };
+      return { from, to: dest, isDir, updateImportsOnMove };
     } catch (error) {
       if (!isCurrent()) return null;
       showNotice(error instanceof Error ? error.message : String(error), 3200);
@@ -942,7 +1016,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   function pathPartsUnderRoot(path: string): string[] {
     if (!rootPath.value) return [];
-    const root = rootPath.value === "/" ? "/" : normalizeAbsPath(rootPath.value);
+    const root =
+      rootPath.value === "/" ? "/" : normalizeAbsPath(rootPath.value);
     if (!isPathWithinRoot(root, path)) return [];
     const normalizedPath = path === "/" ? "/" : normalizeAbsPath(path);
     const relative = normalizedPath.slice(root.length).replace(/^[/\\]+/, "");
@@ -1124,12 +1199,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   // 窗口原生标题随 rootPath 同步：任何设置 rootPath 的路径（启动恢复 / 手动打开 /
   // 新窗口 boot / Dock 菜单）都触发，比在 openFolder 内 fire-and-forget 更可靠。
-  watchState(
-    rootPath,
-    (root) => {
-      if (root) void syncWindowTitle(root);
-    },
-  );
+  watchState(rootPath, (root) => {
+    if (root) void syncWindowTitle(root);
+  });
 
   return {
     rootPath,
@@ -1163,6 +1235,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     createIn,
     renamePath,
     removePath,
+    removePaths,
     setClipboard,
     pasteInto,
     movePath,

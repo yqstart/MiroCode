@@ -11,8 +11,7 @@ export type EditorFontId = (typeof EDITOR_FONT_IDS)[number];
 
 export function isEditorFontId(value: unknown): value is EditorFontId {
   return (
-    typeof value === "string" &&
-    EDITOR_FONT_IDS.includes(value as EditorFontId)
+    typeof value === "string" && EDITOR_FONT_IDS.includes(value as EditorFontId)
   );
 }
 
@@ -20,6 +19,12 @@ export function isEditorFontId(value: unknown): value is EditorFontId {
 export type SidePanelId = "explorer" | "commit";
 
 export type UpdateImportsOnMove = "always" | "prompt" | "never";
+
+export function isUpdateImportsOnMove(
+  value: unknown,
+): value is UpdateImportsOnMove {
+  return value === "always" || value === "prompt" || value === "never";
+}
 
 export interface EditorPreferences {
   /** 编辑器字体预设 ID；具体 CSS 字体栈由编辑器字体模块解析 */

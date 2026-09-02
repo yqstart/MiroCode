@@ -36,6 +36,11 @@ function truncateAuthor(name: string): string {
   return n.length > 12 ? `${n.slice(0, 11)}…` : n;
 }
 
+function authorInitial(name: string): string {
+  const value = name.trim();
+  return value ? Array.from(value)[0].toUpperCase() : "?";
+}
+
 class BlameMarker extends GutterMarker {
   constructor(
     private commitId: string,
@@ -68,7 +73,90 @@ class BlameMarker extends GutterMarker {
   }
 }
 
-const blameTheme = EditorView.theme({
+const blameTooltipTheme = EditorView.theme({
+  ".cm-miro-blame-tooltip": {
+    backgroundColor: "var(--bg-elevated)",
+    color: "var(--text-primary)",
+    border: "1px solid color-mix(in srgb, var(--accent) 18%, var(--border-subtle))",
+    borderLeft: "2px solid var(--accent)",
+    borderRadius: "7px",
+    padding: "10px 12px 9px",
+    minWidth: "220px",
+    maxWidth: "420px",
+    boxShadow: "var(--shadow-popover)",
+    fontFamily: "var(--font-ui)",
+    fontSize: "12px",
+    lineHeight: "1.45",
+    whiteSpace: "normal",
+    overflow: "hidden",
+    boxSizing: "border-box",
+    userSelect: "text",
+  },
+  ".cm-miro-blame-tooltip .summary": {
+    margin: "0 0 8px",
+    fontWeight: "600",
+    fontSize: "13px",
+    lineHeight: "1.4",
+    color: "var(--text-primary)",
+    wordBreak: "break-word",
+  },
+  ".cm-miro-blame-tooltip .meta": {
+    display: "flex",
+    alignItems: "center",
+    gap: "5px",
+    flexWrap: "wrap",
+    minWidth: "0",
+    fontSize: "11px",
+    color: "var(--text-secondary)",
+  },
+  ".cm-miro-blame-tooltip .author": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "5px",
+    minWidth: "0",
+    maxWidth: "18ch",
+  },
+  ".cm-miro-blame-tooltip .avatar": {
+    width: "16px",
+    height: "16px",
+    flex: "0 0 16px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: "50%",
+    backgroundColor: "var(--accent-soft)",
+    color: "var(--accent)",
+    fontSize: "9px",
+    fontWeight: "700",
+    lineHeight: "1",
+  },
+  ".cm-miro-blame-tooltip .author-name": {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  ".cm-miro-blame-tooltip .separator": {
+    color: "var(--text-muted)",
+    opacity: "0.65",
+    userSelect: "none",
+  },
+  ".cm-miro-blame-tooltip .meta .hash": {
+    padding: "1px 5px",
+    border: "1px solid var(--border-subtle)",
+    borderRadius: "4px",
+    backgroundColor: "var(--bg-inset)",
+    color: "var(--accent)",
+    fontFamily: "var(--miro-editor-font-family, var(--font-mono))",
+    fontSize: "10px",
+    lineHeight: "1.35",
+  },
+  ".cm-miro-blame-tooltip time": {
+    color: "var(--text-muted)",
+    whiteSpace: "nowrap",
+  },
+});
+
+const blameGutterTheme = EditorView.theme({
   ".cm-miro-blame": {
     backgroundColor: "color-mix(in srgb, var(--bg-panel) 55%, transparent)",
     textAlign: "left",
@@ -96,32 +184,6 @@ const blameTheme = EditorView.theme({
   ".cm-miro-blame-hash": {
     color: "var(--text-muted)",
     fontSize: "10px",
-    fontFamily: "var(--miro-editor-font-family, var(--font-mono))",
-  },
-  ".cm-miro-blame-tooltip": {
-    backgroundColor: "var(--bg-elevated)",
-    color: "var(--text-primary)",
-    border: "1px solid var(--border-subtle)",
-    borderRadius: "8px",
-    padding: "6px 10px",
-    maxWidth: "420px",
-    boxShadow: "var(--shadow-popover)",
-    fontFamily: "var(--font-ui)",
-  },
-  ".cm-miro-blame-tooltip .summary": {
-    fontWeight: "600",
-    fontSize: "12px",
-    marginBottom: "4px",
-    wordBreak: "break-word",
-  },
-  ".cm-miro-blame-tooltip .meta": {
-    fontSize: "11px",
-    color: "var(--text-muted)",
-    display: "flex",
-    gap: "8px",
-    flexWrap: "wrap",
-  },
-  ".cm-miro-blame-tooltip .meta .hash": {
     fontFamily: "var(--miro-editor-font-family, var(--font-mono))",
   },
 });
@@ -167,6 +229,7 @@ function blameTooltip(info: GitBlameLine, pos: number, end: number): Tooltip {
     create(): { dom: HTMLElement } {
       const dom = document.createElement("div");
       dom.className = "cm-miro-blame-tooltip";
+      dom.setAttribute("role", "tooltip");
 
       const summary = document.createElement("div");
       summary.className = "summary";
@@ -176,13 +239,31 @@ function blameTooltip(info: GitBlameLine, pos: number, end: number): Tooltip {
       const meta = document.createElement("div");
       meta.className = "meta";
       const author = document.createElement("span");
-      author.textContent = info.author || "unknown";
+      author.className = "author";
+      const avatar = document.createElement("span");
+      avatar.className = "avatar";
+      avatar.setAttribute("aria-hidden", "true");
+      avatar.textContent = authorInitial(info.author);
+      const authorName = document.createElement("span");
+      authorName.className = "author-name";
+      authorName.textContent = info.author.trim() || "unknown";
+      author.append(avatar, authorName);
+
+      const firstSeparator = document.createElement("span");
+      firstSeparator.className = "separator";
+      firstSeparator.textContent = "·";
+
       const hash = document.createElement("span");
       hash.className = "hash";
       hash.textContent = shortHash(info.commitId);
-      const time = document.createElement("span");
+
+      const secondSeparator = document.createElement("span");
+      secondSeparator.className = "separator";
+      secondSeparator.textContent = "·";
+
+      const time = document.createElement("time");
       time.textContent = info.time;
-      meta.append(author, hash, time);
+      meta.append(author, firstSeparator, hash, secondSeparator, time);
       dom.appendChild(meta);
 
       return { dom };
@@ -202,7 +283,9 @@ export function gitBlameExtension(opts: GitBlameOptions): Extension {
     return blameTooltip(info, line.from, line.to);
   });
 
-  const parts: Extension[] = [blameField, hover, plugin];
+  // 悬浮卡片与常驻 gutter 独立：关闭常驻列时，行悬浮仍应使用自己的主题，
+  // 不能退回 CodeMirror 默认的灰色 tooltip。
+  const parts: Extension[] = [blameField, hover, plugin, blameTooltipTheme];
 
   if (opts.showGutter) {
     parts.push(
@@ -223,7 +306,7 @@ export function gitBlameExtension(opts: GitBlameOptions): Extension {
           );
         },
       }),
-      blameTheme,
+      blameGutterTheme,
     );
   }
 

@@ -224,19 +224,27 @@ function uiTheme(palette: ThemePalette): Extension {
         borderRight: "1px solid var(--border-subtle)",
         padding: "0",
       },
-      /* 主编辑器侧栏（gutter）按内容收缩，避免行号与折叠区在窄窗口里留下大块空白。 */
+      /* 主编辑器侧栏（gutter）按内容收缩，避免行号与折叠区之间留下大块空白。 */
+      ".cm-gutter": {
+        flex: "0 0 auto",
+      },
       ".cm-foldGutter": {
+        flex: "0 0 18px",
         width: "18px",
+        minWidth: "18px",
       },
       ".cm-foldGutter .cm-gutterElement": {
         width: "100%",
         padding: "0 2px 0 4px",
       },
       ".cm-lineNumbers": {
-        width: "max-content",
+        flex: "0 0 auto",
+        width: "auto",
         minWidth: "0",
+        maxWidth: "max-content",
       },
       ".cm-lineNumbers .cm-gutterElement": {
+        width: "auto",
         minWidth: "0",
         padding: "0 5px 0 3px",
         fontVariantNumeric: "tabular-nums",

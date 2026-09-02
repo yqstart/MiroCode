@@ -77,8 +77,7 @@ export const zhCN = {
     blameShow: "显示 Git 注释列",
     blameHide: "隐藏 Git 注释列",
     discardChanges: "回滚变更…",
-    discardConfirm:
-      "确定回滚「{name}」的未提交变更？此操作不可撤销。",
+    discardConfirm: "确定回滚「{name}」的未提交变更？此操作不可撤销。",
     discardUntrackedConfirm:
       "「{name}」是未跟踪的新文件，回滚将删除该文件。此操作不可撤销。确定？",
     references: "引用",
@@ -116,7 +115,8 @@ export const zhCN = {
     appearance: "外观主题",
     layout: "排版与布局",
     fontFamily: "编辑器字体",
-    fontFamilyDesc: "未安装的字体会自动回退；更纱等宽黑体 SC 更适合中英文混合代码。",
+    fontFamilyDesc:
+      "未安装的字体会自动回退；更纱等宽黑体 SC 更适合中英文混合代码。",
     fontSystem: "系统等宽（SF Mono / Menlo）",
     fontJetBrains: "JetBrains Mono",
     fontSarasa: "更纱等宽黑体 SC",
@@ -127,13 +127,16 @@ export const zhCN = {
     lineNumbers: "行号",
     autoSave: "自动保存",
     autoSaveDelay: "自动保存延迟（毫秒）",
-    autoSaveDesc: "编辑后延迟写盘；窗口隐藏或退出前会强制落盘，降低崩溃丢改风险。",
+    autoSaveDesc:
+      "编辑后延迟写盘；窗口隐藏或退出前会强制落盘，降低崩溃丢改风险。",
     fileSave: "文件保存",
     tooling: "代码工具",
     prettierEnabled: "Prettier",
-    prettierDesc: "内置格式化引擎，开箱即用零配置；项目已装 prettier 时自动优先使用项目版本。",
+    prettierDesc:
+      "内置格式化引擎，开箱即用零配置；项目已装 prettier 时自动优先使用项目版本。",
     formatOnSave: "保存时格式化",
-    formatOnSaveDesc: "保存文件前自动格式化（需开启 Prettier）。快捷键 {shortcut} 可随时手动格式化。",
+    formatOnSaveDesc:
+      "保存文件前自动格式化（需开启 Prettier）。快捷键 {shortcut} 可随时手动格式化。",
     updateImportsOnMove: "移动时更新 import",
     updateImportsOnMoveDesc:
       "拖拽或移动文件/文件夹后，扫描并更新项目内相对路径 import（不含 npm 包名与 @ 别名）。",
@@ -212,6 +215,7 @@ export const zhCN = {
     newFolder: "新建文件夹",
     rename: "重命名",
     delete: "删除",
+    deleteSelected: "删除选中项（{count}）",
     copy: "复制",
     cut: "剪切",
     paste: "粘贴",
@@ -278,8 +282,7 @@ export const zhCN = {
     findEmptyHint: "输入关键词后按 Enter 或点击「查找」",
     styleHint: "{shortcut}",
     resultNavHint: "↑↓ 选择 · Enter 打开 · {shortcut} 打开并保持窗口",
-    replaceConfirm:
-      "将替换 {replacements} 处，涉及 {files} 个文件。确定继续？",
+    replaceConfirm: "将替换 {replacements} 处，涉及 {files} 个文件。确定继续？",
     previewBanner: "预览：{replacements} 处 · {files} 个文件",
   },
   editorFind: {
@@ -423,8 +426,7 @@ export const zhCN = {
     nothingToDiscard: "没有可丢弃的更改",
     switchedTo: "已切换到 {name}",
     switchedRestored: "已切换到 {name}（变更已恢复）",
-    switchedStashConflict:
-      "已切换到 {name}，但恢复贮藏时出现冲突：{detail}",
+    switchedStashConflict: "已切换到 {name}，但恢复贮藏时出现冲突：{detail}",
     forceSwitched: "已强制切换到 {name}（本地变更已丢弃）",
     checkoutTitle: "切换分支",
     checkoutDirtyMessage:
@@ -444,7 +446,8 @@ export const zhCN = {
     authUpdate: "更新需要登录",
     authRetry: "账号或密码不正确，请重试",
     authRequired: "远程需要认证，请输入账号与密码",
-    authFailedGiveUp: "认证失败：{detail}。已停止重试，请检查网络或凭据后手动重试。",
+    authFailedGiveUp:
+      "认证失败：{detail}。已停止重试，请检查网络或凭据后手动重试。",
     pushing: "正在推送到远程，可能需要数十秒到两分钟…",
     pulling: "正在从远程拉取，可能需要数十秒到两分钟…",
     fetching: "正在获取远程引用…",
@@ -685,16 +688,14 @@ export const zhCN = {
     foundTitle: "发现新版本",
     foundMessage:
       "发现新版本 {version}（当前 {current}）。是否立即下载并安装？",
-    foundMessageWithNotes:
-      "发现新版本 {version}（当前 {current}）\n\n{notes}",
+    foundMessageWithNotes: "发现新版本 {version}（当前 {current}）\n\n{notes}",
     later: "稍后",
     installNow: "立即更新",
     foundHint:
       "发现新版本 {version}，可点击标题栏「新功能」查看详情，或点「更新」安装",
     pendingHint:
       "新版本 {version} 可用，可点「新功能」查看更新内容，或点「更新」安装",
-    autoFoundHint:
-      "发现新版本 {version}，点击标题栏「新功能」可查看更新内容",
+    autoFoundHint: "发现新版本 {version}，点击标题栏「新功能」可查看更新内容",
     viewNotes: "查看更新内容",
     viewNotesShort: "新功能",
     viewNotesTitle: "查看 v{version} 更新内容",
