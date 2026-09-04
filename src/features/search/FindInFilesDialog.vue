@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  ref,
+  watch,
+  type ComponentPublicInstance,
+} from "vue";
 import { Replace, Search, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { PLAIN_INPUT_ATTRS } from "@/shared/plainInput";
@@ -36,6 +42,7 @@ const {
 const queryRef = ref<HTMLInputElement | null>(null);
 const showReplace = ref(false);
 const activeIndex = ref(0);
+const rowElements = new Map<number, HTMLElement>();
 
 watch(findInFilesVisible, async (open) => {
   if (!open) return;
@@ -47,6 +54,12 @@ watch(findInFilesVisible, async (open) => {
 
 watch(contentResults, () => {
   activeIndex.value = 0;
+  rowElements.clear();
+});
+
+watch(activeIndex, async (index) => {
+  await nextTick();
+  rowElements.get(index)?.scrollIntoView({ block: "nearest" });
 });
 
 watch([contentQuery, replaceText, caseSensitive, extensions], () => {
@@ -90,6 +103,13 @@ async function openHit(index: number, keepOpen = false) {
   if (!hit) return;
   await editor.openFileAt(hit.path, hit.line, hit.column);
   if (!keepOpen) close();
+}
+
+function setRowElement(
+  element: Element | ComponentPublicInstance | null,
+  index: number,
+) {
+  if (element instanceof HTMLElement) rowElements.set(index, element);
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -252,6 +272,7 @@ function onKeydown(event: KeyboardEvent) {
           <button
             v-for="(hit, index) in contentResults"
             :key="`${hit.path}:${hit.line}:${hit.column}`"
+            :ref="(element) => setRowElement(element, index)"
             type="button"
             class="hit"
             :class="{ active: index === activeIndex }"

@@ -8,11 +8,17 @@ import {
   GutterMarker,
   ViewPlugin,
   gutter,
-  hoverTooltip,
+  keymap,
+  showTooltip,
   type PluginValue,
   type Tooltip,
 } from "@codemirror/view";
-import { StateEffect, StateField, type Extension } from "@codemirror/state";
+import {
+  Prec,
+  StateEffect,
+  StateField,
+  type Extension,
+} from "@codemirror/state";
 import { gitBlame, type GitBlameLine } from "@/shared/gitApi";
 
 const setBlameEffect = StateEffect.define<GitBlameLine[]>();
@@ -23,6 +29,26 @@ const blameField = StateField.define<GitBlameLine[]>({
     for (const e of tr.effects) {
       if (e.is(setBlameEffect)) return e.value;
     }
+    return value;
+  },
+});
+
+interface BlameTooltipState {
+  line: number;
+}
+
+const setBlameTooltipEffect = StateEffect.define<BlameTooltipState | null>();
+
+const blameTooltipField = StateField.define<BlameTooltipState | null>({
+  create: () => null,
+  update: (value, tr) => {
+    for (const e of tr.effects) {
+      if (e.is(setBlameTooltipEffect)) return e.value;
+      // blame 数据重新加载时，旧文件/旧行的浮层不能继续显示。
+      if (e.is(setBlameEffect)) return null;
+    }
+    // 光标移动、选区变化或输入时关闭信息卡，避免卡片跟着编辑内容残留。
+    if (tr.docChanged || tr.selection) return null;
     return value;
   },
 });
@@ -81,8 +107,8 @@ const blameTooltipTheme = EditorView.theme({
     borderLeft: "2px solid var(--accent)",
     borderRadius: "7px",
     padding: "10px 12px 9px",
-    minWidth: "220px",
-    maxWidth: "420px",
+    minWidth: "180px",
+    maxWidth: "360px",
     boxShadow: "var(--shadow-popover)",
     fontFamily: "var(--font-ui)",
     fontSize: "12px",
@@ -90,7 +116,9 @@ const blameTooltipTheme = EditorView.theme({
     whiteSpace: "normal",
     overflow: "hidden",
     boxSizing: "border-box",
-    userSelect: "text",
+    // 信息卡只读，不参与编辑区鼠标命中，避免遮挡时截断点击/拖选。
+    pointerEvents: "none",
+    userSelect: "none",
   },
   ".cm-miro-blame-tooltip .summary": {
     margin: "0 0 8px",
@@ -221,11 +249,11 @@ class GitBlamePlugin implements PluginValue {
   }
 }
 
-function blameTooltip(info: GitBlameLine, pos: number, end: number): Tooltip {
+function blameTooltip(info: GitBlameLine, pos: number): Tooltip {
   return {
     pos,
-    end,
     above: true,
+    arrow: true,
     create(): { dom: HTMLElement } {
       const dom = document.createElement("div");
       dom.className = "cm-miro-blame-tooltip";
@@ -271,21 +299,71 @@ function blameTooltip(info: GitBlameLine, pos: number, end: number): Tooltip {
   };
 }
 
+const blameTooltipExtension = showTooltip.compute(
+  [blameTooltipField, blameField],
+  (state): Tooltip | null => {
+    const active = state.field(blameTooltipField, false);
+    if (!active) return null;
+    const info = state.field(blameField)[active.line - 1];
+    if (!info) return null;
+    const line = state.doc.line(active.line);
+    // 锚定到行尾，卡片尽量出现在代码右侧，不覆盖用户刚点击的行首。
+    return blameTooltip(info, line.to);
+  },
+);
+
+const BLAME_TRIGGER_SELECTOR = ".cm-lineNumbers, .cm-miro-blame";
+
+function isBlameTriggerTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(BLAME_TRIGGER_SELECTOR) !== null;
+}
+
+function dismissBlameTooltip(view: EditorView): boolean {
+  if (!view.state.field(blameTooltipField, false)) return false;
+  view.dispatch({ effects: setBlameTooltipEffect.of(null) });
+  return true;
+}
+
 export function gitBlameExtension(opts: GitBlameOptions): Extension {
   const plugin = ViewPlugin.define((view) => new GitBlamePlugin(view, opts));
 
-  const hover = hoverTooltip((view, pos) => {
-    const lines = view.state.field(blameField);
-    if (!lines.length) return null;
-    const line = view.state.doc.lineAt(pos);
-    const info = lines[line.number - 1];
-    if (!info) return null;
-    return blameTooltip(info, line.from, line.to);
-  });
-
-  // 悬浮卡片与常驻 gutter 独立：关闭常驻列时，行悬浮仍应使用自己的主题，
-  // 不能退回 CodeMirror 默认的灰色 tooltip。
-  const parts: Extension[] = [blameField, hover, plugin, blameTooltipTheme];
+  // 不再 hover 任意代码行：只有点击行号或常驻 blame gutter 才显示，避免编辑时
+  // 鼠标经过代码就弹出大卡片。点击代码会关闭，Esc 也可关闭。
+  const parts: Extension[] = [
+    blameField,
+    blameTooltipField,
+    blameTooltipExtension,
+    plugin,
+    blameTooltipTheme,
+    Prec.highest(
+      keymap.of([
+        {
+          key: "Escape",
+          run: dismissBlameTooltip,
+        },
+      ]),
+    ),
+    EditorView.domEventHandlers({
+      click(event, view) {
+        if (event.button !== 0 || event.detail !== 1) return false;
+        if (!isBlameTriggerTarget(event.target)) {
+          dismissBlameTooltip(view);
+          return false;
+        }
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        if (pos == null) return false;
+        const line = view.state.doc.lineAt(pos);
+        if (!view.state.field(blameField)[line.number - 1]) return false;
+        const active = view.state.field(blameTooltipField, false);
+        view.dispatch({
+          effects: setBlameTooltipEffect.of(
+            active?.line === line.number ? null : { line: line.number },
+          ),
+        });
+        return true;
+      },
+    }),
+  ];
 
   if (opts.showGutter) {
     parts.push(

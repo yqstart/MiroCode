@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-09-04
+
+### 改进
+
+- 声明导航提示仅用于提示可导航目标，普通鼠标点击只移动光标；统一使用 `⌘B / ⌘Enter / F12` 触发跳转，避免误触发。
+- Git blame 信息卡片改为点击行号或 blame gutter 显示，支持 `Esc` 关闭，不再在代码区悬停时自动弹出，减少编辑遮挡。
+- 全局搜索使用键盘切换结果时，自动将当前结果滚动到可视区域。
+
 ## [2.2.0] - 2026-09-02
 
 ### 新增
@@ -155,6 +163,7 @@ Miro Code 1.0.0 是当前代码基线的首个可用大版本，定位为轻量�
 - 文件访问、Git、搜索、SSH 和更新说明渲染均加入路径校验、错误处理、超时清理、敏感信息隔离和 Markdown 链接过滤。
 - 采用 MIT 许可证，纯开源免费；本版本坚持离线优先，不包含联网 AI 补全、AI 对话面板、AI Agent、MCP/Skills 生态或插件市场。
 
+[2.2.1]: https://github.com/yqstart/MiroCode/releases/tag/v2.2.1
 [2.2.0]: https://github.com/yqstart/MiroCode/releases/tag/v2.2.0
 [2.1.0]: https://github.com/yqstart/MiroCode/releases/tag/v2.1.0
 [2.0.0]: https://github.com/yqstart/MiroCode/releases/tag/v2.0.0

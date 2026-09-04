@@ -33,7 +33,7 @@ export interface NavTarget {
 }
 
 export interface NavigationSource {
-  /** 编辑器中可点击的源文本范围。 */
+  /** 编辑器中可识别的声明导航源文本范围。 */
   from: number;
   to: number;
   word: string;
@@ -1136,7 +1136,6 @@ async function navigateFromView(
 }
 
 export function createNavigationExtension(handlers: NavigationHandlers): Extension {
-  let navigationRequestId = 0;
   const linkPlugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
@@ -1184,26 +1183,11 @@ export function createNavigationExtension(handlers: NavigationHandlers): Extensi
 
   return [
     linkPlugin,
-    EditorView.domEventHandlers({
-      click(event, view) {
-        if (event.button !== 0 || event.detail !== 1) return false;
-        const mod = event.metaKey || event.ctrlKey;
-        // 普通单击只移动光标；只有 ⌘/Ctrl + 单击才进入声明跳转。
-        if (!mod || event.altKey || event.shiftKey) return false;
-        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        if (pos == null) return false;
-        const doc = view.state.doc.toString();
-        if (!canAttemptNavigation(doc, pos)) return false;
-        const requestId = ++navigationRequestId;
-        void navigateFromView(view, handlers, pos, () => requestId === navigationRequestId);
-        return true;
-      },
-    }),
     EditorView.baseTheme({
       ".cm-nav-link": {
         textDecoration: "underline",
         textUnderlineOffset: "2px",
-        cursor: "pointer",
+        cursor: "default",
         color: "var(--accent)",
       },
     }),

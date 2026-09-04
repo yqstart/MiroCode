@@ -1,6 +1,8 @@
 // ==================== 全局搜索键盘导航自测 ====================
 
 import { getSearchKeyAction } from "../src/features/search/navigation.ts";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 let failed = 0;
 let passed = 0;
@@ -27,6 +29,11 @@ function key(
     ...overrides,
   };
 }
+
+const findInFilesSource = await readFile(
+  resolve(process.cwd(), "src/features/search/FindInFilesDialog.vue"),
+  "utf8",
+);
 
 assert(
   "查询框有结果时回车打开当前选中项",
@@ -60,6 +67,18 @@ assert(
     key("Enter", { shiftKey: true }),
     { hasResults: true, isQueryInput: true },
   ) === null,
+);
+assert(
+  "全局搜索结果通过行引用建立可滚动定位",
+  /:ref="\(element\) => setRowElement\(element, index\)"/.test(
+    findInFilesSource,
+  ),
+);
+assert(
+  "全局搜索键盘移动会将当前结果滚动到可视区域",
+  /scrollIntoView\(\{\s*block:\s*"nearest"\s*\}\)/s.test(
+    findInFilesSource,
+  ),
 );
 
 console.log(`\n通过 ${passed}，失败 ${failed}`);
